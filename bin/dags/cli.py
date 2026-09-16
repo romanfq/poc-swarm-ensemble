@@ -375,6 +375,50 @@ def backend_init(apply: bool = typer.Option(False, "--apply", help="Create the l
     console.print("[green]labels ready[/]")
 
 
+@backend_app.command("seed")
+@guarded
+def backend_seed(plan_file: Path = typer.Argument(..., help="Plan file, e.g. poc/matchwire/plan.yaml."),
+                 apply: bool = typer.Option(False, "--apply", help="Create labels and issues (humans only)."),
+                 yes: bool = typer.Option(False, "--yes", "-y", help="Don't ask for confirmation.")):
+    """Create a plan's epics, tasks, parents and dependencies (dry run unless --apply)."""
+    from dags import seed
+    c = ctx()
+    b = c.backend
+    code_repos = sorted((c.backend_cfg.get("repos") or {}).keys())
+    path = plan_file if plan_file.is_absolute() else Path.cwd() / plan_file
+    if not path.exists():
+        path = c.root / plan_file
+    try:
+        plan_ = seed.load(path)
+        d = seed.diff(plan_, b, code_repos)
+    except seed.SeedError as e:
+        fail(str(e))
+    for line in d.lines(b.short_key):
+        console.print(line, markup=False)
+    for note in d.notes:
+        console.print(escape(f"note: {note}"), style="yellow")
+    console.print(d.summary())
+    if d.empty:
+        console.print("[green]the tracker already matches the plan[/]")
+        return
+    if not apply:
+        console.print("[dim]dry run — re-run with --apply to make these changes[/]")
+        return
+    c.require_human()
+    if not yes and not typer.confirm(f"Apply {len(d.steps)} changes to {getattr(b, 'repo', '?')}?"):
+        raise typer.Exit(1)
+    try:
+        seed.apply(d, b, echo=lambda line: console.print(line, markup=False))
+    except gh.GhError as e:
+        fail(f"{e}\nstopped part-way; re-run the same command to continue")
+    left = seed.verify(plan_, b, code_repos)
+    if left:
+        for line in left:
+            console.print(escape(f"still differs: {line}"), style="yellow")
+        fail("the tracker doesn't match the plan after seeding (see above)")
+    console.print("[green]plan seeded[/] — next: `swarm.py plan sync`")
+
+
 # ---------------------------------------------------------------------------
 # human levers
 # ---------------------------------------------------------------------------

@@ -4,10 +4,10 @@
 # (plus the "Next" checklist in docs/HANDOVER.md).
 #
 # holders: cowork (Claude in the Cowork app) | claude-code (Claude Code CLI on the Mac) | roman
-holder: cowork
+holder: claude-code
 since: 2026-09-16
-reason: Known gaps K1-K3 fixed and the spec added as docs/SPEC.md. Next is the Phase 9
-  POC, which waits on Roman's details and go-ahead (docs/HANDOVER.md, "Next").
+reason: Phase 9 plan file, seeder and config are ready. The GitHub steps (bot check,
+  seed dry run, then apply on Roman's yes) need the Mac: docs/HANDOVER.md, "Next".
 history:
   - 2026-09-16 cowork: resumed via the same Cowork task (desktop or mobile), Mac kept awake
     (`caffeinate -is`) with the desktop app open.
@@ -16,3 +16,5 @@ history:
     the CLI and the Board, checked the bot token. Nothing pushed, nothing on GitHub.
   - 2026-09-16 cowork: fixed K1-K3 (worktree cleanup after merge, quota lowered mid-task,
     --identity remembered), added docs/SPEC.md, merged the handover. Nothing on GitHub.
+  - 2026-09-16 cowork: Phase 9 prep: poc/matchwire/plan.yaml, `swarm.py backend seed`,
+    backend.yaml/humans.yaml for romanfq. Nothing on GitHub. Baton to claude-code.

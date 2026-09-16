@@ -269,5 +269,54 @@ class GitHubBackend:
         return out
 
     def init_commands(self, code_repos: list[str]) -> list[list[str]]:
-        return [["label", "create", name, "--repo", self.repo, "--color", color, "--force",
-                 "--description", "DAGS swarm label"] for name, color in self.required_labels(code_repos)]
+        return [self.label_command(name, color) for name, color in self.required_labels(code_repos)]
+
+    def label_command(self, name: str, color: str) -> list[str]:
+        return ["label", "create", name, "--repo", self.repo, "--color", color, "--force",
+                "--description", "DAGS swarm label"]
+
+    # -- plan seeding, run by a human (`swarm.py backend seed`) ---------------------
+    def existing_labels(self) -> set[str]:
+        rows = gh.gh_json(["label", "list", "--repo", self.repo, "--limit", "1000", "--json", "name"]) or []
+        return {r["name"] for r in rows}
+
+    def create_label(self, name: str, color: str) -> None:
+        gh.gh(self.label_command(name, color))
+
+    def seed_labels(self, *, epic: bool, status: str | None, autonomy: str | None,
+                    repo: str | None) -> list[str]:
+        labels = []
+        if status:
+            labels.append(STATUS_PREFIX + status)
+        if autonomy:
+            labels.append(AUTONOMY_PREFIX + autonomy)
+        if repo:
+            labels.append(REPO_PREFIX + repo)
+        if not self.use_issue_types:
+            labels.append("type:epic" if epic else "type:task")
+        return labels
+
+    def create_issue(self, title: str, body: str, labels: list[str], *, epic: bool = False) -> TaskRef:
+        args = ["issue", "create", "--repo", self.repo, "--title", title, "--body-file", "-"]
+        for lb in labels:
+            args += ["--label", lb]
+        if self.use_issue_types:
+            args += ["--type", "Epic" if epic else "Task"]
+        out = gh.gh(args, input=body)
+        m = re.search(r"/issues/(\d+)", out or "")
+        if not m:
+            raise gh.GhError(args[:2], 1, f"could not read the new issue number from {out!r}")
+        self.invalidate()
+        return self.ref(m.group(1))
+
+    def set_parent(self, ref: TaskRef, parent: TaskRef) -> None:
+        repo, num = self._split(ref)
+        _, pnum = self._split(parent)
+        gh.gh(["issue", "edit", str(num), "--repo", repo, "--parent", str(pnum)])
+        self.invalidate()
+
+    def add_dependency(self, ref: TaskRef, blocker: TaskRef) -> None:
+        repo, num = self._split(ref)
+        _, bnum = self._split(blocker)
+        gh.gh(["issue", "edit", str(num), "--repo", repo, "--add-blocked-by", str(bnum)])
+        self.invalidate()

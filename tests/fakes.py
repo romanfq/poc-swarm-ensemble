@@ -99,8 +99,32 @@ class FakeGitHub:
             return json.dumps({"data": {"repository": {"issues": {
                 "pageInfo": {"hasNextPage": more, "endCursor": str(start + self.page_size)},
                 "nodes": [self.node(n) for n in page]}}}})
+        if args[:2] == ["label", "list"]:
+            return json.dumps([{"name": x} for x in sorted(self.labels)])
+        if args[:2] == ["issue", "create"]:
+            for lb in opts["--label"]:
+                if lb not in self.labels:
+                    return ("", 1, f"could not add label: '{lb}' not found")
+            n = max(self.issues, default=0) + 1
+            self.issues[n] = {
+                "number": n, "title": opts["--title"][0], "body": input or "",
+                "url": f"https://github.com/{self.repo}/issues/{n}", "state": "OPEN",
+                "labels": list(opts["--label"]),
+                "issueType": {"name": opts["--type"][0]} if opts["--type"] else None,
+                "parent": None, "blockedBy": [], "comments": [],
+            }
+            return self.issues[n]["url"] + "\n"
         if args[:2] == ["issue", "edit"]:
             i = self.issues[int(args[2])]
+            for p in opts["--parent"]:
+                if int(p) not in self.issues or int(p) == int(args[2]):
+                    return ("", 1, f"invalid parent {p}")
+                i["parent"] = int(p)
+            for b in opts["--add-blocked-by"]:
+                if int(b) not in self.issues:
+                    return ("", 1, f"no issue {b}")
+                if int(b) not in i["blockedBy"]:
+                    i["blockedBy"].append(int(b))
             for lb in opts["--add-label"]:
                 if lb not in self.labels:
                     return ("", 1, f"failed to update: '{lb}' not found")
@@ -123,7 +147,9 @@ class FakeGitHub:
 
     @staticmethod
     def _opts(args):
-        out = {"-f": {}, "-F": {}, "--add-label": [], "--remove-label": []}
+        multi = ("--add-label", "--remove-label", "--label", "--title", "--type", "--parent",
+                 "--add-blocked-by")
+        out = {"-f": {}, "-F": {}, **{m: [] for m in multi}}
         it = iter(range(len(args)))
         for i in it:
             a = args[i]
@@ -131,7 +157,7 @@ class FakeGitHub:
                 k, _, v = args[i + 1].partition("=")
                 out[a][k] = v
                 next(it, None)
-            elif a in ("--add-label", "--remove-label") and i + 1 < len(args):
+            elif a in multi and i + 1 < len(args):
                 out[a].append(args[i + 1])
                 next(it, None)
         return out

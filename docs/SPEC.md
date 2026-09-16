@@ -15,7 +15,7 @@ the proof of concept.
 
   > **v1.1 —** like this.
 
-  Each note cites a decision (**D1**–**D24**). They are listed with their
+  Each note cites a decision (**D1**–**D25**). They are listed with their
   rationale in **Appendix A**.
 - **Where v1.0's text and figures disagree**, the text wins. The figures of
   v1.0 (1–5) are not reproduced here. Wherever a figure differs from this
@@ -1381,6 +1381,7 @@ No step needs a process that isn't one of these:
 | D22 | **Outcome records** (`completions/`): `pr-opened`, `done`, `reopened` (once per review), `rejected` (PR closed → ticket `blocked`), `replanned` (ticket set back to `ready`). | Makes the request-changes and reject-approach paths of Ch.9 computable from the ledger. | 9.2, 9.3 | Done |
 | D23 | **Venv:** self-installing, stamped by platform and Python version, rebuilt if it came from elsewhere. `typer>=0.16`; works whether typer bundles its own click (0.17+) or uses the real package. | Folders shared with VMs can hold a venv built for the wrong system, and older typer breaks with current click. | 5.2 | Done |
 | D24 | **Notifications** always go to `.swarm/notifications.log`; desktop and webhook are opt-in in `.swarm/local.yaml`. The Board shows the log in its feed. | Ch.9.4's notify step is pluggable; the log is the one channel that always works. | 9.4, 10.3 | Done |
+| D25 | **Plan seeding:** `swarm.py backend seed FILE` creates a YAML plan's labels, issues, parents and "blocked by" links. Dry run by default; `--apply` is for humans. Issues carry a `dags-seed` marker, so re-runs only add what is missing and never rewrite. GitHub only. | The Phase 9 plan has 21 issues and 47 links. Typing them by hand is error-prone, and a failed run must be safe to repeat. | 3.3 | Done (first real run pending) |
 
 **D15 corrections in full:**
 
@@ -1602,6 +1603,40 @@ gh issue edit 3 --repo $R --add-blocked-by $R#2      # frontend waits for backen
   holds ready, which is exactly what a scheduler may claim.
 - **Web UI.** Sub-issues and "blocked by" can also be set in GitHub's web UI.
 
+**From a plan file (D25).** A whole plan can be written as one YAML file and
+seeded in one go. `poc/matchwire/plan.yaml` is a worked example.
+
+```yaml
+repo: org/project-swarm          # must match backend.yaml github.repo
+status: ready                    # status label for new tasks
+epics:
+  - {id: BE, title: "Backend", body: "..."}
+tasks:
+  - id: T1
+    epic: BE
+    title: "Poll the feed"
+    repo: org/project-backend    # must be listed under repos: in backend.yaml
+    autonomy: human-must-review  # the default
+    depends_on: []
+    body: |
+      What to build, acceptance criteria, pointers.
+```
+
+```bash
+./bin/swarm.py backend seed plan.yaml            # dry run: what would change
+./bin/swarm.py backend seed plan.yaml --apply    # humans only; asks first (--yes skips)
+./bin/swarm.py plan sync
+```
+
+- **Idempotent.** Each issue gets a hidden `<!-- dags-seed: ID -->` marker.
+  A re-run creates only the missing labels and issues, and adds only the
+  missing parent and "blocked by" links.
+- **Never rewrites.** Existing titles, bodies and labels are left alone.
+  Differences, and links the plan doesn't list, are reported as notes.
+- **Interrupted runs.** If a run stops part-way, run the same command again.
+  After applying, the command re-reads the tracker and fails if anything
+  still differs.
+
 ## C.4 Pick a worker for a claimed task
 
 - **On the Board:** the prompt appears by itself. Press `a` (claude),
@@ -1743,6 +1778,7 @@ Global options go **before** the command: `--root PATH`, `--identity NAME`,
 | `protect REPO [--branch main] [--approvals 1] [--apply]` | Branch protection (dry run by default) |
 | `plan sync` | Mirror the tracker into `tasks/` |
 | `backend get-task T` / `backend ready [--ledger]` / `backend set-status T S` / `backend init [--apply]` | Talk to the tracker |
+| `backend seed FILE [--apply] [--yes]` | Create a plan file's epics, tasks and links in the tracker (dry run by default) |
 | `quota set N [--reason]` / `quota show` | Global N |
 | `epic takeover E` / `epic release E` | Soft epic priority |
 | `identity show` / `identity set NAME [--force]` | Show or rename this clone's machine identity |

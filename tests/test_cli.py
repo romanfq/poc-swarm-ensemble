@@ -115,3 +115,37 @@ def test_identity_commands(machine):
     assert r.exit_code == 1 and "still holds T1" in r.output
     assert invoke("identity", "set", "mac-z", "--force").exit_code == 0
     assert (machine.swarm_dir / "identity").read_text().strip() == "mac-z"
+
+
+def test_backend_seed_dry_run_then_apply(machine, tmp_path):
+    from backends.github import GitHubBackend
+    from conftest import FakeGh
+    from dags import gh
+    from fakes import FakeGitHub
+    fake = FakeGitHub(repo="acme/plan")
+    gh.set_runner(FakeGh(fake))
+    try:
+        machine.set_backend(GitHubBackend("acme/plan", cache_seconds=0))
+        plan = tmp_path / "plan.yaml"
+        plan.write_text("repo: acme/plan\n"
+                        "epics:\n  - {id: EP, title: Epic}\n"
+                        "tasks:\n"
+                        "  - {id: T1, epic: EP, title: One, repo: OWNER/app}\n"
+                        "  - {id: T2, epic: EP, title: Two, repo: OWNER/app, depends_on: [T1]}\n")
+        r = invoke("backend", "seed", str(plan))
+        assert r.exit_code == 0, r.output
+        assert "create  task T2: Two" in r.output and "dry run" in r.output
+        assert fake.issues == {}
+        r = invoke("backend", "seed", str(plan), "--apply", "--yes")
+        assert r.exit_code == 0, r.output
+        assert "plan seeded" in r.output and len(fake.issues) == 3
+        r = invoke("backend", "seed", str(plan))
+        assert "already matches" in r.output
+        r = invoke("plan", "sync")
+        assert r.exit_code == 0 and "imported" in r.output
+        bad = tmp_path / "bad.yaml"
+        bad.write_text("repo: other/plan\ntasks: []\n")
+        r = runner.invoke(cli.app, ["backend", "seed", str(bad)])
+        assert r.exit_code == 1 and "differs from backend.yaml" in r.output
+    finally:
+        gh.set_runner(None)

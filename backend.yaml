@@ -4,7 +4,7 @@
 backend: github            # or: jira
 
 github:
-  repo: OWNER/matchwire-swarm        # repo holding the epics/tasks as GitHub Issues
+  repo: romanfq/matchwire-spec       # repo holding the epics/tasks as GitHub Issues
   use_issue_types: false             # true only for org repos with issue types configured (Ch.3.3)
 
 jira:
@@ -14,15 +14,18 @@ jira:
 
 # Code repositories tasks may target. A task names its repo with a
 # `repo:OWNER/NAME` label (GitHub) or `repo:` in swarm.yaml (Jira).
+# Phase 9 POC: the plan is poc/matchwire/plan.yaml (seed it with
+# `swarm.py backend seed`). Until the scaffold tasks S1/S2 land, these test
+# commands fail on a clean checkout, and that is expected.
 repos:
-  OWNER/matchwire-backend:
+  romanfq/matchwire-backend:
     base: main
     test_command: ./mvnw -q verify
-  OWNER/matchwire-frontend:
+  romanfq/matchwire-frontend:
     base: main
-    test_command: npm test --silent
+    test_command: CI=true npm test --silent
 
-default_repo: OWNER/matchwire-backend
+default_repo: romanfq/matchwire-backend
 
 swarm:
   default_quota: 3          # global N until a quota/ record overrides it (Ch.7.1)

@@ -133,6 +133,15 @@ Appendix A; PDF at `~/Documents/DAGS/DAGS-spec-v1.1.pdf`). "Plan §x" refers to 
   - `typer>=0.16`, because older typer breaks with click 8.2+.
   - typer 0.17+ bundles its own click (`typer._click`); `dags/cli.py` uses
     whichever is present (fix found on the Mac).
+- **D25: plan seeding.** `swarm.py backend seed FILE [--apply] [--yes]`
+  (`bin/dags/seed.py`, plus seeding helpers on `GitHubBackend`).
+  - Reads a YAML plan (`poc/matchwire/plan.yaml`) and creates the missing
+    labels, issues, parents (`gh issue edit --parent`) and dependencies
+    (`--add-blocked-by`).
+  - Each issue body carries `<!-- dags-seed: ID -->`, so re-runs are no-ops
+    and an interrupted run resumes. Existing issues are never rewritten;
+    differences are printed as notes.
+  - After `--apply` it re-reads the tracker and fails if anything still differs.
 - **D24: notifications** always go to `.swarm/notifications.log`.
   `notify: {desktop, webhook}` in `.swarm/local.yaml` adds macOS notifications
   and a webhook. The Board shows the log in its activity feed.
@@ -175,6 +184,9 @@ Appendix A; PDF at `~/Documents/DAGS/DAGS-spec-v1.1.pdf`). "Plan §x" refers to 
 - **On the Mac** (Claude Code, 2026-09-16, commit d4dd546): 179 tests pass,
   none skipped, in 11m54s. That includes `tests/test_cli.py`,
   `tests/test_board.py` and the end-to-end skill test. Details are below.
+- **In the Cowork cloud sandbox** (2026-09-16, Phase 9 seeder): 193 pass,
+  3 skipped (typer). The new `tests/test_cli.py::test_backend_seed_dry_run_then_apply`
+  first runs on the Mac.
 - **In the Cowork cloud sandbox** (2026-09-16, after the K1–K3 fixes): the
   suite passes; the typer/rich/textual modules skip there. `ruff check`
   (F, E9, B) is clean. The K1–K3 fixes added tests; the new CLI identity test
@@ -195,7 +207,7 @@ Appendix A; PDF at `~/Documents/DAGS/DAGS-spec-v1.1.pdf`). "Plan §x" refers to 
 | 6 Poller + notifications | done, tested |
 | 7 Swarm Board | done, tested (Mac run for the Textual pilot tests); smoke-tested by hand |
 | 8 Jira adapter | deferred (`FutureWork.md`) |
-| 9 POC on MatchWire | not started; needs Román's input (below) |
+| 9 POC on MatchWire | in progress: plan file, seeder and config done; GitHub steps with Claude Code (below) |
 
 The spec v1.1 is `claude/DAGS-spec.md` in the project, `docs/SPEC.md` in the
 repo, and `~/Documents/DAGS/DAGS-spec-v1.1.pdf`. It describes the code as
@@ -346,29 +358,64 @@ typer/rich/textual tests on the Mac"):
     (three new), `tests/test_bootstrap.py` (identity), `tests/test_cli.py`
     (identity commands).
 
-## Next (holder: cowork)
-The Phase 9 POC on MatchWire (plan §4, Phase 9). Nothing on GitHub changes
-without Román's go-ahead. Needed from Román:
-1. **Plan repo:** the GitHub repo that will hold the epics and tasks as issues
-   (e.g. `romanfq/matchwire-swarm`). Create it, or let Cowork create it.
-2. **Accounts:**
-   - his GitHub login, for `humans.yaml` (and commit emails);
-   - the bot account's login and noreply email, for `.swarm/local.yaml`
-     `bot:`. The bot needs Write access to both MatchWire repos.
-3. **Visibility:** are `matchwire-backend` and `matchwire-frontend` public?
-   On GitHub Free, branch protection only works on public repos.
-4. **Go-ahead** for:
-   - `swarm.py backend init --apply` (labels in the plan repo);
-   - `swarm.py protect <repo> --apply` on both code repos.
-5. **Test commands:** confirm or correct them for each MatchWire repo
-   (`./mvnw -q verify`, `npm test --silent`).
+## Phase 9 inputs (Román, 2026-09-16)
+- Plan repo: `romanfq/matchwire-spec`, with issues created there.
+- `romanfq/matchwire-backend` and `romanfq/matchwire-frontend` are both
+  **public**, so branch protection works on GitHub Free.
+- The bot account exists; its token is in the Keychain (`dags-worker-token`).
+- GitHub login: `romanfq`.
 
-Then Cowork will:
-- fill in `backend.yaml` (real repos, `default_repo`), `humans.yaml` and
-  `.swarm/local.yaml` (repo paths under `~/Documents/DAGS/matchwire/...`);
-- draft the plan: 2 epics × 3–4 tasks with cross-repo dependencies;
-- set up two "machines" (two clones with `--identity`);
-- run the scenarios in plan §4 Phase 9 and write a results note into the project.
+Done by Cowork:
+- `poc/matchwire/plan.yaml`, written from `~/Documents/DAGS/matchwire/MatchWire-Spec.md`:
+  - 3 epics: BE, FE and E2E.
+  - 18 tasks: S1 (backend scaffold), E1, E1b, E2–E6, E4b, S2 (frontend
+    scaffold), E7–E13, E14.
+  - Dependencies follow the spec's §7 table. S1 and S2 come first.
+  - Autonomy follows §7: E7 is `human-must-scope`, E12 is `auto-pr`, the rest
+    are `human-must-review`.
+  - E14 targets `matchwire-frontend`.
+  - Seeding it makes 13 labels, 21 issues, 18 parent links and 29
+    dependencies (checked against the fake tracker).
+- `backend.yaml` now names the real repos. The frontend test command is
+  `CI=true npm test --silent`, so Vitest runs once instead of watching.
+- `humans.yaml`: `roman` / `romanfq`.
+- The Mac's `.swarm/local.yaml` maps both repos to their checkouts under
+  `~/Documents/DAGS/matchwire/`. `bot:` is not filled in yet.
 
-Scenarios that need the real Mac (terminals, IDEs, Keychain) go to Claude Code
-with the baton.
+Why this goes to Claude Code: the Cowork cloud sandbox can't reach these
+GitHub repos, and the Cowork shell on the Mac has no network.
+
+## Next (holder: claude-code)
+Nothing on GitHub changes without Román's yes in the chat. Never print the
+bot token.
+1. Run `./bin/dev-setup.sh` and confirm the full suite passes, including
+   `test_cli.py::test_backend_seed_dry_run_then_apply`.
+2. **gh flags.** Check that `gh issue edit --help` lists `--parent` and
+   `--add-blocked-by` and that they accept an issue number. (The startup
+   prerequisite check only checks that the flags exist.) If they don't, fix
+   `GitHubBackend.set_parent` / `add_dependency` and their fakes.
+3. **Bot identity.** Run `GH_TOKEN="$(security find-generic-password -s dags-worker-token -w)" gh api user --jq '.login, .id'`.
+   - Write `bot: {login: <login>, email: <id>+<login>@users.noreply.github.com}`
+     into `.swarm/local.yaml`.
+   - Check the bot has Write access to both code repos:
+     `gh api repos/romanfq/matchwire-backend/collaborators/<login>/permission --jq .permission`
+     (as Román), and the same for the frontend.
+   - If access is missing, tell Román. Inviting a collaborator is a GitHub
+     change, so ask him first.
+4. **Seed dry run.** Run `./bin/swarm.py backend seed poc/matchwire/plan.yaml`
+   and show Román the output.
+5. **Only after Román says yes:**
+   - run `./bin/swarm.py backend seed poc/matchwire/plan.yaml --apply --yes`
+     (this creates the labels too);
+   - run `./bin/swarm.py plan sync`, then `./bin/swarm.py task list`.
+     Expect S1 and S2 to be the only `(ready)` tasks.
+6. **Ask Román** about these three, and do each only on his yes:
+   - an initial commit in the empty `matchwire-frontend` repo (a README on
+     `main`), because worktrees branch from `origin/main`;
+   - `./bin/swarm.py protect romanfq/matchwire-backend` (and the frontend):
+     dry run, then `--apply`;
+   - a push of this repo.
+7. Commit locally, set `holder: cowork` in `BATON`, and write here what
+   happened (issue numbers, bot login, anything that failed).
+
+Then Cowork sets up two "machines" and runs the plan §4 Phase 9 scenarios.

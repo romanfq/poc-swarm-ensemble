@@ -1,0 +1,311 @@
+# MatchWire plan for the Phase 9 POC (implementation plan §9).
+#
+# Source: ~/Documents/DAGS/matchwire/MatchWire-Spec.md (Draft v1). Its "epics"
+# E1..E14 are sized like DAGS tasks, so each one becomes a claimable task.
+# They are grouped under three DAGS epics: Backend, Frontend and End-to-end.
+# S1 and S2 are extra scaffold tasks: both code repos are empty, and a worker
+# can't run the repo's test command until a build exists.
+#
+# Seed it into the plan repo with:
+#   swarm.py backend seed poc/matchwire/plan.yaml            # dry run
+#   swarm.py backend seed poc/matchwire/plan.yaml --apply    # humans only
+# Seeding is idempotent: each issue carries a hidden `dags-seed` marker, so a
+# re-run only creates what is missing and adds missing links. It never edits
+# or deletes an existing issue's title, body or labels.
+
+repo: romanfq/matchwire-spec          # plan repo; must match backend.yaml github.repo
+status: ready                         # swarm:status label for new tasks (epics get none)
+
+epics:
+  - id: BE
+    title: "MatchWire backend (Spring Boot)"
+    body: |
+      Backend epics E1–E6 and E4b from the MatchWire spec (§7, §8), plus the
+      S1 scaffold. Repo: romanfq/matchwire-backend.
+
+      Milestones: M1 (E1, E1b, E2–E4), M2 (E5, E6), M3 (E4b).
+
+  - id: FE
+    title: "MatchWire frontend (React)"
+    body: |
+      Frontend epics E7–E13 from the MatchWire spec (§7), plus the S2
+      scaffold. Repo: romanfq/matchwire-frontend.
+
+      Milestone: M4 (E7–E13).
+
+  - id: E2E
+    title: "MatchWire end-to-end demo"
+    body: |
+      Cross-repo epic E14 from the MatchWire spec (§7). Milestone: M5.
+
+tasks:
+  # --- backend ---------------------------------------------------------------
+  - id: S1
+    epic: BE
+    title: "S1: Backend scaffold (Spring Boot, Maven wrapper)"
+    repo: romanfq/matchwire-backend
+    autonomy: human-must-review
+    depends_on: []
+    body: |
+      Create the Spring Boot skeleton every other backend task builds on.
+
+      - Maven project with the Maven wrapper committed (`./mvnw`), Java 21,
+        Spring Boot 3 (web + validation + test).
+      - Package root `com.matchwire`, one application class, a
+        `GET /health` endpoint that returns `{"status":"ok"}`, and one test for it.
+      - `./mvnw -q verify` passes on a clean clone. This is the swarm's test
+        command for the repo.
+      - A short README section: how to build, test and run.
+
+      Out of scope: any MatchWire feature.
+
+  - id: E1
+    epic: BE
+    title: "E1: Event model + aggregation core"
+    repo: romanfq/matchwire-backend
+    autonomy: human-must-review
+    depends_on: [S1]
+    body: |
+      MatchWire spec §6, §7 (E1).
+
+      - `MatchEvent { id, source, authorDisplayName, timestamp, type, payload }`,
+        with `source` ∈ journalist | data-feed | social and `type` covering at
+        least free-text-update, score-update, stat-update and social-reaction.
+      - An aggregation service that takes events from any source and keeps one
+        chronological stream for the life of the process (in-memory is fine for
+        v1, spec §11).
+      - A listener hook other components can subscribe to (E6 uses it for live
+        push).
+      - Unit tests for ordering, including events that arrive out of order.
+
+  - id: E1b
+    epic: BE
+    title: "E1b: Actor registration + role-scoped middleware"
+    repo: romanfq/matchwire-backend
+    autonomy: human-must-review
+    depends_on: [S1]
+    body: |
+      MatchWire spec §5.
+
+      - `POST /register/{role}` with role ∈ {journalist, data-feed, social} and
+        an optional body `{ "displayName": "..." }` returns
+        `200 { token, role, displayName }`.
+      - Tokens are UUIDs in an in-memory map. No expiry, no persistence, and
+        several actors may share a role.
+      - Middleware (filter or interceptor) that ingestion endpoints opt into:
+        a missing or unknown `X-Actor-Token` gets 401, a wrong role gets 403,
+        and the resolved actor is available to the handler.
+      - Tests for every branch.
+
+  - id: E2
+    epic: BE
+    title: "E2: Sports-data ingestion endpoint (data-feed role)"
+    repo: romanfq/matchwire-backend
+    autonomy: human-must-review
+    depends_on: [E1, E1b]
+    body: |
+      MatchWire spec §7 (E2).
+
+      An ingestion endpoint for the `data-feed` role that accepts score and stat
+      snapshots, validates them, maps them to `MatchEvent`s (score-update,
+      stat-update) and hands them to the aggregation core. Role-checked through
+      the E1b middleware. Include controller and service tests.
+
+  - id: E3
+    epic: BE
+    title: "E3: Editorial ingestion endpoint (journalist role)"
+    repo: romanfq/matchwire-backend
+    autonomy: human-must-review
+    depends_on: [E1, E1b]
+    body: |
+      MatchWire spec §7 (E3).
+
+      An ingestion endpoint for the `journalist` role that accepts short
+      live-text updates (free-text-update), with the author's display name
+      taken from the registered actor. Role-checked through the E1b
+      middleware. Include controller and service tests.
+
+  - id: E4
+    epic: BE
+    title: "E4: Social ingestion endpoint (social role)"
+    repo: romanfq/matchwire-backend
+    autonomy: human-must-review
+    depends_on: [E1, E1b]
+    body: |
+      MatchWire spec §7 (E4).
+
+      An ingestion endpoint for the `social` role that accepts short
+      reaction-style items (social-reaction), optionally referencing the match
+      event they react to. Role-checked through the E1b middleware. Include
+      controller and service tests.
+
+  - id: E5
+    epic: BE
+    title: "E5: Public REST API (current state, history, stats)"
+    repo: romanfq/matchwire-backend
+    autonomy: human-must-review
+    depends_on: [E1]
+    body: |
+      MatchWire spec §7 (E5).
+
+      Read-only public endpoints: the current match state (score, clock,
+      status), the event history (with an optional `since` cursor) and the
+      aggregated stats. Put the response DTOs in a shared `api.dto` package.
+      E6 reuses them: this is a deliberate overlap point for arbitration
+      testing. Document the endpoints (OpenAPI or a Markdown table) because
+      E7 builds the typed client from them.
+
+  - id: E6
+    epic: BE
+    title: "E6: Live push endpoint (SSE or WebSocket)"
+    repo: romanfq/matchwire-backend
+    autonomy: human-must-review
+    depends_on: [E1, E5]
+    body: |
+      MatchWire spec §7 (E6), §9.
+
+      Push new `MatchEvent`s to connected viewers as they are aggregated.
+      Server-Sent Events is the default choice. Reuse the E5 DTOs (this is a
+      deliberate overlap point). A dropped connection may simply reconnect and
+      refetch history (spec §11). Test that an ingested event reaches a
+      subscriber in well under a second.
+
+  - id: E4b
+    epic: BE
+    title: "E4b: Actor simulator module"
+    repo: romanfq/matchwire-backend
+    autonomy: human-must-review
+    depends_on: [E2, E3, E4]
+    body: |
+      MatchWire spec §8.
+
+      A separate module (or `simulator` Spring profile), off by default:
+      - a match script (YAML or JSON) with relative timestamps: kickoff,
+        goals, cards, subs, half-time and full-time;
+      - journalist actors posting bursty live-text;
+      - a data-feed actor posting periodic snapshots, plus an immediate one on
+        a goal;
+      - a small pool of social actors reacting after a random delay.
+
+      Each actor registers once via `POST /register/{role}` and reuses its
+      token. Add a speed control (real time, or accelerated for tests) and a
+      test that runs a short script end-to-end at high speed.
+
+  # --- frontend --------------------------------------------------------------
+  - id: S2
+    epic: FE
+    title: "S2: Frontend scaffold (React, TypeScript, test runner)"
+    repo: romanfq/matchwire-frontend
+    autonomy: human-must-review
+    depends_on: []
+    body: |
+      Create the React skeleton every other frontend task builds on.
+
+      - Vite + React + TypeScript, with Vitest and Testing Library.
+      - One placeholder page component with one test.
+      - `CI=true npm test --silent` runs the tests once and exits non-zero on
+        failure. This is the swarm's test command for the repo.
+      - `npm run dev` starts the app, and `npm run build` succeeds.
+      - `package-lock.json` is committed. A short README section explains how
+        to build, test and run.
+
+  - id: E7
+    epic: FE
+    title: "E7: API contract + typed client"
+    repo: romanfq/matchwire-frontend
+    autonomy: human-must-scope
+    depends_on: [S2, E5]
+    body: |
+      MatchWire spec §7 (E7). Cross-repo contract: autonomy is
+      human-must-scope, so a human writes or approves the scope before any
+      code is written.
+
+      TypeScript types for `MatchEvent`, the match state and stats, matching
+      E5's DTOs. A small client for the REST endpoints, plus a subscription
+      helper for the E6 live stream. The backend base URL comes from
+      configuration. Test the client against mocked responses.
+
+  - id: E8
+    epic: FE
+    title: "E8: Scoreboard component"
+    repo: romanfq/matchwire-frontend
+    autonomy: human-must-review
+    depends_on: [E7]
+    body: |
+      MatchWire spec §7 (E8). Show the teams, the score, the match clock and
+      status from the current match state, updating as score events arrive.
+      Include component tests.
+
+  - id: E9
+    epic: FE
+    title: "E9: Live blog feed component"
+    repo: romanfq/matchwire-frontend
+    autonomy: human-must-review
+    depends_on: [E7, E6]
+    body: |
+      MatchWire spec §7 (E9). A reverse-chronological feed of events from all
+      three sources, with a visual distinction per source. New events arrive
+      over the live stream without a page reload. Include component tests
+      that use a mocked stream.
+
+  - id: E10
+    epic: FE
+    title: "E10: Stats panel component"
+    repo: romanfq/matchwire-frontend
+    autonomy: human-must-review
+    depends_on: [E7]
+    body: |
+      MatchWire spec §7 (E10). Show the aggregated match stats (possession,
+      shots, cards and so on) from the stats endpoint, refreshed as
+      stat-update events arrive. Include component tests.
+
+  - id: E11
+    epic: FE
+    title: "E11: Timeline / key-moments strip"
+    repo: romanfq/matchwire-frontend
+    autonomy: human-must-review
+    depends_on: [E7]
+    body: |
+      MatchWire spec §7 (E11). A horizontal strip of key moments (goals, cards,
+      subs, half-time), placed by match minute. Include component tests.
+
+  - id: E12
+    epic: FE
+    title: "E12: Social embed styling"
+    repo: romanfq/matchwire-frontend
+    autonomy: auto-pr
+    depends_on: [E7]
+    body: |
+      MatchWire spec §7 (E12). An isolated, low-risk task, so autonomy is
+      auto-pr. Style social-reaction items as compact social cards (author,
+      text, time) in their own component and stylesheet. Include a component
+      test.
+
+  - id: E13
+    epic: FE
+    title: "E13: Responsive layout + loading/error states"
+    repo: romanfq/matchwire-frontend
+    autonomy: human-must-review
+    depends_on: [E8, E9, E10, E11, E12]
+    body: |
+      MatchWire spec §7 (E13). Lay out the page for mobile and desktop, and add
+      loading and error states to every component's container. This task
+      touches every component's container on purpose: it is an overlap point
+      for arbitration testing. Include tests for the loading and error states.
+
+  # --- end-to-end ------------------------------------------------------------
+  - id: E14
+    epic: E2E
+    title: "E14: End-to-end demo harness"
+    repo: romanfq/matchwire-frontend
+    autonomy: human-must-review
+    depends_on: [E4b, E13]
+    body: |
+      MatchWire spec §7 (E14), §12.
+
+      One command starts the backend with the simulator, starts the frontend
+      and runs a match script, so the page updates live with no manual steps.
+      It assumes both repos are checked out side by side, and the backend
+      location can be overridden. Add an unattended mode that runs a short
+      accelerated script and checks that events reached the page (for
+      example with Playwright). Document it in the README.
