@@ -92,6 +92,7 @@ class Poller:
         if self.use_gh:
             self._prs(snap, rep)
         self._contract(snap, rep)
+        self._sweep_worktrees(snap)
 
         self.state["first_run"] = False
         self.save()
@@ -253,13 +254,17 @@ class Poller:
         self.state["announced"] = sorted(announced)
 
     def _cleanup_worktree(self, t) -> None:
-        wt = worktree.worktree_path(self.ctx, t.dir)
-        if not wt.exists() or not t.repo:
-            return
         try:
-            worktree.remove(self.ctx.repo_path(t.repo), wt)
+            worktree.cleanup(self.ctx, t.dir)
         except Exception as e:  # noqa: BLE001
-            log.warning("could not remove worktree %s: %s", wt, e)
+            log.warning("could not remove the worktree of %s: %s", t.short, e)
+
+    def _sweep_worktrees(self, snap: snapshot.Snapshot) -> None:
+        """Remove this machine's worktrees for tasks that are finished, however
+        they got there: merged on the Board, in the web UI, or closed (K1)."""
+        for t in snap.work:
+            if t.state in ("done", "rejected") and worktree.worktree_path(self.ctx, t.dir).exists():
+                self._cleanup_worktree(t)
 
     def _backend(self, t, status: str, comment: str | None) -> None:
         from backends.base import TaskRef

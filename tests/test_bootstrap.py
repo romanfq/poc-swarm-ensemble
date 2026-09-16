@@ -174,7 +174,8 @@ def test_daemon_threads_run_and_stop(swarm, tmp_path, monkeypatch):
     backend.add("T1", title="x", labels=["repo:OWNER/app"])
     ctx.set_backend(backend)
     seen = []
-    d = daemon.Daemon(ctx, daemon.Options(quota_share=0, poll_interval=0.05, cycle_interval=0.05),
+    d = daemon.Daemon(ctx, daemon.Options(quota_share=0, poll_interval=0.05, cycle_interval=0.05,
+                                                 heartbeat_interval=0.05),
                       notify=lambda text, kind="info": seen.append(kind))
     d.poller.use_gh = False
     d.start_threads()
@@ -202,3 +203,18 @@ def test_status_rows_without_daemon(swarm):
     assert "0 tasks ready" in rows["coordination"][0]
     assert rows["scheduler"][1] == "off" and "quota-share 2" in rows["scheduler"][0]
     assert rows["quota"][0].startswith("0/3")
+
+
+def test_identity_override_is_remembered(tmp_path):
+    """K3: `--identity` names a fresh clone for good; later commands need no flag."""
+    from dags.config import Context
+    (tmp_path / "backend.yaml").write_text("backend: fake\n")
+    c = Context(tmp_path, identity="Mac A", persist_identity=True)
+    assert c.identity == "Mac-A" and c.identity_mismatch is None
+    assert Context(tmp_path).identity == "Mac-A"
+    other = Context(tmp_path, identity="mac-b", persist_identity=True)
+    assert other.identity == "mac-b" and other.identity_mismatch == "Mac-A"
+    assert Context(tmp_path).identity == "Mac-A"          # a one-off override doesn't rename
+    assert Context(tmp_path, identity="x").stored_identity() == "Mac-A"
+    Context(tmp_path).set_identity("mac-c")
+    assert Context(tmp_path).identity == "mac-c"

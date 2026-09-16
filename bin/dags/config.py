@@ -64,12 +64,21 @@ class Settings:
 class Context:
     """Everything a machine needs to act on the swarm."""
 
-    def __init__(self, root: Path | str | None = None, identity: str | None = None):
+    def __init__(self, root: Path | str | None = None, identity: str | None = None,
+                 persist_identity: bool = False):
         self.root = Path(root or ROOT).resolve()
         self.swarm_dir = self.root / ".swarm"
         self.worktrees_dir = self.root / ".worktrees"
-        self._identity_override = identity
+        self._identity_override = R.slug(identity) if identity else None
         self._backend = None
+        #: set when --identity differs from the name this clone already has
+        self.identity_mismatch: str | None = None
+        if self._identity_override and persist_identity:
+            stored = self.stored_identity()
+            if stored is None:
+                self.create_identity(self._identity_override)     # remembered from now on (K3)
+            elif stored != self._identity_override:
+                self.identity_mismatch = stored
 
     # -- files ----------------------------------------------------------------
     @property
@@ -130,6 +139,19 @@ class Context:
             if value:
                 return value
         return self.create_identity()
+
+    def stored_identity(self) -> str | None:
+        path = self.swarm_dir / "identity"
+        value = path.read_text().strip() if path.exists() else ""
+        return value or None
+
+    def set_identity(self, name: str) -> str:
+        """Rename this clone's machine identity (``swarm.py identity set``)."""
+        value = R.slug(name)
+        self.swarm_dir.mkdir(parents=True, exist_ok=True)
+        (self.swarm_dir / "identity").write_text(value + "\n")
+        self._identity_override = None
+        return value
 
     def identity_is_new(self) -> bool:
         return not (self.swarm_dir / "identity").exists()

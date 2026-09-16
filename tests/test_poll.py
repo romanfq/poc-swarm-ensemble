@@ -234,3 +234,26 @@ def test_notifier_log_desktop_webhook(tmp_path):
     quiet = Notifier(tmp_path, {}, opener=opener, run=lambda cmd, **kw: ran.append(cmd), platform="darwin")
     quiet("x")
     assert len(sent) == 1 and len(ran) == 1
+
+
+def test_board_merge_removes_the_worktree(pr_open, monkeypatch):
+    """K1: a merge made with the Board's `m` / `task merge` cleans up at once."""
+    world, a, d, wt, url, poller = pr_open
+    from dags import actions
+    monkeypatch.setattr("dags.gh.approve_and_merge",
+                        lambda repo, number, body="": world.prs.get(url).update(state="MERGED"))
+    assert wt.exists()
+    actions.merge(a, d)
+    assert rv.is_done(d) and not wt.exists()
+    assert "swarm/T1" in __import__("conftest").sh(["git", "branch"], a.repo_path("OWNER/app"))
+
+
+def test_poller_sweeps_worktrees_of_tasks_finished_elsewhere(pr_open):
+    """K1: merged from another machine (or the web UI, recorded elsewhere)."""
+    world, a, d, wt, url, poller = pr_open
+    from dags import actions
+    jane = world.machine("jane-mac", human="jane")
+    actions.record_merged(jane, rv.index(jane.root)["T1"], url, merged_by="jane")
+    assert wt.exists()
+    Poller(a, notify=world.notify, use_gh=False).cycle()
+    assert not wt.exists()

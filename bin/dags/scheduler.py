@@ -30,6 +30,8 @@ class CycleReport:
     lost: list[str] = field(default_factory=list)
     dispatched: list[str] = field(default_factory=list)
     awaiting_worker: list[str] = field(default_factory=list)
+    pausing: list[str] = field(default_factory=list)
+    released: list[str] = field(default_factory=list)
     room: int = 0
     errors: list[str] = field(default_factory=list)
 
@@ -99,6 +101,7 @@ class Scheduler:
         share = ctl["quota_share"] if ctl["quota_share"] is not None else self.share
 
         self.tidy_own_claims(rep)
+        self.enforce_quota(share, rep)
 
         if ctl["paused"]:
             rep.paused = True
@@ -172,6 +175,53 @@ class Scheduler:
                             f"to {winner.id if winner else 'a freeze'}; stopped working on it", "lost")
             if winner is not None and winner.machine == self.me and winner in res.valid and state == "claimed":
                 self.after_win(d, winner.id, rep)
+
+    def enforce_quota(self, share: int, rep: CycleReport) -> None:
+        """Quota lowered below what is running (Ch.8): a claim with no worker
+        yet is released at once; a running one is asked to checkpoint and stop
+        (``pause_requested`` in its checkpoint, shown by the skill) and is
+        released one lease later. The task then waits, ready, until a slot
+        frees, and resumes from its checkpoint."""
+        ctx = self.ctx
+        now = timeutil.now()
+        lease = ctx.settings.lease_s
+        humans = ctx.human_names
+        over = resolve.over_quota(ctx.root, self.me, share, ctx.settings.default_quota, now, lease, humans)
+        over_ids = {c.id for _, c in over}
+        for d, c in over:
+            label = resolve.label(d)
+            state = resolve.task_state(d, now, lease, humans)
+            cp = L.read_checkpoint(d)
+            req = cp.get("pause_requested") if cp.get("claim_id") == c.id else None
+            if state == "claimed" or (req and (timeutil.age_seconds(req.get("at"), now) or 0) >= lease):
+                L.withdraw(ctx, d, c.id, "quota")
+                if req:
+                    L.update_checkpoint(ctx, d, c.id, check_owner=False, pause_requested=None)
+                self._status_cache.pop(str(resolve.read_meta(d)["key"]), None)
+                self._set_status(d, "ready")
+                rep.released.append(label)
+                self.notify(f"{label} released: the quota was lowered. It will resume from its "
+                            f"checkpoint when a slot frees.", "quota")
+            elif not req:
+                L.update_checkpoint(ctx, d, c.id, pause_requested={
+                    "claim_id": c.id, "at": timeutil.iso(),
+                    "reason": "the quota was lowered below the tasks running"})
+                rep.pausing.append(label)
+                self.notify(f"The quota was lowered: {label} should record its progress "
+                            f"(swarm-task note) and stop. It will be released in "
+                            f"{int(lease // 60)} minutes.", "quota")
+            else:
+                rep.pausing.append(label)
+        # quota raised again before the grace period ended: lift the request
+        for d in resolve.task_dirs(ctx.root):
+            cp = L.read_checkpoint(d)
+            req = cp.get("pause_requested")
+            if not req or cp.get("machine") != self.me or req.get("claim_id") in over_ids:
+                continue
+            res = resolve.resolve(d, now, lease, humans)
+            if res.winner is not None and res.winner.id == req.get("claim_id") and res.winner in res.valid:
+                L.update_checkpoint(ctx, d, res.winner.id, pause_requested=None)
+                self.notify(f"Quota raised again: {resolve.label(d)} can carry on.", "quota")
 
     def after_win(self, d: Path, cid: str, rep: CycleReport) -> None:
         label = resolve.label(d)

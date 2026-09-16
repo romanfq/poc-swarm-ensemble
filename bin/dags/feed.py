@@ -65,6 +65,8 @@ def describe(root: Path, path: Path, data: dict) -> Event | None:
             text = f"{machine} lost the race for {task} to {data.get('winner')} and withdrew"
         elif reason == "released":
             text = f"{machine} released {task}"
+        elif reason == "quota":
+            text = f"{machine} paused {task} because the quota was lowered; it resumes from its checkpoint"
         else:
             text = f"{machine} gave up {task} ({reason})"
         return Event(clock, rel, text, "withdrawal")

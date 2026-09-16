@@ -136,3 +136,17 @@ def commits_ahead(wt: Path, base: str) -> int:
 def head(wt: Path) -> str:
     return git_out(["rev-parse", "HEAD"], wt)
 
+
+
+def cleanup(ctx, task_dir: Path) -> bool:
+    """Remove this machine's worktree for a finished task (merged or rejected).
+    Returns True when something was removed. Safe to call repeatedly."""
+    wt = worktree_path(ctx, task_dir)
+    if not wt.exists():
+        return False
+    repo = resolve.read_meta(task_dir).get("repo")
+    if repo:
+        remove(ctx.repo_path(str(repo)), wt)
+    else:
+        shutil.rmtree(wt, ignore_errors=True)
+    return not wt.exists()

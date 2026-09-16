@@ -55,6 +55,12 @@ class TaskView:
         return self.res.outcome.pr_url
 
     @property
+    def pausing(self) -> bool:
+        """The swarm asked this task's worker to stop because the quota was lowered."""
+        req = self.checkpoint.get("pause_requested")
+        return bool(req and self.winner and req.get("claim_id") == self.winner.id)
+
+    @property
     def needs_human(self) -> str | None:
         return self.checkpoint.get("needs_human") or None
 

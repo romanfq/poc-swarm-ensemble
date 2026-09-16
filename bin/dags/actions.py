@@ -95,6 +95,11 @@ def merge(ctx, task_dir: Path, allow_failing_checks: bool = False) -> str:
         raise ActionError(f"checks are failing on {outcome.pr_url}")
     gh.approve_and_merge(repo, number, body=f"Approved by {human} via DAGS")
     record_merged(ctx, task_dir, outcome.pr_url, merged_by=human)
+    try:
+        from dags import worktree
+        worktree.cleanup(ctx, task_dir)   # K1; other machines' pollers sweep theirs
+    except Exception as e:  # noqa: BLE001
+        log.warning("could not remove the worktree of %s: %s", resolve.label(task_dir), e)
     return outcome.pr_url
 
 

@@ -101,3 +101,17 @@ def test_panel_renders(machine):
     console.print(panel.render(panel.status_rows(machine, share=3)))
     text = console.export_text()
     assert "identity" in text and "scheduler" in text and "quota-share 3" in text
+
+
+def test_identity_commands(machine):
+    assert invoke("identity", "show").output.strip() == machine.identity
+    invoke("plan", "sync")
+    invoke("task", "list")
+    from dags import ledger as L
+    import resolve as rv
+    L.claim(machine, rv.index(machine.root)["T1"])
+    (machine.swarm_dir / "identity").write_text("mac-a\n")
+    r = runner.invoke(cli.app, ["identity", "set", "mac-z"])
+    assert r.exit_code == 1 and "still holds T1" in r.output
+    assert invoke("identity", "set", "mac-z", "--force").exit_code == 0
+    assert (machine.swarm_dir / "identity").read_text().strip() == "mac-z"

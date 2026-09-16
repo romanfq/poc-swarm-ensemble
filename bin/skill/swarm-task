@@ -107,9 +107,20 @@ def cmd_plan(args):
           f"`.swarm-task/swarm-task plan --submit`.")
 
 
+def pause_note(cp):
+    req = cp.get("pause_requested")
+    if req and req.get("claim_id") == CTX.get("claim_id"):
+        return ("The swarm asked this task to PAUSE (" + str(req.get("reason")) + "). Record your progress "
+                "with `swarm-task note --tried ... --remaining ...` and stop; it resumes from the "
+                "checkpoint when a slot frees.")
+    return None
+
+
 def cmd_status(args):
     info = task_context()
     cp = info.get("checkpoint") or {}
+    if pause_note(cp):
+        print(pause_note(cp))
     print(f"task:        {CTX['short']} — {CTX.get('title')}")
     print(f"autonomy:    {CTX.get('autonomy')}")
     print(f"plan:        {info.get('plan_status') or 'not written yet'}")
@@ -120,6 +131,8 @@ def cmd_status(args):
 
 def cmd_implement(args):
     info = task_context()
+    if pause_note(info.get("checkpoint") or {}):
+        sys.exit("swarm-task: " + pause_note(info["checkpoint"]))
     if not info.get("allowed"):
         sys.exit(f"swarm-task: the plan is '{info.get('plan_status') or 'missing'}', not approved — "
                  f"run `swarm-task plan` / wait for review before implementing.")

@@ -38,6 +38,7 @@ class Options:
     default_worker: str | None = None
     identity: str | None = None
     no_poller: bool = False
+    heartbeat_interval: float | None = None   # default: min(heartbeat, lease / 3)
 
 
 def parse_interval(text: str | float | int) -> float:
@@ -155,7 +156,8 @@ class Daemon:
         from dags.scheduler import Loop
         s = self.ctx.settings
         self.loops = [
-            Loop("heartbeat", self.heartbeater.cycle, min(s.heartbeat_s, s.lease_s / 3), self.stop),
+            Loop("heartbeat", self.heartbeater.cycle,
+                 self.opts.heartbeat_interval or min(s.heartbeat_s, s.lease_s / 3), self.stop),
             Loop("scheduler", self._scheduler_cycle, self.opts.cycle_interval, self.stop),
         ]
         if self.poller:

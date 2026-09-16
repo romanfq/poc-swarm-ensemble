@@ -5,8 +5,10 @@ This repo is the **coordination repository** of DAGS (Distributed AGent Swarm):
 - the committed protocol scripts (`bin/`).
 
 Design sources, in order of authority:
-1. The whitepaper, *DAGS — Distributed AGent Swarm*. Where its text and figures
-   disagree, the text wins. Chapter numbers (Ch.x) in the code refer to it.
+1. `docs/SPEC.md`: the spec v1.1, the whitepaper with every build decision
+   folded in, plus a primer, how-tos and a reference. Chapter numbers (Ch.x)
+   in the code refer to it. The original v1.0 whitepaper lives in the
+   claude.ai DAGS project.
 2. `docs/HANDOVER.md`: decisions made, build status, and the **Next** checklist.
 3. The implementation plan (§x.y references in the code). Its key decisions are
    summarised in `docs/HANDOVER.md`.

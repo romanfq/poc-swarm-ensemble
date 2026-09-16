@@ -54,7 +54,11 @@ _state: dict = {}
 
 def ctx() -> Context:
     if "ctx" not in _state:
-        _state["ctx"] = Context(_state.get("root"), identity=_state.get("identity"))
+        c = Context(_state.get("root"), identity=_state.get("identity"), persist_identity=True)
+        if c.identity_mismatch:
+            err.print(f"[yellow]note:[/] acting as {escape(c.identity)} for this command; this clone is "
+                      f"{escape(c.identity_mismatch)} (`swarm.py identity set` renames it)")
+        _state["ctx"] = c
     return _state["ctx"]
 
 
@@ -374,6 +378,36 @@ def backend_init(apply: bool = typer.Option(False, "--apply", help="Create the l
 # ---------------------------------------------------------------------------
 # human levers
 # ---------------------------------------------------------------------------
+
+identity_app = typer.Typer(no_args_is_help=True, help="This clone's machine identity (Ch.5.3 step 3).")
+app.add_typer(identity_app, name="identity")
+
+
+@identity_app.command("show")
+@guarded
+def identity_show():
+    """Print the machine identity this clone uses."""
+    c = ctx()
+    typer.echo(c.identity)
+
+
+@identity_app.command("set")
+@guarded
+def identity_set(name: str, force: bool = typer.Option(False, "--force",
+                                                      help="Rename even though the old name holds live claims.")):
+    """Rename this clone's machine identity. Claims made under the old name keep it."""
+    c = ctx()
+    old = c.stored_identity()
+    if old and not force:
+        snap = snapshot.take(Context(c.root, identity=old))
+        live = [t.short for t in snap.live_claims if t.owner_machine == old]
+        if live:
+            fail(f"{old} still holds {', '.join(live)}; release or finish them first, or pass --force")
+    if daemon.running_pid(c):
+        fail("stop the daemon first (`swarm.py stop`)")
+    new = c.set_identity(name)
+    console.print(f"identity is now {escape(new)}" + (f" (was {escape(old)})" if old else ""))
+
 
 @quota_app.command("set")
 @guarded

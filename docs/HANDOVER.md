@@ -13,43 +13,152 @@ in the coordination repo (for Claude Code), and `~/Documents/DAGS/DAGS-handover.
 - MatchWire frontend: `~/Documents/DAGS/matchwire/fe/matchwire-frontend`
 
 ## Decisions made
-- Code lives inside the coordination repo (plan §2.15).
-- Workers open PRs with a separate GitHub bot (machine) account (plan §2.1).
-  - The token is in the macOS Keychain, service `dags-worker-token`.
-  - Pushes use the human's normal git credentials. Only the PR step
-    (`gh pr create`/`gh pr comment` inside `swarm-task done`) uses the bot token,
-    because the PR author is what matters for approvals.
-- macOS only for worker launchers (plan §2.14).
-- Every other open question uses the plan's proposed default:
-  - §2.3 skew-corrected wall-clock leases;
-  - §2.5 `quota/` records;
-  - §2.6 `repo:` label;
-  - §2.13 `.worktrees/` plus `.swarm/local.yaml` repo path mapping.
-- **Phase 8 (Jira adapter) is deferred.** Román has no Jira instance. See
-  `FutureWork.md`; `backend: jira` fails with a pointer there.
-- **Two agents, one baton.**
-  - Claude in Cowork writes code and the tests that run in its cloud sandbox.
-  - Claude Code on the Mac runs anything that needs the real Mac: the venv,
-    typer/rich/textual, `gh`, Keychain, `osascript`, and the Phase 9 POC.
-  - The `BATON` file names the only agent allowed to edit. Hand-offs are local
-    commits, never pushed. `CLAUDE.md` holds the rules for Claude Code.
-- GitHub reads use one paginated `gh api graphql` query (parent, subIssues,
-  blockedBy, issueType). This avoids depending on which `--json` fields a given
-  gh release supports. Writes use `gh issue edit/close/comment`.
-- **Plan review gate (§2.8).**
-  - The plan is stored in `checkpoint.yaml` (`plan_md`, `plan_sha`).
-  - Human approvals are append-only records in `tasks/…/plan-reviews/`, so any
-    human on any machine can approve without writing the single-writer checkpoint.
-  - `auto-pr` tasks self-approve.
-- **The skill stays stdlib-only.** `.swarm-task/swarm-task` calls
-  `swarm.py task …` (context, note, submit-plan, block, done) using the venv
-  Python recorded in `.swarm-task/context.json`.
-- Task keys:
-  - GitHub tasks are keyed `OWNER/REPO#N`, with the short name `GH-N`.
-  - Ledger dirs are `tasks/<EPIC-short>/<TASK-short>`; epics use `tasks/<EPIC>/_epic`.
-  - Tasks without an epic go under `tasks/_no-epic/`.
-- Still unknown: whether the MatchWire repos are public or private (affects
-  branch protection on a free plan).
+
+Reviewed against the code on 2026-09-16. The full rationale, and how each
+decision changes the whitepaper, is in the spec v1.1 (`claude/DAGS-spec.md`,
+Appendix A; PDF at `~/Documents/DAGS/DAGS-spec-v1.1.pdf`). "Plan §x" refers to `claude/DAGS-implementation-plan.md`.
+
+**Settled by Román**
+- **D1: code location.** The code lives inside the coordination repo, in `bin/` (plan §2.15).
+- **D2: bot account for worker PRs** (plan §2.1).
+  - Token: macOS Keychain, service `dags-worker-token`. Alternatives are the
+    `DAGS_WORKER_GH_TOKEN` env var, or `worker_token: none` in `.swarm/local.yaml`
+    (PRs under your own account; admin-bypass mode, no longer agent-proof).
+  - Only the PR step (`gh pr create` / `gh pr comment` in `swarm-task done`)
+    uses the bot token. Pushes use the human's normal git credentials.
+  - Worker commits are authored as the bot when `.swarm/local.yaml` has
+    `bot: {login, email}`.
+  - Humans approve and merge with their own `gh auth`.
+- **D3: macOS only** for worker launchers (plan §2.14): Terminal/iTerm via
+  `osascript`, `open -na "IntelliJ IDEA.app"`, `code -n`.
+- **D4: Phase 8 (Jira adapter) deferred.** There's no Jira instance (`FutureWork.md`).
+  `backend: jira` fails with a pointer there.
+- **D5: two agents, one baton.**
+  - Cowork writes code; Claude Code runs what needs the real Mac.
+  - `BATON` names the only agent allowed to edit.
+  - Hand-offs are local commits, never pushed. `CLAUDE.md` holds Claude Code's rules.
+
+**Plan defaults adopted** (no objection raised)
+- **D6: leases (§2.3).**
+  - Leases use wall-clock time, corrected for clock skew: each process
+    measures its offset from GitHub's `Date` header (`gh api -i /meta`).
+  - Lease 15 min, heartbeat every 3 min (`backend.yaml` → `swarm:`).
+- **D7: single-writer files (§2.4).**
+  - `heartbeats/<machine>.yaml` and `checkpoint.yaml` are written only by the
+    current winner, which re-checks `resolve()` after pulling.
+  - One heartbeat commit per cycle for all of a machine's claims.
+  - The retry count is computed, never stored. `meta.yaml` never changes;
+    later tracker changes are stored as `meta/` revisions.
+- **D8: daemon and Board (§2.2).**
+  - `start` spawns a detached daemon (scheduler, heartbeat and poller
+    threads), with `.swarm/daemon.pid`, `.swarm/daemon.json` and `.swarm/swarm.log`.
+  - The Board is a separate foreground process: `swarm.py board` or
+    `start --attach`. With no daemon running, the Board runs its own poller.
+  - `stop` writes a shared stop record, then sends SIGTERM.
+- **D9: global quota (§2.5).** Global N lives in `quota/<human>-<clock>.yaml`;
+  the latest clock wins. Only `humans.yaml` names count. The default is
+  `swarm.default_quota`.
+- **D10: target repo (§2.6).** First match wins:
+  1. the `repo:OWNER/NAME` issue label;
+  2. `epic_repos:` in `backend.yaml` (keyed by epic key or short key);
+  3. `default_repo:`.
+  - Epics have no repo. A task without one is never claimed.
+  - `repos:` holds per-repo `base` and `test_command`; it doesn't whitelist repos.
+- **D11: plan sync and Done (§2.7).**
+  - Every scheduler cycle mirrors the tracker into `tasks/`.
+  - Done means the PR was merged, recorded by the poller or by the Board's
+    Approve & merge. A task closed by hand in the tracker imports as done too.
+  - Readiness: the backend doesn't hold the task back, and the ledger says its
+    dependencies are done, it's not frozen, and there's no live claim or open PR.
+- **D12: autonomy tiers (§2.8).**
+  - `auto-pr`: the AI worker may self-approve its plan.
+  - `human-must-review`: a human approves the plan before `implement`/`done`.
+  - `human-must-scope`: never goes to an AI worker.
+  - After `max_retries` failed claims (expired or given up, not lost races),
+    the tier drops one step. The backend label changes first, then the ledger.
+- **D13: idle limit (§2.9)** — after `human_idle_hours` with no progress, the
+  owner is asked "still working?". With no answer within one more lease,
+  heartbeats stop and the claim expires.
+  - The plan applied this to human workers only; the build applies it to
+    every worker, since an AI terminal can die silently too.
+- **D14: tests instead of CI (§2.10).**
+  - `done` runs the repo's `test_command` and refuses to open a PR if it fails.
+  - Merge refuses only if the PR's status checks (`gh pr view --json
+    statusCheckRollup`) are failing (`--force` overrides), or if the PR is no
+    longer open. No checks at all is fine.
+- **D15: command corrections (§2.11).**
+  - Use `gh issue edit --add-blocked-by`; the prerequisite check looks for it.
+  - Branch protection is set with a full JSON body via `swarm.py protect`
+    (a dry run unless `--apply`).
+  - `swarm.py board --web` installs textual-dev when needed and serves on port 4590.
+- **D16: arbitration trust (§2.12), only partly implemented.**
+  - Arbitration, quota and plan-review records from names not in `humans.yaml`
+    are ignored.
+  - The planned check that the commit author's email matches `humans.yaml` is
+    **not built yet** (`Coord.author_email` exists but nothing uses it).
+- **D17: locations (§2.13).**
+  - `.worktrees/<TASK>` on branch `swarm/<TASK>`, and `.swarm/`, both
+    git-ignored in the coordination clone.
+  - Code repos: the path mapped in `.swarm/local.yaml` → `repos:`, otherwise
+    `.swarm/repos/OWNER/NAME`, cloned with `gh`.
+
+**Build decisions (made during implementation)**
+- **D18: GitHub reads** use one paginated `gh api graphql` query (parent,
+  subIssues, blockedBy, issueType). Writes use `gh issue edit/close/comment`.
+  Without type labels, an issue with sub-issues counts as an epic.
+- **D19: task keys.**
+  - GitHub keys look like `OWNER/REPO#N`, with short name `GH-N`.
+  - Ledger directories: `tasks/<EPIC-short>/<TASK-short>`, epics at
+    `tasks/<EPIC>/_epic`, tasks without an epic under `tasks/_no-epic/`.
+  - Every command accepts the full key, the short key or the directory name.
+- **D20: plan review gate.**
+  - The plan text and its hash live in `checkpoint.yaml` (`plan_md`, `plan_sha`).
+  - Approvals are append-only `plan-reviews/` records, so any human on any
+    machine can approve.
+  - A new plan needs a new approval.
+- **D21: the skill stays stdlib-only.** `.swarm-task/swarm-task` delegates to
+  `swarm.py task …`, using the venv Python recorded in `.swarm-task/context.json`.
+  (The plan said `context.yaml`; JSON keeps the skill stdlib-only.)
+- **D22: outcome records** in `completions/`: `pr-opened`, `done`, `reopened`,
+  `rejected` and `replanned`.
+  - A new CHANGES_REQUESTED review → `reopened`. The task returns to the queue
+    and any machine may resume it from the checkpoint and PR feedback; the next
+    `done` comments on the same PR.
+  - A PR closed without merging → `rejected`. The backend status becomes
+    `blocked` until a human sets `swarm:status:ready`, which records `replanned`.
+- **D23: venv.**
+  - `swarm.py` creates `.swarm/venv` on first run and re-executes itself inside it.
+  - The venv is stamped with platform and Python version and rebuilt if it came
+    from elsewhere. A dev venv (`bin/dev-setup.sh`) also serves normal runs.
+  - `typer>=0.16`, because older typer breaks with click 8.2+.
+  - typer 0.17+ bundles its own click (`typer._click`); `dags/cli.py` uses
+    whichever is present (fix found on the Mac).
+- **D24: notifications** always go to `.swarm/notifications.log`.
+  `notify: {desktop, webhook}` in `.swarm/local.yaml` adds macOS notifications
+  and a webhook. The Board shows the log in its activity feed.
+
+**Still open**
+- Whether the MatchWire repos are public or private. On GitHub Free, branch
+  protection only applies to public repos.
+- Whether to build K4 (below).
+
+**Known gaps** (found when the spec was checked against the code on 2026-09-16)
+- **K1, fixed:** Board `m` / `task merge` used to leave the task's worktree
+  behind. Merge now removes it, and every poller sweeps the worktrees of tasks
+  that are done or rejected.
+- **K2, fixed:** lowering N or a quota share used to leave running tasks alone.
+  - The newest claims now yield: a claim with no worker is withdrawn at once
+    (reason `quota`).
+  - A running task gets `pause_requested`, which the skill shows and which
+    blocks `implement`. It is withdrawn one lease later.
+  - The task resumes from its checkpoint when a slot frees. Raising the quota
+    during the grace period lifts the request.
+  - `quota` withdrawals don't count as failures.
+- **K3, fixed:** `--identity` on a fresh clone is written to `.swarm/identity`.
+  On a named clone it applies to that command only, with a warning.
+  `swarm.py identity show|set` shows or renames it.
+- **K4, open:** D16's commit-author check isn't built.
+
 
 ## Environment findings (2026-09-16)
 - The Cowork "device shell" on the Mac is an isolated **Linux** VM (Python 3.10)
@@ -63,19 +172,17 @@ in the coordination repo (for Claude Code), and `~/Documents/DAGS/DAGS-handover.
 
 ## Build status
 
-Tests: **179 pass, nothing skipped**, on Román's Mac (2026-09-16, Claude Code),
-in 11m54s with `./bin/dev-setup.sh`. That includes the three things that had
-never run anywhere before — `tests/test_cli.py`, `tests/test_board.py` and the
-end-to-end test in `tests/test_skill.py`. The suite is slow by design: the
-scheduler heartbeat/idle-limit, poller and gitsync tests wait on real clocks
-and real git.
-
-In the Cowork cloud sandbox the same suite is 164 pass, 3 modules skipped
-(no typer/rich/textual there).
-
-`ruff check` (F, E9, B) is clean as of the last Cowork run; ruff isn't
-installed on the Mac and isn't in `bin/requirements-dev.txt`, so Claude Code
-did not re-run it.
+- **On the Mac** (Claude Code, 2026-09-16, commit d4dd546): 179 tests pass,
+  none skipped, in 11m54s. That includes `tests/test_cli.py`,
+  `tests/test_board.py` and the end-to-end skill test. Details are below.
+- **In the Cowork cloud sandbox** (2026-09-16, after the K1–K3 fixes): the
+  suite passes; the typer/rich/textual modules skip there. `ruff check`
+  (F, E9, B) is clean. The K1–K3 fixes added tests; the new CLI identity test
+  will first run on the Mac.
+- **Speed:** the daemon test no longer waits 20 s for a heartbeat cycle; it
+  now sets `heartbeat_interval`. The Mac run is slower than the cloud (about
+  2 min) because the gitsync and poller tests do real git work under
+  `~/Documents`.
 
 | Phase | Status |
 |---|---|
@@ -83,37 +190,59 @@ did not re-run it.
 | 1 Deterministic core | done, tested |
 | 2 Git sync + gh wrapper | done, tested |
 | 3 Issue backend port | done, tested (Jira deferred) |
-| 4 `swarm.py` bootstrap | done, tested (CLI tests run on the Mac) |
-| 5 Scheduler, workers, skill | done, tested (skill end-to-end run on the Mac) |
+| 4 `swarm.py` bootstrap | done, tested (Mac run for the typer CLI) |
+| 5 Scheduler, workers, skill | done, tested (Mac run for the end-to-end skill test) |
 | 6 Poller + notifications | done, tested |
-| 7 Swarm Board | done, tested (Textual pilot run on the Mac) |
+| 7 Swarm Board | done, tested (Mac run for the Textual pilot tests); smoke-tested by hand |
 | 8 Jira adapter | deferred (`FutureWork.md`) |
-| 9 POC on MatchWire | not started |
+| 9 POC on MatchWire | not started; needs Román's input (below) |
 
-The typer/rich/textual code was written without being able to run it, then
-reviewed by a second agent against the libraries' APIs. Fixes from that review:
-- `BoardApp.run_action` renamed to `run_job`, because the old name hid
-  Textual's own dispatcher;
-- `open_url` renamed so it no longer hides Textual's own method;
-- a lock stops Board refreshes from overlapping;
-- markup escaping in labels, table cells, notifications and CLI errors;
-- `guarded` no longer swallows click's Abort/Exit;
-- `typer>=0.16` (older typer breaks with click 8.2+);
-- worker letters on the Board are the fixed a/b/c from Ch.10.7;
-- `--json` output goes through `typer.echo`.
+The spec v1.1 is `claude/DAGS-spec.md` in the project, `docs/SPEC.md` in the
+repo, and `~/Documents/DAGS/DAGS-spec-v1.1.pdf`. It describes the code as
+built, including the K1–K3 fixes.
 
-Running it on the Mac caught two more that no review had:
-- **typer >= 0.17 doesn't depend on click**, it vendors it as `typer._click`.
-  `dags/cli.py` now takes the vendored module when it's there and the real
-  package otherwise, and builds `CONTROL_FLOW` from whichever exception classes
-  exist — in current typer, `Exit` and `Abort` live only on `typer` itself.
-  Before the fix `swarm.py` wouldn't start on a fresh venv at all.
-- **`PlanScreen.task` hid Textual's read-only `MessagePump.task`**, so the
-  plan-review modal (`v`) died with `AttributeError: property 'task' ... has no
-  setter`. Renamed to `task_key`. Third name collision of the same kind: when
-  adding an attribute to a Textual class, check it isn't already a property.
+### Mac test run (Claude Code, 2026-09-16)
+Done on Román's Mac by Claude Code on 2026-09-16 (commit "DAGS: run the
+typer/rich/textual tests on the Mac"):
+
+- `./bin/dev-setup.sh` built `.swarm/venv` (macOS, Python 3.11.7) and installed
+  typer 0.27.2, rich 15.0.0, textual 8.2.8, pyyaml 6.0.3, pytest 9.1.1.
+- **The whole suite now runs on the Mac: 179 pass, 0 skipped, 11m54s.** It is
+  slow because the scheduler heartbeat/idle-limit, poller and gitsync tests wait
+  on real clocks and real git. The three things that had never run anywhere —
+  `tests/test_cli.py`, `tests/test_board.py` and the end-to-end test in
+  `tests/test_skill.py` — all pass.
+- Two real bugs, both in code written without being able to run it. Fixed in
+  the code, not in the tests:
+  1. **`dags/cli.py`: typer >= 0.17 no longer depends on click**, it vendors it
+     as `typer._click`. `import click` raised `ModuleNotFoundError`, so
+     `tests/test_cli.py` could not even be collected and `swarm.py` would not
+     start on a fresh venv. The module now takes the vendored click when it is
+     there and the real package otherwise, and builds `CONTROL_FLOW` from
+     whichever exception classes exist (in current typer, `Exit` and `Abort`
+     live only on typer itself).
+  2. **`board.py`: `PlanScreen.task` collided with Textual's read-only
+     `MessagePump.task` property** — `AttributeError: property 'task' of
+     'PlanScreen' object has no setter` as soon as the plan-review modal opened
+     (`v` on the Board). Renamed to `task_key`. Same family as the earlier
+     `run_action`/`open_url` collisions.
+- Smoke tests, all clean:
+  - `./bin/swarm.py --help` (bootstraps/uses the venv);
+  - `DAGS_NO_VENV=1 .swarm/venv/bin/python bin/swarm.py status` — prints the
+    panel; `operator unknown` and `quota-share ?` are expected while
+    `humans.yaml` and `.swarm/local.yaml` hold placeholders;
+  - `./bin/swarm.py board` driven on a real pty: it renders (quota gauge, live
+    claims, awaiting review, feed) and `q` exits 0, restoring the terminal.
+- Bot token: `security find-generic-password -s dags-worker-token -w` succeeds.
+  Not printed, not committed.
+- Nothing touched on GitHub, nothing in the MatchWire repos, nothing pushed.
+  `backend.yaml` still has its `OWNER/...` placeholders.
+- `ruff` is not installed on the Mac and is not in `bin/requirements-dev.txt`,
+  so the lint gate was not re-run here. Cowork's `ruff check` (F, E9, B) still
+  covers it; the two fixes above are import-level and a rename.
 
 ### Phase details
+
 
 - **1. Deterministic core.** `bin/resolve.py`, `dags/records.py`, `dags/timeutil.py`.
   - `resolve.lookup()` finds a task by full key, short key or dir name.
@@ -207,52 +336,39 @@ Running it on the Mac caught two more that no review had:
     (Textual pilot, run on the Mac).
 - **Also added:** `CLAUDE.md`, `BATON`, `FutureWork.md`, `bin/dev-setup.sh`,
   `pyproject.toml` (pytest and ruff config).
+- **K1–K3 fixes (Cowork, 2026-09-16):**
+  - `dags/worktree.cleanup`, used by `actions.merge`, and
+    `Poller._sweep_worktrees`;
+  - `resolve.over_quota` and `Scheduler.enforce_quota`;
+  - `Context(persist_identity=)`, `swarm.py identity show|set`;
+  - the skill shows `pause_requested`.
+  - Tests: `tests/test_poll.py` (two new), `tests/test_scheduler.py`
+    (three new), `tests/test_bootstrap.py` (identity), `tests/test_cli.py`
+    (identity commands).
 
 ## Next (holder: cowork)
-Done on Román's Mac by Claude Code on 2026-09-16 (commit "DAGS: run the
-typer/rich/textual tests on the Mac"):
+The Phase 9 POC on MatchWire (plan §4, Phase 9). Nothing on GitHub changes
+without Román's go-ahead. Needed from Román:
+1. **Plan repo:** the GitHub repo that will hold the epics and tasks as issues
+   (e.g. `romanfq/matchwire-swarm`). Create it, or let Cowork create it.
+2. **Accounts:**
+   - his GitHub login, for `humans.yaml` (and commit emails);
+   - the bot account's login and noreply email, for `.swarm/local.yaml`
+     `bot:`. The bot needs Write access to both MatchWire repos.
+3. **Visibility:** are `matchwire-backend` and `matchwire-frontend` public?
+   On GitHub Free, branch protection only works on public repos.
+4. **Go-ahead** for:
+   - `swarm.py backend init --apply` (labels in the plan repo);
+   - `swarm.py protect <repo> --apply` on both code repos.
+5. **Test commands:** confirm or correct them for each MatchWire repo
+   (`./mvnw -q verify`, `npm test --silent`).
 
-- `./bin/dev-setup.sh` built `.swarm/venv` (macOS, Python 3.11.7) and installed
-  typer 0.27.2, rich 15.0.0, textual 8.2.8, pyyaml 6.0.3, pytest 9.1.1.
-- **The whole suite now runs on the Mac: 179 pass, 0 skipped, 11m54s.** It is
-  slow because the scheduler heartbeat/idle-limit, poller and gitsync tests wait
-  on real clocks and real git. The three things that had never run anywhere —
-  `tests/test_cli.py`, `tests/test_board.py` and the end-to-end test in
-  `tests/test_skill.py` — all pass.
-- Two real bugs, both in code written without being able to run it. Fixed in
-  the code, not in the tests:
-  1. **`dags/cli.py`: typer >= 0.17 no longer depends on click**, it vendors it
-     as `typer._click`. `import click` raised `ModuleNotFoundError`, so
-     `tests/test_cli.py` could not even be collected and `swarm.py` would not
-     start on a fresh venv. The module now takes the vendored click when it is
-     there and the real package otherwise, and builds `CONTROL_FLOW` from
-     whichever exception classes exist (in current typer, `Exit` and `Abort`
-     live only on typer itself).
-  2. **`board.py`: `PlanScreen.task` collided with Textual's read-only
-     `MessagePump.task` property** — `AttributeError: property 'task' of
-     'PlanScreen' object has no setter` as soon as the plan-review modal opened
-     (`v` on the Board). Renamed to `task_key`. Same family as the earlier
-     `run_action`/`open_url` collisions.
-- Smoke tests, all clean:
-  - `./bin/swarm.py --help` (bootstraps/uses the venv);
-  - `DAGS_NO_VENV=1 .swarm/venv/bin/python bin/swarm.py status` — prints the
-    panel; `operator unknown` and `quota-share ?` are expected while
-    `humans.yaml` and `.swarm/local.yaml` hold placeholders;
-  - `./bin/swarm.py board` driven on a real pty: it renders (quota gauge, live
-    claims, awaiting review, feed) and `q` exits 0, restoring the terminal.
-- Bot token: `security find-generic-password -s dags-worker-token -w` succeeds.
-  Not printed, not committed.
-- Nothing touched on GitHub, nothing in the MatchWire repos, nothing pushed.
-  `backend.yaml` still has its `OWNER/...` placeholders.
-- `ruff` is not installed on the Mac and is not in `bin/requirements-dev.txt`,
-  so the lint gate was not re-run here. Cowork's `ruff check` (F, E9, B) still
-  covers it; the two fixes above are import-level and a rename.
+Then Cowork will:
+- fill in `backend.yaml` (real repos, `default_repo`), `humans.yaml` and
+  `.swarm/local.yaml` (repo paths under `~/Documents/DAGS/matchwire/...`);
+- draft the plan: 2 epics × 3–4 tasks with cross-repo dependencies;
+- set up two "machines" (two clones with `--identity`);
+- run the scenarios in plan §4 Phase 9 and write a results note into the project.
 
-Then, for Cowork: the Phase 9 POC. It needs Román's go-ahead and details for:
-- the plan repo name, and replacing `OWNER/…` in `backend.yaml`;
-- `humans.yaml` (his GitHub login);
-- labels (`swarm.py backend init --apply`);
-- branch protection (`swarm.py protect <repo> --apply`); on the Free plan this
-  depends on whether the MatchWire repos are public;
-- the bot account's collaborator access and `.swarm/local.yaml`
-  (repo paths, `bot:` login and email).
+Scenarios that need the real Mac (terminals, IDEs, Keychain) go to Claude Code
+with the baton.

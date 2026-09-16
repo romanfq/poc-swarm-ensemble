@@ -6,12 +6,13 @@
 # holders: cowork (Claude in the Cowork app) | claude-code (Claude Code CLI on the Mac) | roman
 holder: cowork
 since: 2026-09-16
-reason: The whole suite now runs on the Mac (179 pass, nothing skipped) and the CLI and
-  Board were smoke-tested by hand. Results and the two fixes are in the "Next" section
-  of docs/HANDOVER.md. Phase 9 needs Roman's go-ahead and the details listed there.
+reason: Known gaps K1-K3 fixed and the spec added as docs/SPEC.md. Next is the Phase 9
+  POC, which waits on Roman's details and go-ahead (docs/HANDOVER.md, "Next").
 history:
   - 2026-09-16 cowork: resumed via the same Cowork task (desktop or mobile), Mac kept awake
     (`caffeinate -is`) with the desktop app open.
   - 2026-09-16 claude-code: ran ./bin/dev-setup.sh, fixed two bugs the tests found
     (typer no longer ships click; PlanScreen.task hid a Textual property), smoke-tested
     the CLI and the Board, checked the bot token. Nothing pushed, nothing on GitHub.
+  - 2026-09-16 cowork: fixed K1-K3 (worktree cleanup after merge, quota lowered mid-task,
+    --identity remembered), added docs/SPEC.md, merged the handover. Nothing on GitHub.

@@ -297,3 +297,73 @@ def test_release_is_not_a_failure(world):
     assert world.backend.get_task(TaskRef("T1")).status == "ready"
     with pytest.raises(L.LostClaim):
         work.release(a, d)
+
+
+def test_over_quota_picks_newest_claims_consistently(world):
+    _plan(world, ("T1", {}), ("T2", {}), ("T3", {}))
+    a, b = world.machine("mac-a"), world.machine("jane-mac", human="jane")
+    world.scheduler(a, share=2, worker="claude").cycle()        # T1, T2
+    world.scheduler(b, share=2, worker="vscode").cycle()        # T3
+    now = timeutil.now()
+    assert rv.over_quota(a.root, "mac-a", 2, 3, now, 900) == []
+    L.set_quota(b, 2)
+    a.coord.pull()
+    b.coord.pull()
+    # 3 running, N = 2: only the newest claim (b's T3) yields — both machines agree
+    assert rv.over_quota(a.root, "mac-a", 2, 3, now, 900) == []
+    assert [d.name for d, _ in rv.over_quota(b.root, "jane-mac", 2, 3, now, 900)] == ["T3"]
+    # a lowered share on a: its own newest claim yields
+    assert [d.name for d, _ in rv.over_quota(a.root, "mac-a", 1, 3, now, 900)] == ["T2"]
+
+
+def test_lowered_quota_pauses_then_releases_running_work(world):
+    """K2 (v1.0 Ch.8): running work is checkpointed and released, then waits for a slot."""
+    import dags.timeutil as tu
+    _plan(world, ("T1", {}), ("T2", {}))
+    a = world.machine("mac-a")
+    world.scheduler(a, share=2, worker="claude").cycle()
+    d1, d2 = rv.index(a.root)["T1"], rv.index(a.root)["T2"]
+    L.set_quota(a, 1, "budget cut")
+    s = world.scheduler(a, share=2, worker="claude")
+    rep = s.cycle()
+    assert rep.pausing == ["T2"] and rep.released == [] and rep.claimed == []
+    req = L.read_checkpoint(d2)["pause_requested"]
+    assert req["claim_id"] == rv.resolve(d2, timeutil.now(), 900).winner.id
+    assert world.notes[-1][0] == "quota" and "should record its progress" in world.notes[-1][1]
+    from dags import snapshot
+    assert snapshot.take(a).by_key("T2").pausing
+    hb = Heartbeater(a)
+    try:
+        released = []
+        for minute in (5, 10, 14, 16):                       # heartbeats keep the lease alive meanwhile
+            tu.set_offset(minute * 60)
+            hb.cycle()
+            released.append(s.cycle().released)
+        assert released == [[], [], [], ["T2"]]              # one lease (15 min) after the request
+        w = [x for x in rv.read_withdrawals(d2).values()][0]
+        assert w["reason"] == "quota"
+        assert rv.retry_count(d2, tu.now(), 900) == 0          # not a failure
+        assert rv.ledger_ready(a.root, d2, tu.now(), 900)
+        assert world.backend.get_task(TaskRef("T2")).status == "ready"
+        assert s.cycle().claimed == []                         # no slot: it waits
+        L.set_quota(a, 2)
+        assert s.cycle().claimed == ["T2"]                     # slot back: resumed
+        assert L.read_checkpoint(d2).get("pause_requested") is None
+        assert rv.task_state(d1, tu.now(), 900) == "in-progress"
+    finally:
+        tu.set_offset(0)
+
+
+def test_quota_released_immediately_without_a_worker_and_lifted_when_raised(world):
+    _plan(world, ("T1", {}), ("T2", {}), ("T3", {}))
+    a = world.machine("mac-a")
+    world.scheduler(a, share=3).cycle()                        # three claims, no worker yet
+    work.choose_worker(a, rv.index(a.root)["T1"], "vscode", launch=world.launch, platform="darwin")
+    work.choose_worker(a, rv.index(a.root)["T2"], "vscode", launch=world.launch, platform="darwin")
+    L.control(a, "throttle", quota_share=1)
+    rep = world.scheduler(a, share=3).cycle()
+    assert rep.released == ["T3"] and rep.pausing == ["T2"]  # T3 had no worker: released at once
+    L.control(a, "throttle", quota_share=3)
+    world.scheduler(a, share=3).cycle()
+    assert L.read_checkpoint(rv.index(a.root)["T2"]).get("pause_requested") is None
+    assert any(t.startswith("Quota raised again: T2") for _, t in world.notes)

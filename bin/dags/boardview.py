@@ -39,7 +39,8 @@ def claim_rows(snap: snapshot.Snapshot) -> list[tuple[str, tuple]]:
         w = t.winner
         rows.append((t.key, (t.short, t.title, w.machine, w.human or "?", str(w.clock),
                              age_text(t.claim_age_s(snap.now)), t.worker or "awaiting worker",
-                             t.state + (" · needs human" if t.needs_human else ""))))
+                             t.state + (" · needs human" if t.needs_human else "")
+                             + (" · pausing (quota)" if t.pausing else ""))))
     return rows
 
 

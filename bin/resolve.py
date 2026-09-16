@@ -409,6 +409,20 @@ def active_claims(root, now: datetime, lease_s: float, humans: set[str] | None =
     return out
 
 
+def over_quota(root, machine: str, share: int, default_n: int, now: datetime, lease_s: float,
+               humans: set[str] | None = None) -> list[tuple[Path, Claim]]:
+    """This machine's active claims that must yield because the global N or
+    this machine's share was lowered below what is running (Ch.8 'quota
+    exhausted mid-task'). Newest claims yield first; every machine computes
+    the same global order, so together they release exactly the excess."""
+    active = sorted(active_claims(root, now, lease_s, humans), key=lambda dc: dc[1].sort_key, reverse=True)
+    n = global_quota(root, default_n, humans)
+    chosen = {c.id for _, c in active[:max(0, len(active) - n)]}
+    mine = [(d, c) for d, c in active if c.machine == machine]
+    chosen |= {c.id for _, c in mine[:max(0, len(mine) - max(0, share))]}
+    return [(d, c) for d, c in mine if c.id in chosen]
+
+
 def quota_room(root, machine: str, share: int, default_n: int, now: datetime, lease_s: float,
                humans: set[str] | None = None) -> int:
     """How many more tasks this machine may claim right now."""
@@ -458,7 +472,7 @@ def order_candidates(candidates: Iterable[tuple[str, dict]], machine: str,
 # Failure accounting (Ch.8) and thrash detection (Ch.9.4)
 # ---------------------------------------------------------------------------
 
-NON_FAILURE_WITHDRAWALS = {"lost-race", "released", "arbitration"}
+NON_FAILURE_WITHDRAWALS = {"lost-race", "released", "arbitration", "quota"}
 
 
 def retry_count(task_dir, now: datetime, lease_s: float) -> int:
