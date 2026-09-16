@@ -4,10 +4,14 @@
 # (plus the "Next" checklist in docs/HANDOVER.md).
 #
 # holders: cowork (Claude in the Cowork app) | claude-code (Claude Code CLI on the Mac) | roman
-holder: claude-code
+holder: cowork
 since: 2026-09-16
-reason: Phases 5-7 are written; the typer/rich/textual tests can only run on the Mac.
-  Follow "Next (holder: claude-code)" in docs/HANDOVER.md, then hand back to cowork.
+reason: The whole suite now runs on the Mac (179 pass, nothing skipped) and the CLI and
+  Board were smoke-tested by hand. Results and the two fixes are in the "Next" section
+  of docs/HANDOVER.md. Phase 9 needs Roman's go-ahead and the details listed there.
 history:
   - 2026-09-16 cowork: resumed via the same Cowork task (desktop or mobile), Mac kept awake
     (`caffeinate -is`) with the desktop app open.
+  - 2026-09-16 claude-code: ran ./bin/dev-setup.sh, fixed two bugs the tests found
+    (typer no longer ships click; PlanScreen.task hid a Textual property), smoke-tested
+    the CLI and the Board, checked the bot token. Nothing pushed, nothing on GitHub.

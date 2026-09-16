@@ -145,12 +145,13 @@ class PlanScreen(ModalScreen[str | None]):
 
     def __init__(self, task: str, plan_md: str):
         super().__init__()
-        self.task = task
+        # not self.task: Textual's MessagePump already owns that name.
+        self.task_key = task
         self.plan_md = plan_md
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
-            yield Label(f"Plan for {self.task}", markup=False)
+            yield Label(f"Plan for {self.task_key}", markup=False)
             with VerticalScroll(id="plan"):
                 yield Markdown(self.plan_md or "_empty plan_")
             with Horizontal(id="buttons"):

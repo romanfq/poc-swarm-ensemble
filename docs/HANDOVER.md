@@ -63,14 +63,19 @@ in the coordination repo (for Claude Code), and `~/Documents/DAGS/DAGS-handover.
 
 ## Build status
 
-Tests: **164 pass, 3 modules skipped** in the Cowork cloud sandbox. The skipped
-ones need typer/rich/textual and haven't run anywhere yet:
-- `tests/test_cli.py`;
-- `tests/test_board.py`;
-- the end-to-end test in `tests/test_skill.py`.
+Tests: **179 pass, nothing skipped**, on Román's Mac (2026-09-16, Claude Code),
+in 11m54s with `./bin/dev-setup.sh`. That includes the three things that had
+never run anywhere before — `tests/test_cli.py`, `tests/test_board.py` and the
+end-to-end test in `tests/test_skill.py`. The suite is slow by design: the
+scheduler heartbeat/idle-limit, poller and gitsync tests wait on real clocks
+and real git.
 
-`ruff check` (F, E9, B) is clean. Run the full suite on the Mac with
-`./bin/dev-setup.sh`.
+In the Cowork cloud sandbox the same suite is 164 pass, 3 modules skipped
+(no typer/rich/textual there).
+
+`ruff check` (F, E9, B) is clean as of the last Cowork run; ruff isn't
+installed on the Mac and isn't in `bin/requirements-dev.txt`, so Claude Code
+did not re-run it.
 
 | Phase | Status |
 |---|---|
@@ -78,10 +83,10 @@ ones need typer/rich/textual and haven't run anywhere yet:
 | 1 Deterministic core | done, tested |
 | 2 Git sync + gh wrapper | done, tested |
 | 3 Issue backend port | done, tested (Jira deferred) |
-| 4 `swarm.py` bootstrap | done; stdlib parts tested; **typer CLI tests not run yet** |
-| 5 Scheduler, workers, skill | done, tested; **skill end-to-end test not run yet** (needs typer) |
+| 4 `swarm.py` bootstrap | done, tested (CLI tests run on the Mac) |
+| 5 Scheduler, workers, skill | done, tested (skill end-to-end run on the Mac) |
 | 6 Poller + notifications | done, tested |
-| 7 Swarm Board | done; view model tested; **Textual pilot tests not run yet** |
+| 7 Swarm Board | done, tested (Textual pilot run on the Mac) |
 | 8 Jira adapter | deferred (`FutureWork.md`) |
 | 9 POC on MatchWire | not started |
 
@@ -96,6 +101,17 @@ reviewed by a second agent against the libraries' APIs. Fixes from that review:
 - `typer>=0.16` (older typer breaks with click 8.2+);
 - worker letters on the Board are the fixed a/b/c from Ch.10.7;
 - `--json` output goes through `typer.echo`.
+
+Running it on the Mac caught two more that no review had:
+- **typer >= 0.17 doesn't depend on click**, it vendors it as `typer._click`.
+  `dags/cli.py` now takes the vendored module when it's there and the real
+  package otherwise, and builds `CONTROL_FLOW` from whichever exception classes
+  exist — in current typer, `Exit` and `Abort` live only on `typer` itself.
+  Before the fix `swarm.py` wouldn't start on a fresh venv at all.
+- **`PlanScreen.task` hid Textual's read-only `MessagePump.task`**, so the
+  plan-review modal (`v`) died with `AttributeError: property 'task' ... has no
+  setter`. Renamed to `task_key`. Third name collision of the same kind: when
+  adding an attribute to a Textual class, check it isn't already a property.
 
 ### Phase details
 
@@ -192,29 +208,45 @@ reviewed by a second agent against the libraries' APIs. Fixes from that review:
 - **Also added:** `CLAUDE.md`, `BATON`, `FutureWork.md`, `bin/dev-setup.sh`,
   `pyproject.toml` (pytest and ruff config).
 
-## Next (holder: claude-code)
-Claude Code, on Román's Mac, in `~/Documents/DAGS/swarm/poc-swarm-ensemble`:
-1. Confirm `BATON` says `holder: claude-code` and `git status` is clean.
-2. Run `./bin/dev-setup.sh`. This creates `.swarm/venv` with the dev
-   requirements and runs the whole suite. Python 3.10+ is required;
-   Homebrew's python@3.12 is fine.
-3. Fix whatever fails in `tests/test_cli.py`, `tests/test_board.py` and the
-   end-to-end test in `tests/test_skill.py`.
-   - Prefer fixing the code over weakening the tests.
-   - Keep the Board's logic in `dags/boardview.py`.
-   - Keep `bin/skill/swarm-task` stdlib-only.
-4. Smoke-test by hand:
-   - `./bin/swarm.py --help`, which bootstraps the venv the first time;
-   - `DAGS_NO_VENV=1 .swarm/venv/bin/python bin/swarm.py status`;
-   - `./bin/swarm.py board`, then quit with `q`.
-   - `backend.yaml` still has placeholder repos (`OWNER/...`), so commands that
-     touch GitHub will say so. That's expected. Don't change the placeholders
-     without Román.
-5. Check the bot token is reachable without printing it:
-   `security find-generic-password -s dags-worker-token -w >/dev/null && echo ok`.
-6. Touch nothing on GitHub and nothing in the MatchWire repos. Don't push.
-7. Hand back: update this **Next** section with results, set `BATON` to
-   `holder: cowork` (or `roman`), and commit locally.
+## Next (holder: cowork)
+Done on Román's Mac by Claude Code on 2026-09-16 (commit "DAGS: run the
+typer/rich/textual tests on the Mac"):
+
+- `./bin/dev-setup.sh` built `.swarm/venv` (macOS, Python 3.11.7) and installed
+  typer 0.27.2, rich 15.0.0, textual 8.2.8, pyyaml 6.0.3, pytest 9.1.1.
+- **The whole suite now runs on the Mac: 179 pass, 0 skipped, 11m54s.** It is
+  slow because the scheduler heartbeat/idle-limit, poller and gitsync tests wait
+  on real clocks and real git. The three things that had never run anywhere —
+  `tests/test_cli.py`, `tests/test_board.py` and the end-to-end test in
+  `tests/test_skill.py` — all pass.
+- Two real bugs, both in code written without being able to run it. Fixed in
+  the code, not in the tests:
+  1. **`dags/cli.py`: typer >= 0.17 no longer depends on click**, it vendors it
+     as `typer._click`. `import click` raised `ModuleNotFoundError`, so
+     `tests/test_cli.py` could not even be collected and `swarm.py` would not
+     start on a fresh venv. The module now takes the vendored click when it is
+     there and the real package otherwise, and builds `CONTROL_FLOW` from
+     whichever exception classes exist (in current typer, `Exit` and `Abort`
+     live only on typer itself).
+  2. **`board.py`: `PlanScreen.task` collided with Textual's read-only
+     `MessagePump.task` property** — `AttributeError: property 'task' of
+     'PlanScreen' object has no setter` as soon as the plan-review modal opened
+     (`v` on the Board). Renamed to `task_key`. Same family as the earlier
+     `run_action`/`open_url` collisions.
+- Smoke tests, all clean:
+  - `./bin/swarm.py --help` (bootstraps/uses the venv);
+  - `DAGS_NO_VENV=1 .swarm/venv/bin/python bin/swarm.py status` — prints the
+    panel; `operator unknown` and `quota-share ?` are expected while
+    `humans.yaml` and `.swarm/local.yaml` hold placeholders;
+  - `./bin/swarm.py board` driven on a real pty: it renders (quota gauge, live
+    claims, awaiting review, feed) and `q` exits 0, restoring the terminal.
+- Bot token: `security find-generic-password -s dags-worker-token -w` succeeds.
+  Not printed, not committed.
+- Nothing touched on GitHub, nothing in the MatchWire repos, nothing pushed.
+  `backend.yaml` still has its `OWNER/...` placeholders.
+- `ruff` is not installed on the Mac and is not in `bin/requirements-dev.txt`,
+  so the lint gate was not re-run here. Cowork's `ruff check` (F, E9, B) still
+  covers it; the two fixes above are import-level and a rename.
 
 Then, for Cowork: the Phase 9 POC. It needs Román's go-ahead and details for:
 - the plan repo name, and replacing `OWNER/…` in `backend.yaml`;

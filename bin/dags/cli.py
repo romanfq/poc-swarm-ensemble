@@ -12,11 +12,15 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
-import click
 import typer
 from rich.console import Console
 from rich.markup import escape
 from rich.text import Text
+
+try:  # typer >= 0.17 vendors click; older typer depends on the real package
+    from typer import _click as click
+except ImportError:  # pragma: no cover - typer < 0.17
+    import click
 
 import resolve
 from backends.base import SWARM_STATUSES, TaskRef
@@ -59,6 +63,13 @@ def fail(message: str, code: int = 1):
     raise typer.Exit(code)
 
 
+# Control flow, not failure: these pass through guarded() untouched. Which of
+# them exist depends on whether typer vendors click or uses the real package.
+CONTROL_FLOW = tuple({typer.Exit, typer.Abort, click.ClickException,
+                      getattr(click.exceptions, "Exit", typer.Exit),
+                      getattr(click.exceptions, "Abort", typer.Abort)})
+
+
 def guarded(fn):
     """Turn expected failures into one red line instead of a traceback."""
     import functools
@@ -67,7 +78,7 @@ def guarded(fn):
     def wrapper(*a, **kw):
         try:
             return fn(*a, **kw)
-        except (typer.Exit, click.exceptions.Exit, click.exceptions.Abort, click.ClickException):
+        except CONTROL_FLOW:
             raise
         except KNOWN_ERRORS as e:
             if os.environ.get("DAGS_DEBUG"):
