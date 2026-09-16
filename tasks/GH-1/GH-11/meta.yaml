@@ -1,0 +1,15 @@
+key: romanfq/matchwire-spec#11
+short: GH-11
+coordination_ref: romanfq/matchwire-spec#11
+title: 'E6: Live push endpoint (SSE or WebSocket)'
+epic: romanfq/matchwire-spec#1
+dependencies:
+- romanfq/matchwire-spec#10
+- romanfq/matchwire-spec#5
+autonomy: human-must-review
+repo: romanfq/matchwire-backend
+is_epic: false
+issue_url: https://github.com/romanfq/matchwire-spec/issues/11
+machine: macbookpro-68b8
+logical_clock: 11
+wall_utc: '2026-09-16T21:23:07+00:00'

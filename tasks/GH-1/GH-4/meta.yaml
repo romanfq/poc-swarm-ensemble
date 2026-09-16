@@ -1,0 +1,13 @@
+key: romanfq/matchwire-spec#4
+short: GH-4
+coordination_ref: romanfq/matchwire-spec#4
+title: 'S1: Backend scaffold (Spring Boot, Maven wrapper)'
+epic: romanfq/matchwire-spec#1
+dependencies: []
+autonomy: human-must-review
+repo: romanfq/matchwire-backend
+is_epic: false
+issue_url: https://github.com/romanfq/matchwire-spec/issues/4
+machine: macbookpro-68b8
+logical_clock: 4
+wall_utc: '2026-09-16T21:23:07+00:00'

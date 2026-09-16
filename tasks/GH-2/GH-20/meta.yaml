@@ -1,0 +1,18 @@
+key: romanfq/matchwire-spec#20
+short: GH-20
+coordination_ref: romanfq/matchwire-spec#20
+title: 'E13: Responsive layout + loading/error states'
+epic: romanfq/matchwire-spec#2
+dependencies:
+- romanfq/matchwire-spec#19
+- romanfq/matchwire-spec#18
+- romanfq/matchwire-spec#17
+- romanfq/matchwire-spec#16
+- romanfq/matchwire-spec#15
+autonomy: human-must-review
+repo: romanfq/matchwire-frontend
+is_epic: false
+issue_url: https://github.com/romanfq/matchwire-spec/issues/20
+machine: macbookpro-68b8
+logical_clock: 20
+wall_utc: '2026-09-16T21:23:07+00:00'

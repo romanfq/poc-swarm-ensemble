@@ -1,0 +1,14 @@
+key: romanfq/matchwire-spec#5
+short: GH-5
+coordination_ref: romanfq/matchwire-spec#5
+title: 'E1: Event model + aggregation core'
+epic: romanfq/matchwire-spec#1
+dependencies:
+- romanfq/matchwire-spec#4
+autonomy: human-must-review
+repo: romanfq/matchwire-backend
+is_epic: false
+issue_url: https://github.com/romanfq/matchwire-spec/issues/5
+machine: macbookpro-68b8
+logical_clock: 5
+wall_utc: '2026-09-16T21:23:07+00:00'

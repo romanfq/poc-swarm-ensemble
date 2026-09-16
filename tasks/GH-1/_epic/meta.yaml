@@ -1,0 +1,13 @@
+key: romanfq/matchwire-spec#1
+short: GH-1
+coordination_ref: romanfq/matchwire-spec#1
+title: MatchWire backend (Spring Boot)
+epic: null
+dependencies: []
+autonomy: human-must-review
+repo: null
+is_epic: true
+issue_url: https://github.com/romanfq/matchwire-spec/issues/1
+machine: macbookpro-68b8
+logical_clock: 1
+wall_utc: '2026-09-16T21:23:07+00:00'

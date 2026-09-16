@@ -1,0 +1,15 @@
+key: romanfq/matchwire-spec#21
+short: GH-21
+coordination_ref: romanfq/matchwire-spec#21
+title: 'E14: End-to-end demo harness'
+epic: romanfq/matchwire-spec#3
+dependencies:
+- romanfq/matchwire-spec#20
+- romanfq/matchwire-spec#12
+autonomy: human-must-review
+repo: romanfq/matchwire-frontend
+is_epic: false
+issue_url: https://github.com/romanfq/matchwire-spec/issues/21
+machine: macbookpro-68b8
+logical_clock: 21
+wall_utc: '2026-09-16T21:23:07+00:00'

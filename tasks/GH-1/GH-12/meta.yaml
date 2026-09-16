@@ -1,0 +1,16 @@
+key: romanfq/matchwire-spec#12
+short: GH-12
+coordination_ref: romanfq/matchwire-spec#12
+title: 'E4b: Actor simulator module'
+epic: romanfq/matchwire-spec#1
+dependencies:
+- romanfq/matchwire-spec#9
+- romanfq/matchwire-spec#8
+- romanfq/matchwire-spec#7
+autonomy: human-must-review
+repo: romanfq/matchwire-backend
+is_epic: false
+issue_url: https://github.com/romanfq/matchwire-spec/issues/12
+machine: macbookpro-68b8
+logical_clock: 12
+wall_utc: '2026-09-16T21:23:07+00:00'

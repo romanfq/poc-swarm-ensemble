@@ -1,0 +1,15 @@
+key: romanfq/matchwire-spec#8
+short: GH-8
+coordination_ref: romanfq/matchwire-spec#8
+title: 'E3: Editorial ingestion endpoint (journalist role)'
+epic: romanfq/matchwire-spec#1
+dependencies:
+- romanfq/matchwire-spec#6
+- romanfq/matchwire-spec#5
+autonomy: human-must-review
+repo: romanfq/matchwire-backend
+is_epic: false
+issue_url: https://github.com/romanfq/matchwire-spec/issues/8
+machine: macbookpro-68b8
+logical_clock: 8
+wall_utc: '2026-09-16T21:23:07+00:00'

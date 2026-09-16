@@ -1,0 +1,14 @@
+key: romanfq/matchwire-spec#15
+short: GH-15
+coordination_ref: romanfq/matchwire-spec#15
+title: 'E8: Scoreboard component'
+epic: romanfq/matchwire-spec#2
+dependencies:
+- romanfq/matchwire-spec#14
+autonomy: human-must-review
+repo: romanfq/matchwire-frontend
+is_epic: false
+issue_url: https://github.com/romanfq/matchwire-spec/issues/15
+machine: macbookpro-68b8
+logical_clock: 15
+wall_utc: '2026-09-16T21:23:07+00:00'

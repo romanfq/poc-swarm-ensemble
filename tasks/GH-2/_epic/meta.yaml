@@ -1,0 +1,13 @@
+key: romanfq/matchwire-spec#2
+short: GH-2
+coordination_ref: romanfq/matchwire-spec#2
+title: MatchWire frontend (React)
+epic: null
+dependencies: []
+autonomy: human-must-review
+repo: null
+is_epic: true
+issue_url: https://github.com/romanfq/matchwire-spec/issues/2
+machine: macbookpro-68b8
+logical_clock: 2
+wall_utc: '2026-09-16T21:23:07+00:00'

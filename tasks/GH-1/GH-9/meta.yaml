@@ -1,0 +1,15 @@
+key: romanfq/matchwire-spec#9
+short: GH-9
+coordination_ref: romanfq/matchwire-spec#9
+title: 'E4: Social ingestion endpoint (social role)'
+epic: romanfq/matchwire-spec#1
+dependencies:
+- romanfq/matchwire-spec#6
+- romanfq/matchwire-spec#5
+autonomy: human-must-review
+repo: romanfq/matchwire-backend
+is_epic: false
+issue_url: https://github.com/romanfq/matchwire-spec/issues/9
+machine: macbookpro-68b8
+logical_clock: 9
+wall_utc: '2026-09-16T21:23:07+00:00'

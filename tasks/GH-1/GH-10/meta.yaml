@@ -1,0 +1,14 @@
+key: romanfq/matchwire-spec#10
+short: GH-10
+coordination_ref: romanfq/matchwire-spec#10
+title: 'E5: Public REST API (current state, history, stats)'
+epic: romanfq/matchwire-spec#1
+dependencies:
+- romanfq/matchwire-spec#5
+autonomy: human-must-review
+repo: romanfq/matchwire-backend
+is_epic: false
+issue_url: https://github.com/romanfq/matchwire-spec/issues/10
+machine: macbookpro-68b8
+logical_clock: 10
+wall_utc: '2026-09-16T21:23:07+00:00'

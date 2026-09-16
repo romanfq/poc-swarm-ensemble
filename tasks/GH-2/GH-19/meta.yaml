@@ -1,0 +1,14 @@
+key: romanfq/matchwire-spec#19
+short: GH-19
+coordination_ref: romanfq/matchwire-spec#19
+title: 'E12: Social embed styling'
+epic: romanfq/matchwire-spec#2
+dependencies:
+- romanfq/matchwire-spec#14
+autonomy: auto-pr
+repo: romanfq/matchwire-frontend
+is_epic: false
+issue_url: https://github.com/romanfq/matchwire-spec/issues/19
+machine: macbookpro-68b8
+logical_clock: 19
+wall_utc: '2026-09-16T21:23:07+00:00'

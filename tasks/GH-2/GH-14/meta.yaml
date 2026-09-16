@@ -1,0 +1,15 @@
+key: romanfq/matchwire-spec#14
+short: GH-14
+coordination_ref: romanfq/matchwire-spec#14
+title: 'E7: API contract + typed client'
+epic: romanfq/matchwire-spec#2
+dependencies:
+- romanfq/matchwire-spec#10
+- romanfq/matchwire-spec#13
+autonomy: human-must-scope
+repo: romanfq/matchwire-frontend
+is_epic: false
+issue_url: https://github.com/romanfq/matchwire-spec/issues/14
+machine: macbookpro-68b8
+logical_clock: 14
+wall_utc: '2026-09-16T21:23:07+00:00'

@@ -1,0 +1,15 @@
+key: romanfq/matchwire-spec#16
+short: GH-16
+coordination_ref: romanfq/matchwire-spec#16
+title: 'E9: Live blog feed component'
+epic: romanfq/matchwire-spec#2
+dependencies:
+- romanfq/matchwire-spec#11
+- romanfq/matchwire-spec#14
+autonomy: human-must-review
+repo: romanfq/matchwire-frontend
+is_epic: false
+issue_url: https://github.com/romanfq/matchwire-spec/issues/16
+machine: macbookpro-68b8
+logical_clock: 16
+wall_utc: '2026-09-16T21:23:07+00:00'
