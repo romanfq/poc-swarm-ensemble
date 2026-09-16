@@ -1,0 +1,7 @@
+machine: macbookpro-68b8
+human: roman
+action: start
+quota_share: 1
+default_worker: null
+logical_clock: 22
+wall_utc: '2026-09-16T21:31:22+00:00'
