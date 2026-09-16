@@ -1,0 +1,7 @@
+# machine-local state: venv, identity, logs, cloned code repos (Ch.5)
+.swarm/
+# per-task git worktrees (Ch.7.3)
+.worktrees/
+__pycache__/
+*.pyc
+.pytest_cache/

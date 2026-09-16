@@ -1,0 +1,9 @@
+# Who may edit this repository right now. Exactly one holder at a time.
+# Before editing anything: read this file. If `holder` isn't you, stop and
+# tell Román. Passing the baton = one commit that changes only this file
+# (plus the "Next" checklist in docs/HANDOVER.md).
+#
+# holders: cowork (Claude in the Cowork app) | claude-code (Claude Code CLI on the Mac) | roman
+holder: cowork
+since: 2026-09-16
+reason: Phases 5-7 still being written; Román paused the session overnight.

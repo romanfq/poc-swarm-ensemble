@@ -1,0 +1,203 @@
+#!/usr/bin/env python3
+"""swarm-task — plan / implement / done for one claimed DAGS task (whitepaper Ch.7.3).
+
+stdlib only, so it runs in any worktree. Everything that touches the ledger,
+the issue backend or GitHub is delegated to the coordination repo's
+`swarm.py task ...` (with the venv interpreter recorded in context.json).
+"""
+import argparse
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+WORKTREE = HERE.parent
+
+
+def load_context() -> dict:
+    try:
+        return json.loads((HERE / "context.json").read_text())
+    except FileNotFoundError:
+        sys.exit("swarm-task: .swarm-task/context.json is missing; ask the swarm to re-dispatch this task")
+
+
+CTX = load_context()
+
+
+def swarm(*args, capture=False, check=True):
+    python = CTX.get("python") or sys.executable
+    if not Path(python).exists():
+        python = sys.executable
+    cmd = [python, CTX["swarm_py"], "--root", CTX["coordination_root"],
+           "--identity", CTX["machine"], "task", *args]
+    env = dict(os.environ, DAGS_NO_VENV="1")
+    r = subprocess.run(cmd, capture_output=capture, text=True, env=env)
+    if check and r.returncode != 0:
+        if capture:
+            sys.stderr.write(r.stderr or r.stdout or "")
+        sys.exit(r.returncode)
+    return r
+
+
+def task_context() -> dict:
+    r = swarm("context", CTX["short"], capture=True)
+    return json.loads(r.stdout)
+
+
+def bullet(items):
+    items = [i for i in (items or []) if str(i).strip()]
+    return "\n".join(f"- {i}" for i in items) if items else "- (none)"
+
+
+PLAN_TEMPLATE = """# Plan — {short}: {title}
+
+<!-- Replace the guidance below. Keep it short; a reviewer reads this before any code exists. -->
+
+## Understanding
+What the ticket asks for, in your own words.
+
+## Approach
+The change you'll make, file by file or component by component.
+
+## Tests
+How you'll prove it works (the repo's test command is `{test_command}`).
+
+## Risks / open questions
+Anything a reviewer should decide now.
+
+---
+### Context from earlier attempts
+Tried:
+{tried}
+Remaining:
+{remaining}
+Open questions:
+{questions}
+"""
+
+
+def cmd_plan(args):
+    plan = HERE / "plan.md"
+    if args.submit:
+        if not plan.exists():
+            sys.exit("swarm-task: run `swarm-task plan` first to create .swarm-task/plan.md")
+        status = swarm("submit-plan", CTX["short"], "--file", str(plan), capture=True).stdout.strip()
+        if status == "approved":
+            print("Plan recorded and self-approved (auto-pr). Next: .swarm-task/swarm-task implement")
+        else:
+            print("Plan submitted for human review. Check with `.swarm-task/swarm-task status`; "
+                  "don't implement until it says approved.")
+        return
+    if plan.exists() and not args.force:
+        print(f"{plan} already exists — edit it, then run `swarm-task plan --submit` (or --force to recreate)")
+        return
+    info = task_context()
+    cp = info.get("checkpoint") or {}
+    if cp.get("plan_md") and not args.force:
+        plan.write_text(cp["plan_md"])
+        print(f"Restored the previously submitted plan into {plan} (status: {info.get('plan_status')}).")
+        return
+    plan.write_text(PLAN_TEMPLATE.format(
+        short=CTX["short"], title=CTX.get("title") or "", test_command=CTX.get("test_command") or "n/a",
+        tried=bullet(cp.get("tried")), remaining=bullet(cp.get("remaining")),
+        questions=bullet(cp.get("open_questions"))))
+    print(f"Wrote {plan}. Read spec.md and conventions.md, fill in the plan, then run "
+          f"`.swarm-task/swarm-task plan --submit`.")
+
+
+def cmd_status(args):
+    info = task_context()
+    cp = info.get("checkpoint") or {}
+    print(f"task:        {CTX['short']} — {CTX.get('title')}")
+    print(f"autonomy:    {CTX.get('autonomy')}")
+    print(f"plan:        {info.get('plan_status') or 'not written yet'}")
+    print(f"summary:     {cp.get('summary') or '(none yet)'}")
+    if cp.get("needs_human"):
+        print(f"waiting on a human: {cp['needs_human']}")
+
+
+def cmd_implement(args):
+    info = task_context()
+    if not info.get("allowed"):
+        sys.exit(f"swarm-task: the plan is '{info.get('plan_status') or 'missing'}', not approved — "
+                 f"run `swarm-task plan` / wait for review before implementing.")
+    cp = info.get("checkpoint") or {}
+    print("# Approved plan\n")
+    print(cp.get("plan_md") or (HERE / "plan.md").read_text())
+    print("\n# Checkpoint\n")
+    print(f"Summary so far: {cp.get('summary') or '(none)'}")
+    print("Tried:\n" + bullet(cp.get("tried")))
+    print("Remaining:\n" + bullet(cp.get("remaining")))
+    print("Open questions:\n" + bullet(cp.get("open_questions")))
+    fb = info.get("feedback") or []
+    if fb:
+        print("\n# Reviewer feedback (address every item)\n")
+        for item in fb:
+            print(f"- {item['tag']}: {item['text']}" + (f"  (@{item.get('author')})" if item.get("author") else ""))
+        if any(i["tag"] == "reject-approach" for i in fb):
+            print("\nA reviewer rejected the approach: don't patch it — run "
+                  "`swarm-task block \"approach rejected: <summary>\"` and stop.")
+    print("\nRecord progress with `swarm-task note ...`; finish with `swarm-task done`.")
+
+
+def cmd_note(args):
+    extra = []
+    if args.summary is not None:
+        extra += ["--summary", args.summary]
+    for t in args.tried or []:
+        extra += ["--tried", t]
+    for r in args.remaining or []:
+        extra += ["--remaining", r]
+    for q in args.question or []:
+        extra += ["--question", q]
+    for r in args.risk or []:
+        extra += ["--risk", r]
+    if not extra:
+        sys.exit("swarm-task note: nothing to record")
+    swarm("note", CTX["short"], *extra)
+    print("checkpoint updated")
+
+
+def cmd_block(args):
+    swarm("block", CTX["short"], args.question)
+    print("Recorded. A human has been asked; stop here until they answer.")
+
+
+def cmd_done(args):
+    extra = ["--skip-tests"] if args.skip_tests else []
+    r = swarm("done", CTX["short"], "--worktree", str(WORKTREE), *extra, capture=True)
+    url = r.stdout.strip().splitlines()[-1] if r.stdout.strip() else ""
+    print(f"Done. Pull request: {url}")
+    print("The swarm takes it from here; a human reviews and merges.")
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser(prog="swarm-task", description=__doc__.splitlines()[0])
+    sub = p.add_subparsers(dest="cmd", required=True)
+    sp = sub.add_parser("plan", help="create plan.md, or --submit it for review")
+    sp.add_argument("--submit", action="store_true")
+    sp.add_argument("--force", action="store_true")
+    sp.set_defaults(fn=cmd_plan)
+    sub.add_parser("status", help="plan/review status").set_defaults(fn=cmd_status)
+    sub.add_parser("implement", help="print the approved plan, checkpoint and feedback").set_defaults(fn=cmd_implement)
+    sn = sub.add_parser("note", help="record progress in checkpoint.yaml")
+    sn.add_argument("--summary")
+    sn.add_argument("--tried", nargs="*")
+    sn.add_argument("--remaining", nargs="*")
+    sn.add_argument("--question", nargs="*")
+    sn.add_argument("--risk", nargs="*")
+    sn.set_defaults(fn=cmd_note)
+    sb = sub.add_parser("block", help="ask a human and stop")
+    sb.add_argument("question")
+    sb.set_defaults(fn=cmd_block)
+    sd = sub.add_parser("done", help="test, commit, push, open the PR")
+    sd.add_argument("--skip-tests", action="store_true", help=argparse.SUPPRESS)
+    sd.set_defaults(fn=cmd_done)
+    args = p.parse_args(argv)
+    args.fn(args)
+
+
+if __name__ == "__main__":
+    main()

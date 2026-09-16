@@ -1,0 +1,9 @@
+# Recognised human identities (whitepaper Ch.6.6, Ch.10.6).
+# Only these names may arbitrate, pause/resume machines, set quota or merge.
+# `github` is matched against `gh api user`; `emails` against the commit
+# author of arbitration records.
+
+humans:
+  - name: roman
+    github: YOUR-GITHUB-LOGIN
+    emails: []

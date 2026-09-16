@@ -1,0 +1,11 @@
+# Tool configuration only; DAGS is not an installable package (whitepaper Ch.4:
+# every machine runs the committed scripts in bin/).
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+src = ["bin", "tests"]
+extend-include = ["bin/skill/swarm-task"]

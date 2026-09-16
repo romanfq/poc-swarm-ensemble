@@ -1,0 +1,33 @@
+# Which issue backend this swarm is bound to (whitepaper Ch.3.4), plus
+# shared swarm settings. Committed: every machine reads the same file.
+
+backend: github            # or: jira
+
+github:
+  repo: OWNER/matchwire-swarm        # repo holding the epics/tasks as GitHub Issues
+  use_issue_types: false             # true only for org repos with issue types configured (Ch.3.3)
+
+jira:
+  base_url: https://yourorg.atlassian.net
+  project_key: MW
+  blocks_link_type: Blocks           # issue-link type used for dependencies
+
+# Code repositories tasks may target. A task names its repo with a
+# `repo:OWNER/NAME` label (GitHub) or `repo:` in swarm.yaml (Jira).
+repos:
+  OWNER/matchwire-backend:
+    base: main
+    test_command: ./mvnw -q verify
+  OWNER/matchwire-frontend:
+    base: main
+    test_command: npm test --silent
+
+default_repo: OWNER/matchwire-backend
+
+swarm:
+  default_quota: 3          # global N until a quota/ record overrides it (Ch.7.1)
+  lease_minutes: 15         # claim expires if its heartbeat is older than this (Ch.6.5)
+  heartbeat_minutes: 3
+  max_retries: 3            # expired/withdrawn claims before autonomy downgrades (Ch.8)
+  human_idle_hours: 8       # human worker with no progress for this long gets prompted
+  thrash_threshold: 2       # conflict cycles before "needs arbitration" (Ch.9.4)
