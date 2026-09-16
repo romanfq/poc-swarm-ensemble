@@ -4,10 +4,11 @@
 # (plus the "Next" checklist in docs/HANDOVER.md).
 #
 # holders: cowork (Claude in the Cowork app) | claude-code (Claude Code CLI on the Mac) | roman
-holder: claude-code
+holder: cowork
 since: 2026-09-16
-reason: Phase 9 plan file, seeder and config are ready. The GitHub steps (bot check,
-  seed dry run, then apply on Roman's yes) need the Mac: docs/HANDOVER.md, "Next".
+reason: Phase 9 is seeded. 21 issues in romanfq/matchwire-spec, ledger synced, bot
+  identity recorded, both code repos protected, frontend has a main branch, this repo
+  pushed. Issue numbers and the leftovers are in docs/HANDOVER.md, "Next".
 history:
   - 2026-09-16 cowork: resumed via the same Cowork task (desktop or mobile), Mac kept awake
     (`caffeinate -is`) with the desktop app open.
@@ -18,3 +19,7 @@ history:
     --identity remembered), added docs/SPEC.md, merged the handover. Nothing on GitHub.
   - 2026-09-16 cowork: Phase 9 prep: poc/matchwire/plan.yaml, `swarm.py backend seed`,
     backend.yaml/humans.yaml for romanfq. Nothing on GitHub. Baton to claude-code.
+  - 2026-09-16 claude-code: Phase 9 setup on GitHub with Roman's yes each time: seeded
+    the plan (21 issues), plan sync, bot identity in .swarm/local.yaml, initial commit on
+    the empty matchwire-frontend, branch protection on both code repos, pushed this repo.
+    Test suite deliberately not re-run.

@@ -385,37 +385,57 @@ Done by Cowork:
 Why this goes to Claude Code: the Cowork cloud sandbox can't reach these
 GitHub repos, and the Cowork shell on the Mac has no network.
 
-## Next (holder: claude-code)
-Nothing on GitHub changes without Román's yes in the chat. Never print the
-bot token.
-1. Run `./bin/dev-setup.sh` and confirm the full suite passes, including
-   `test_cli.py::test_backend_seed_dry_run_then_apply`.
-2. **gh flags.** Check that `gh issue edit --help` lists `--parent` and
-   `--add-blocked-by` and that they accept an issue number. (The startup
-   prerequisite check only checks that the flags exist.) If they don't, fix
-   `GitHubBackend.set_parent` / `add_dependency` and their fakes.
-3. **Bot identity.** Run `GH_TOKEN="$(security find-generic-password -s dags-worker-token -w)" gh api user --jq '.login, .id'`.
-   - Write `bot: {login: <login>, email: <id>+<login>@users.noreply.github.com}`
-     into `.swarm/local.yaml`.
-   - Check the bot has Write access to both code repos:
-     `gh api repos/romanfq/matchwire-backend/collaborators/<login>/permission --jq .permission`
-     (as Román), and the same for the frontend.
-   - If access is missing, tell Román. Inviting a collaborator is a GitHub
-     change, so ask him first.
-4. **Seed dry run.** Run `./bin/swarm.py backend seed poc/matchwire/plan.yaml`
-   and show Román the output.
-5. **Only after Román says yes:**
-   - run `./bin/swarm.py backend seed poc/matchwire/plan.yaml --apply --yes`
-     (this creates the labels too);
-   - run `./bin/swarm.py plan sync`, then `./bin/swarm.py task list`.
-     Expect S1 and S2 to be the only `(ready)` tasks.
-6. **Ask Román** about these three, and do each only on his yes:
-   - an initial commit in the empty `matchwire-frontend` repo (a README on
-     `main`), because worktrees branch from `origin/main`;
-   - `./bin/swarm.py protect romanfq/matchwire-backend` (and the frontend):
-     dry run, then `--apply`;
-   - a push of this repo.
-7. Commit locally, set `holder: cowork` in `BATON`, and write here what
-   happened (issue numbers, bot login, anything that failed).
+## Next (holder: cowork)
+Phase 9 is seeded and GitHub is set up. Done on Román's Mac by Claude Code on
+2026-09-16, each GitHub step with his explicit yes in the chat.
 
-Then Cowork sets up two "machines" and runs the plan §4 Phase 9 scenarios.
+**Tracker.** `romanfq/matchwire-spec` (public, issues on) now holds the plan:
+- epics: **BE #1**, **FE #2**, **E2E #3**;
+- backend tasks: S1 #4, E1 #5, E1b #6, E2 #7, E3 #8, E4 #9, E5 #10, E6 #11,
+  E4b #12;
+- frontend tasks: S2 #13, E7 #14, E8 #15, E9 #16, E10 #17, E11 #18, E12 #19,
+  E13 #20; end-to-end: E14 #21.
+
+`backend seed poc/matchwire/plan.yaml` dry run showed 13 labels, 21 issues,
+18 parents and 29 dependencies; `--apply --yes` created all of it and
+`seed.verify` came back clean. Then `plan sync` imported 21 (ledger commit
+`be0ef6d`, local only), and `task list` shows **GH-4 (S1) and GH-13 (S2) as the
+only `(ready)` tasks** — the rest are blocked by their dependencies, as planned.
+
+**Bot.** `romanfq-dagsbot`, id `329746898`. It has **write** on both code
+repos, so no invitation is needed. `.swarm/local.yaml` (machine-local, never
+committed) now has:
+`bot: {login: romanfq-dagsbot, email: 329746898+romanfq-dagsbot@users.noreply.github.com}`,
+confirmed through `Context().bot_identity()`. The token was never printed.
+
+**gh flags (step 2): fine.** gh 2.101.0 lists `--parent number` and
+`--add-blocked-by number` (plus `--remove-parent` / `--remove-blocked-by`), both
+taking an issue number or URL — which is how `GitHubBackend.set_parent` and
+`add_dependency` call them. No change needed. Note the bare numbers resolve
+inside `--repo`, so this holds only while every plan issue lives in one repo.
+
+**Code repos.**
+- `matchwire-frontend` was completely empty (no branches at all), so worktrees
+  had nothing to fork from. Pushed an initial README commit `c02321e` on `main`
+  saying the real scaffold arrives with S2. `matchwire-backend` already had
+  `main`.
+- Branch protection is **applied** to both: `enforce_admins: true`,
+  1 approving review, `dismiss_stale_reviews: true`, no required checks.
+  Verified by reading `/branches/main/protection` back. Both repos are public,
+  so this works on the Free plan. The bot is the PR author and Román approves,
+  so the one-review rule is satisfiable.
+- This repo was pushed to `github.com/romanfq/poc-swarm-ensemble` (Román's yes).
+
+**Not done / worth a look:**
+- The test suite was **not** re-run this session — Román asked to skip it. The
+  last full run is the one recorded above (179 pass). `test_cli.py::
+  test_backend_seed_dry_run_then_apply` has therefore never run here, though the
+  real dry run and apply both behaved.
+- `swarm.py protect` has no `--yes`, unlike `backend seed`, so it can't be
+  driven non-interactively; I answered its prompt on stdin. Worth adding for
+  parity.
+- `task list` has no `--json`, so there's no machine-readable task list.
+
+Then Cowork: set up two "machines" and run the plan §4 Phase 9 scenarios. S1
+and S2 are the only ready work, so the first run exercises scaffolding before
+anything else can start.
