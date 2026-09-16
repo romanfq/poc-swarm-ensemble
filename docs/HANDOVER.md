@@ -399,7 +399,8 @@ Phase 9 is seeded and GitHub is set up. Done on Román's Mac by Claude Code on
 `backend seed poc/matchwire/plan.yaml` dry run showed 13 labels, 21 issues,
 18 parents and 29 dependencies; `--apply --yes` created all of it and
 `seed.verify` came back clean. Then `plan sync` imported 21 (ledger commit
-`be0ef6d`, local only), and `task list` shows **GH-4 (S1) and GH-13 (S2) as the
+`be0ef6d`; note `plan.sync` defaults to `push=True`, so that one pushed itself —
+Román had already approved pushing this repo), and `task list` shows **GH-4 (S1) and GH-13 (S2) as the
 only `(ready)` tasks** — the rest are blocked by their dependencies, as planned.
 
 **Bot.** `romanfq-dagsbot`, id `329746898`. It has **write** on both code
