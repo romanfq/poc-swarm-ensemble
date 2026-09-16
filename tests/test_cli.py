@@ -50,7 +50,7 @@ def test_plan_sync_and_task_list(machine):
     r = invoke("task", "list")
     assert "T1" in r.output and "(ready)" in r.output
     r = invoke("task", "show", "T1")
-    data = json.loads(r.output)
+    data = json.loads(r.stdout)
     assert data["state"] == "open" and data["ready"] is True
 
 
@@ -67,7 +67,7 @@ def test_backend_commands(machine):
 def test_pause_resume_throttle_and_status(machine):
     assert invoke("pause").exit_code == 0
     r = invoke("status", "--json")
-    rows = {x["label"]: x for x in json.loads(r.output)}
+    rows = {x["label"]: x for x in json.loads(r.stdout)}
     assert "stopped" in rows["scheduler"]["value"]
     assert invoke("throttle", "2").exit_code == 0
     assert invoke("resume").exit_code == 0

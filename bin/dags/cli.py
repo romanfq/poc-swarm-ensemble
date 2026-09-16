@@ -12,8 +12,11 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
+import click
 import typer
 from rich.console import Console
+from rich.markup import escape
+from rich.text import Text
 
 import resolve
 from backends.base import SWARM_STATUSES, TaskRef
@@ -52,7 +55,7 @@ def ctx() -> Context:
 
 
 def fail(message: str, code: int = 1):
-    err.print(f"[bold red]error:[/] {message}")
+    err.print("[bold red]error:[/]", escape(str(message)))
     raise typer.Exit(code)
 
 
@@ -64,7 +67,7 @@ def guarded(fn):
     def wrapper(*a, **kw):
         try:
             return fn(*a, **kw)
-        except typer.Exit:
+        except (typer.Exit, click.exceptions.Exit, click.exceptions.Abort, click.ClickException):
             raise
         except KNOWN_ERRORS as e:
             if os.environ.get("DAGS_DEBUG"):
@@ -122,7 +125,8 @@ def start(
         for chk in checks:
             if not chk.ok:
                 (err if chk.fatal else console).print(
-                    f"[{'red' if chk.fatal else 'yellow'}]{'✗' if chk.fatal else '!'} {chk.name}[/]: {chk.detail}")
+                    f"[{'red' if chk.fatal else 'yellow'}]{'✗' if chk.fatal else '!'} {chk.name}[/]:",
+                    escape(chk.detail))
         bad = prereqs.failures(checks)
         if bad:
             fail("prerequisites missing: " + ", ".join(b.name for b in bad), 2)
@@ -138,13 +142,13 @@ def start(
     try:
         report = plan.sync(c)
         if report.errors:
-            console.print(f"[yellow]plan sync warnings:[/] {'; '.join(report.errors[:3])}")
+            console.print("[yellow]plan sync warnings:[/]", escape("; ".join(report.errors[:3])))
     except Exception as e:  # noqa: BLE001
         synced = False
-        console.print(f"[yellow]plan sync failed:[/] {e}")
+        console.print("[yellow]plan sync failed:[/]", escape(str(e)))
     for repo, result in repos.ensure_all(c).items():
         if isinstance(result, Exception):
-            console.print(f"[yellow]{repo}:[/] {result}")
+            console.print(f"[yellow]{escape(repo)}:[/]", escape(str(result)))
     L.control(c, "start", quota_share=quota_share, default_worker=default_worker)
     opts = daemon.Options(quota_share=quota_share, poll_interval=daemon.parse_interval(poll_interval),
                           cycle_interval=daemon.parse_interval(cycle_interval),
@@ -229,7 +233,7 @@ def status(as_json: bool = typer.Option(False, "--json")):
         synced = False
     rows = panel.status_rows(c, synced=synced)
     if as_json:
-        console.print_json(json.dumps([{"label": a, "value": b, "style": s} for a, b, s in rows]))
+        typer.echo(json.dumps([{"label": a, "value": b, "style": s} for a, b, s in rows], indent=2))
     else:
         console.print(panel.render(rows))
 
@@ -252,7 +256,8 @@ def board(web: bool = typer.Option(False, "--web", help="Serve the Board at http
             console.print("installing textual-dev for `textual serve` (plan §2.11) ...")
             subprocess.run([sys.executable, "-m", "pip", "install", "-q", "textual-dev"], check=True)
             textual = str(Path(sys.executable).parent / "textual")
-        cmd = " ".join([sys.executable, str(board_py), "--root", str(c.root), *env_args])
+        import shlex
+        cmd = shlex.join([sys.executable, str(board_py), "--root", str(c.root), *env_args])
         os.execv(textual, [textual, "serve", "--port", str(port), cmd])
     import board as board_mod
     board_mod.run(c)
@@ -290,7 +295,7 @@ def plan_sync():
     rep = plan.sync(ctx())
     console.print(rep.summary())
     for e in rep.errors:
-        console.print(f"[yellow]{e}[/]")
+        console.print(escape(str(e)), style="yellow")
 
 
 def _ref_for(key: str) -> TaskRef:
@@ -400,7 +405,8 @@ def task_list(all_states: bool = typer.Option(False, "--all", help="Include done
         if v.state == "done" and not all_states:
             continue
         state = v.state + (" (ready)" if v.ready else "")
-        t.add_row(v.short, v.title, state, v.owner_machine or "", v.worker or "", v.repo or "", v.pr_url or "")
+        t.add_row(*(Text(x) for x in (v.short, v.title, state, v.owner_machine or "", v.worker or "",
+                                     v.repo or "", v.pr_url or "")))
     console.print(t)
 
 
@@ -421,7 +427,7 @@ def task_show(key: str):
         "checkpoint": {k: val for k, val in v.checkpoint.items() if k != "plan_md"},
         "dir": str(v.dir.relative_to(c.root)),
     }
-    console.print_json(json.dumps(data, default=str))
+    typer.echo(json.dumps(data, default=str, indent=2))
 
 
 @task_app.command("worker")
@@ -430,7 +436,7 @@ def task_worker(key: str, choice: str = typer.Argument(..., help="a/claude, b/in
     """Choose the worker for a task this machine claimed (Ch.10.7)."""
     label = work.choose_worker(ctx(), task_dir(key), choice)
     console.print(f"[swarm-board] Ok, you have selected {label}. Handing over {key} to it — "
-                  f"when done, it will announce with the PR link here.")
+                  f"when done, it will announce with the PR link here.", markup=False)
 
 
 @task_app.command("freeze")

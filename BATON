@@ -4,10 +4,10 @@
 # (plus the "Next" checklist in docs/HANDOVER.md).
 #
 # holders: cowork (Claude in the Cowork app) | claude-code (Claude Code CLI on the Mac) | roman
-holder: cowork
+holder: claude-code
 since: 2026-09-16
-reason: Phases 5-7 still being written; Román paused the session overnight.
-note: 2026-09-16 — Román and Cowork agreed how to carry on: resume this same Cowork task
-  (desktop app, or the Claude mobile app via the Cowork option), with the Mac kept awake
-  (`caffeinate -is` or the Battery setting) and the desktop app open so Cowork can reach
-  this folder. No code changed; baton stays with cowork until Phase 7 is done.
+reason: Phases 5-7 are written; the typer/rich/textual tests can only run on the Mac.
+  Follow "Next (holder: claude-code)" in docs/HANDOVER.md, then hand back to cowork.
+history:
+  - 2026-09-16 cowork: resumed via the same Cowork task (desktop or mobile), Mac kept awake
+    (`caffeinate -is`) with the desktop app open.

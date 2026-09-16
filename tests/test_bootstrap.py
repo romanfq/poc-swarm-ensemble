@@ -51,6 +51,14 @@ def test_dev_request_on_non_dev_venv_installs(tmp_path):
     assert venv.plan_action(root, dev=True) == "install"
 
 
+def test_dev_venv_serves_normal_runs(tmp_path):
+    root = _root(tmp_path)
+    _fake_venv(root, venv.wanted_stamp(root, True))
+    assert venv.plan_action(root, dev=False) == "ok"
+    (root / "bin" / "requirements.txt").write_text("pyyaml>=6.0\nrich>=13\n")
+    assert venv.plan_action(root, dev=False) == "install"
+
+
 def test_foreign_venv_is_rebuilt(tmp_path):
     """e.g. a venv created by a Linux VM that mounts this Mac folder."""
     root = _root(tmp_path)

@@ -51,7 +51,7 @@ class FakeGitHub:
         self.names: dict[str, int] = {}
 
     def seed(self, plan=PLAN, issue_types=False):
-        for i, (name, spec) in enumerate(plan.items(), start=1):
+        for i, name in enumerate(plan, start=1):
             self.names[name] = i
         for name, spec in plan.items():
             n = self.names[name]
@@ -138,3 +138,69 @@ class FakeGitHub:
 
     def comments(self, key):
         return self.issues[int(key.split("#")[1])]["comments"]
+
+
+# ---------------------------------------------------------------------------
+# GitHub pull requests (code repos)
+# ---------------------------------------------------------------------------
+
+class FakePRs:
+    """Answers the gh pr commands used by `swarm-task done`, the poller and the Board."""
+
+    def __init__(self):
+        self.prs: dict[tuple[str, int], dict] = {}
+        self.calls: list[dict] = []
+        self.next = 1
+
+    def add(self, repo, branch, state="OPEN", files=(), reviews=(), checks=()):
+        n = self.next
+        self.next += 1
+        self.prs[(repo, n)] = {"number": n, "url": f"https://github.com/{repo}/pull/{n}", "state": state,
+                               "headRefName": branch, "files": list(files), "reviews": list(reviews),
+                               "comments": [], "statusCheckRollup": list(checks), "reviewDecision": None,
+                               "title": branch, "body": ""}
+        return self.prs[(repo, n)]
+
+    def get(self, url):
+        repo, n = url.split("github.com/")[1].split("/pull/")
+        return self.prs[(repo, int(n))]
+
+    @staticmethod
+    def _opt(args, name, default=None):
+        return args[args.index(name) + 1] if name in args else default
+
+    def __call__(self, args, env, input):
+        self.calls.append({"args": args, "token": env.get("GH_TOKEN"), "input": input})
+        if args[0] != "pr":
+            raise AssertionError(f"unexpected gh call {args}")
+        repo = self._opt(args, "--repo")
+        verb = args[1]
+        if verb == "list":
+            head = self._opt(args, "--head")
+            rows = [{"number": p["number"], "url": p["url"], "state": p["state"]}
+                    for (r, _), p in self.prs.items() if r == repo and p["headRefName"] == head]
+            return json.dumps(rows)
+        if verb == "create":
+            branch = self._opt(args, "--head")
+            body = open(self._opt(args, "--body-file")).read()
+            pr = self.add(repo, branch)
+            pr["title"] = self._opt(args, "--title")
+            pr["body"] = body
+            pr["base"] = self._opt(args, "--base")
+            return pr["url"] + "\n"
+        pr = self.prs[(repo, int(args[2]))]
+        if verb == "view":
+            fields = self._opt(args, "--json", "").split(",")
+            return json.dumps({k: v for k, v in pr.items() if k in fields})
+        if verb == "comment":
+            pr["comments"].append({"author": {"login": "bot"}, "body": input, "createdAt": "t"})
+            return ""
+        if verb == "diff":
+            return "\n".join(pr["files"]) + "\n"
+        if verb == "review":
+            pr["reviewDecision"] = "APPROVED"
+            return ""
+        if verb == "merge":
+            pr["state"] = "MERGED"
+            return ""
+        raise AssertionError(f"unexpected gh call {args}")

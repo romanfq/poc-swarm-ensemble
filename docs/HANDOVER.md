@@ -63,21 +63,39 @@ in the coordination repo (for Claude Code), and `~/Documents/DAGS/DAGS-handover.
 
 ## Build status
 
-Tests: **109 pass, 1 module skipped** (`tests/test_cli.py`, which needs typer/rich)
-in the cloud sandbox. Run the full suite with `./bin/dev-setup.sh` from the repo root.
+Tests: **164 pass, 3 modules skipped** in the Cowork cloud sandbox. The skipped
+ones need typer/rich/textual and haven't run anywhere yet:
+- `tests/test_cli.py`;
+- `tests/test_board.py`;
+- the end-to-end test in `tests/test_skill.py`.
+
+`ruff check` (F, E9, B) is clean. Run the full suite on the Mac with
+`./bin/dev-setup.sh`.
 
 | Phase | Status |
 |---|---|
 | 0 Scaffolding | done |
-| 1 Deterministic core | done and tested |
-| 2 Git sync + gh wrapper | done and tested |
-| 3 Issue backend port | done and tested (Jira deferred) |
-| 4 `swarm.py` bootstrap | written; stdlib parts tested; typer CLI tests written but not yet run |
-| 5 Scheduler, workers, skill | written, **not tested yet** |
-| 6 Poller + notifications | written, **not tested yet** |
-| 7 Swarm Board | **not started** |
+| 1 Deterministic core | done, tested |
+| 2 Git sync + gh wrapper | done, tested |
+| 3 Issue backend port | done, tested (Jira deferred) |
+| 4 `swarm.py` bootstrap | done; stdlib parts tested; **typer CLI tests not run yet** |
+| 5 Scheduler, workers, skill | done, tested; **skill end-to-end test not run yet** (needs typer) |
+| 6 Poller + notifications | done, tested |
+| 7 Swarm Board | done; view model tested; **Textual pilot tests not run yet** |
 | 8 Jira adapter | deferred (`FutureWork.md`) |
 | 9 POC on MatchWire | not started |
+
+The typer/rich/textual code was written without being able to run it, then
+reviewed by a second agent against the libraries' APIs. Fixes from that review:
+- `BoardApp.run_action` renamed to `run_job`, because the old name hid
+  Textual's own dispatcher;
+- `open_url` renamed so it no longer hides Textual's own method;
+- a lock stops Board refreshes from overlapping;
+- markup escaping in labels, table cells, notifications and CLI errors;
+- `guarded` no longer swallows click's Abort/Exit;
+- `typer>=0.16` (older typer breaks with click 8.2+);
+- worker letters on the Board are the fixed a/b/c from Ch.10.7;
+- `--json` output goes through `typer.echo`.
 
 ### Phase details
 
@@ -86,89 +104,123 @@ in the cloud sandbox. Run the full suite with `./bin/dev-setup.sh` from the repo
   - `resolve.plan_status()` implements the review gate.
 - **2. Git sync + gh wrapper.** `dags/gitsync.py`, `dags/gh.py`.
   - Tests: `tests/test_gitsync.py` races four clones of a bare remote (zero
-    conflicts, identical `resolve()` everywhere), covers the add/add meta-import
-    race and the single-writer heartbeat conflict (remote wins), plus the
-    control/quota records. `tests/test_gh.py`.
+    conflicts, the same `resolve()` result everywhere), covers the add/add
+    meta-import race and the single-writer conflict (remote wins).
+    `tests/test_gh.py`.
 - **3. Issue backend port.**
-  - `backends/base.py` (the port, plus `all_tasks` and the shared `ready_from` rule).
+  - `backends/base.py` (the port, plus `all_tasks` and the shared `ready_from`).
   - `backends/github.py` (GraphQL reads, label writes, `init_commands`).
   - `backends/fake.py`.
   - `dags/plan.py` (plan sync): import, meta revisions, imported-done,
-    replanned-after-reject, stale status reset, autonomy downgrade after
-    `max_retries` failures.
-  - Tests: `tests/test_backend_contract.py` runs one suite against fake, github
-    and github-with-issue-types. `tests/test_github_backend.py`, `tests/test_plan_sync.py`.
+    replanned-after-reject, stale status reset, autonomy downgrade.
+  - Tests: `tests/test_backend_contract.py` (fake, github, github-with-issue-types),
+    `tests/test_github_backend.py`, `tests/test_plan_sync.py`.
 - **4. `swarm.py` bootstrap.**
   - `bin/swarm.py`.
-  - `dags/venv.py`: self-install and re-exec; set `DAGS_NO_VENV=1` to skip.
-  - `dags/prereqs.py`, `dags/repos.py` (clone or map, `commit.template`, `info/exclude`).
-  - `dags/daemon.py`: detached daemon, pidfile, `.swarm/swarm.log`,
-    `.swarm/daemon.json`; stop means a control record plus SIGTERM.
-  - `dags/panel.py`: rich status panel.
-  - `dags/cli.py`: typer app. Commands: `start`, `stop`, `pause`, `resume`,
-    `throttle`, `status`, `board`, `protect`, `plan sync`,
-    `backend get-task|ready|set-status|init`, `quota set|show`,
-    `epic takeover|release`, and `task list|show|worker|freeze|unfreeze|reassign|approve-plan|merge|open|release|still-working`,
-    plus the skill-facing `task context|note|submit-plan|block|done`.
-  - Tests: `tests/test_bootstrap.py` (stdlib parts), `tests/test_cli.py`
-    (typer/rich, skipped in the cloud).
+  - `dags/venv.py`: self-install and re-exec, stamped by platform and Python.
+    A dev venv also serves normal runs. `DAGS_NO_VENV=1` skips all of it.
+  - `dags/prereqs.py`, `dags/repos.py`.
+  - `dags/daemon.py`: detached daemon, `.swarm/daemon.pid`,
+    `.swarm/daemon.json`, `.swarm/swarm.log`.
+  - `dags/panel.py`, `dags/cli.py`.
+  - Tests: `tests/test_bootstrap.py`, `tests/test_cli.py`.
 - **5. Scheduler, workers, skill.**
-  - `dags/scheduler.py`:
-    - Scheduler cycle: plan sync, control records, withdraw lost claims,
-      resume won ones, claim within quota, re-resolve, prepare, then dispatch
-      or announce the worker prompt.
-    - Heartbeater: batched, ownership re-checked after pull, idle limit per
-      §2.9, applied to every worker type.
-    - Loop thread.
-  - `dags/worktree.py`: `.worktrees/<TASK>` on `swarm/<TASK>`, reusing a local
-    or remote branch; `.swarm-task/` injection with `context.json`; strip and remove.
-  - `dags/work.py`: `choose_worker`, `note`, `submit_plan`/`approve_plan`,
-    `feedback`, `block`, `still_working`, `release`, and `finish`:
-    test command, template render, commit (bot author if set), push, PR
-    create/comment with the bot token, completion, backend status and comment.
-  - `dags/actions.py`: pause/resume/throttle/quota, freeze/unfreeze/reassign,
-    takeover, merge (gh approve + squash, then a done record), links, and the
-    protection body.
-  - `bin/workers/`: `claude` (osascript → Terminal/iTerm), `intellij` (`open -na`),
-    `vscode` (`code -n`). Registry order a/b/c matches Ch.10.7.
-  - `bin/skill/README.md`, `bin/skill/swarm-task`: plan [--submit] / status /
-    implement / note / block / done.
-  - `dags/notify.py`: log file, macOS notification, webhook, and in-process listeners.
-- **6. Poller + notifications.** `bin/poll.py`:
-  - feed events (quiet on first run);
-  - awaiting-review and stale-heartbeat diffs;
-  - live conflicts and thrash escalation;
-  - PR tracking: merged → done, closed → rejected (backend set to blocked),
-    new CHANGES_REQUESTED review → reopened (backend set to ready);
-  - overlap detection;
-  - output-contract watcher: strips `.swarm-task/` before announcing
-    "<worker> has finished X. The PR can be found at …", and removes the
-    worktree after merge or close.
-  - `dags/feed.py` gives the plain-English feed (Ch.10.3); `dags/snapshot.py`
-    gives the shared read model.
+  - `dags/scheduler.py`: the Scheduler, plus a Heartbeater with the idle limit.
+  - `dags/worktree.py`, `dags/work.py`, `dags/actions.py`, `bin/workers/`,
+    `bin/skill/`, `dags/notify.py`.
+  - Tests:
+    - `tests/test_scheduler.py`:
+      - claim, prepare and prompt;
+      - every worker launcher;
+      - default worker;
+      - human-must-scope;
+      - macOS-only launchers;
+      - race and withdraw;
+      - quota share, global N and throttle;
+      - pause, resume and stop;
+      - soft takeover;
+      - dependencies and blocked epic;
+      - arbitration;
+      - resume on another machine from the pushed branch and checkpoint;
+      - heartbeats and idle limit;
+      - release.
+    - `tests/test_work.py`:
+      - plan gate (human review, changes requested, self-approve, unknown human);
+      - notes, block and templates;
+      - `done` refusals (no approval, no summary, no changes, red tests,
+        lost claim before push);
+      - the full output contract (template commit by the bot author,
+        `.swarm-task` never committed, push, PR opened with the bot token,
+        ledger and backend updated);
+      - PR update after changes are requested.
+    - `tests/test_workers.py`.
+    - `tests/test_skill.py`: stdlib-only check; the end to end run needs typer.
+- **6. Poller + notifications.** `bin/poll.py`, `dags/feed.py`, `dags/snapshot.py`.
+  - Tests (`tests/test_poll.py`):
+    - quiet first run, then the feed;
+    - contract watcher (strip `.swarm-task/`, then announce);
+    - merge → done and dependants unblocked;
+    - closed PR → rejected → re-planned;
+    - changes requested → reopened exactly once across machines;
+    - overlap;
+    - stale heartbeat;
+    - conflict → needs arbitration → cleared by arbitration;
+    - feed wording;
+    - notifier (log, desktop, webhook, listeners).
+- **7. Swarm Board.**
+  - `bin/board.py` (Textual) is a thin layer over `dags/boardview.py`
+    (plain data) and `dags/actions.py` / `dags/work.py`.
+  - Panels: live claims, awaiting review (live gh status), needs arbitration
+    (poller thrash flags plus live conflicts), plans awaiting review, the quota
+    gauge, the machine line, and the activity feed (ledger events plus the
+    daemon's `.swarm/notifications.log`).
+  - Keys:
+    - `p` / `r` / `t` / `s`: pause, resume, throttle, stop;
+    - `n`: global N;
+    - `f`: freeze/unfreeze;
+    - `a`: reassign;
+    - `e`: take over / release epic;
+    - `v`: review plan;
+    - `m`: approve & merge;
+    - `o` / `O`: open ticket / PR;
+    - `w`: choose worker;
+    - `q`: quit.
+  - The worker prompt pops up by itself (Ch.10.7).
+  - With no daemon running, the Board runs its own poller.
+  - Tests: `tests/test_boardview.py` (here), `tests/test_board.py`
+    (Textual pilot, run on the Mac).
 - **Also added:** `CLAUDE.md`, `BATON`, `FutureWork.md`, `bin/dev-setup.sh`,
-  `pyproject.toml` (pytest/ruff config).
+  `pyproject.toml` (pytest and ruff config).
 
-## Next (holder: cowork)
-1. Tests for Phase 5, all in the cloud:
-   - scheduler with the fake backend and fake launcher on bare-repo clones;
-   - worktree creation/reuse against a local "code" remote;
-   - the skill run end to end with a fake gh;
-   - `work.finish`;
-   - idle limit.
-2. Tests for Phase 6: the poller against a fake gh (merged, closed, changes
-   requested, overlap, contract cleanup, thrash).
-3. Phase 7: `bin/board.py` (Textual). Put the logic in `dags/snapshot.py` and
-   `dags/actions.py`; write pilot tests with `App.run_test()` inside
-   `asyncio.run()`, skipped without textual.
-4. Hand the baton to Claude Code with this checklist:
-   - run `./bin/dev-setup.sh`;
-   - fix failures in `tests/test_cli.py` and the Board tests;
-   - smoke-test `swarm.py --help`, `status` and `board` on the Mac;
-   - check `security find-generic-password -s dags-worker-token` works (without printing it);
-   - touch nothing on GitHub.
-5. Phase 9 POC. Needs Román's go-ahead for:
-   - the plan repo;
-   - labels (`backend init --apply`);
-   - branch protection (`protect --apply`);
-   - the bot's collaborator access.
+## Next (holder: claude-code)
+Claude Code, on Román's Mac, in `~/Documents/DAGS/swarm/poc-swarm-ensemble`:
+1. Confirm `BATON` says `holder: claude-code` and `git status` is clean.
+2. Run `./bin/dev-setup.sh`. This creates `.swarm/venv` with the dev
+   requirements and runs the whole suite. Python 3.10+ is required;
+   Homebrew's python@3.12 is fine.
+3. Fix whatever fails in `tests/test_cli.py`, `tests/test_board.py` and the
+   end-to-end test in `tests/test_skill.py`.
+   - Prefer fixing the code over weakening the tests.
+   - Keep the Board's logic in `dags/boardview.py`.
+   - Keep `bin/skill/swarm-task` stdlib-only.
+4. Smoke-test by hand:
+   - `./bin/swarm.py --help`, which bootstraps the venv the first time;
+   - `DAGS_NO_VENV=1 .swarm/venv/bin/python bin/swarm.py status`;
+   - `./bin/swarm.py board`, then quit with `q`.
+   - `backend.yaml` still has placeholder repos (`OWNER/...`), so commands that
+     touch GitHub will say so. That's expected. Don't change the placeholders
+     without Román.
+5. Check the bot token is reachable without printing it:
+   `security find-generic-password -s dags-worker-token -w >/dev/null && echo ok`.
+6. Touch nothing on GitHub and nothing in the MatchWire repos. Don't push.
+7. Hand back: update this **Next** section with results, set `BATON` to
+   `holder: cowork` (or `roman`), and commit locally.
+
+Then, for Cowork: the Phase 9 POC. It needs Román's go-ahead and details for:
+- the plan repo name, and replacing `OWNER/…` in `backend.yaml`;
+- `humans.yaml` (his GitHub login);
+- labels (`swarm.py backend init --apply`);
+- branch protection (`swarm.py protect <repo> --apply`); on the Free plan this
+  depends on whether the MatchWire repos are public;
+- the bot account's collaborator access and `.swarm/local.yaml`
+  (repo paths, `bot:` login and email).

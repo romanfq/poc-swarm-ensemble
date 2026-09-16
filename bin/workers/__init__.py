@@ -7,7 +7,7 @@ from workers.intellij import IntelliJWorker
 from workers.vscode import VSCodeWorker
 
 WORKERS = {w.name: w for w in (ClaudeWorker, IntelliJWorker, VSCodeWorker)}
-LETTERS = dict(zip("abc", WORKERS))
+LETTERS = dict(zip("abc", WORKERS, strict=True))
 
 
 def resolve_name(choice: str) -> str:

@@ -9,3 +9,7 @@ line-length = 120
 target-version = "py310"
 src = ["bin", "tests"]
 extend-include = ["bin/skill/swarm-task"]
+
+[tool.ruff.lint]
+select = ["F", "E9", "B"]
+ignore = ["B008"]   # typer.Option(...) defaults are the typer idiom

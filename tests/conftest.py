@@ -128,6 +128,9 @@ class Swarm:
         real = Path(__file__).resolve().parent.parent / "templates"
         for f in real.iterdir():
             (tpl / f.name).write_text(f.read_text())
+        import shutil
+        shutil.copytree(real.parent / "bin", seed / "bin",
+                        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
         for d in ("tasks", "control", "priority", "quota"):
             (seed / d).mkdir()
             (seed / d / ".gitkeep").write_text("")
@@ -177,3 +180,58 @@ def fake_gh():
     gh.set_runner(fake)
     yield fake
     gh.set_runner(None)
+
+
+class CodeWorld:
+    """A coordination swarm plus one code repo ('OWNER/app') with a bare remote,
+    a shared fake backend, fake gh PRs and a launcher that records commands."""
+
+    def __init__(self, swarm, base: Path, gh_runner):
+        from backends.fake import FakeBackend
+        from fakes import FakePRs
+        self.swarm = swarm
+        self.base = base
+        self.code_remote = base / "app.git"
+        sh(["git", "init", "-q", "--bare", "-b", "main", str(self.code_remote)], base)
+        seed = base / "app-seed"
+        sh(["git", "init", "-q", "-b", "main", str(seed)], base)
+        (seed / "README.md").write_text("app\n")
+        sh(["git", "add", "-A"], seed)
+        sh(["git", "commit", "-qm", "seed"], seed)
+        sh(["git", "push", "-q", str(self.code_remote), "main"], seed)
+        self.backend = FakeBackend(base / "backend.yaml")
+        self.prs = FakePRs()
+        gh_runner.handler = self.prs
+        self.machines: dict = {}
+        self.launched: list[list[str]] = []
+        self.notes: list[tuple[str, str]] = []
+
+    def machine(self, name: str, human: str = "roman", extra: str = ""):
+        if name in self.machines:
+            self.machines[name].coord.pull()
+            return self.machines[name]
+        ctx = self.swarm.clone(name, human=human)
+        self.machines[name] = ctx
+        code = self.base / f"{name}-app"
+        sh(["git", "clone", "-q", str(self.code_remote), str(code)], self.base)
+        sh(["git", "config", "user.name", name], code)
+        sh(["git", "config", "user.email", f"{name}@example.com"], code)
+        (ctx.swarm_dir / "local.yaml").write_text(
+            f"human: {human}\nworker_token: none\nrepos:\n  OWNER/app: {code}\n{extra}")
+        ctx.set_backend(self.backend)
+        return ctx
+
+    def launch(self, cmd):
+        self.launched.append(cmd)
+
+    def notify(self, text, kind="info"):
+        self.notes.append((kind, text))
+
+    def scheduler(self, ctx, share=1, worker=None, **kw):
+        from dags.scheduler import Scheduler
+        return Scheduler(ctx, share, worker, notify=self.notify, launch=self.launch, platform="darwin", **kw)
+
+
+@pytest.fixture
+def world(swarm, tmp_path, fake_gh):
+    return CodeWorld(swarm, tmp_path, fake_gh)

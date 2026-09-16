@@ -81,7 +81,8 @@ def in_venv(root: Path) -> bool:
 def plan_action(root: Path, dev: bool) -> str:
     """'ok' | 'install' (same interpreter, requirements changed) | 'rebuild'."""
     have = read_stamp(root)
-    want = wanted_stamp(root, dev)
+    # a dev venv (bin/dev-setup.sh) also satisfies a normal run: compare like with like
+    want = wanted_stamp(root, dev or bool(have.get("dev")))
     if not venv_python(root).exists() or not have:
         return "rebuild"
     for key in ("platform", "machine", "python"):
@@ -107,6 +108,8 @@ def build(root: Path, dev: bool = False, python: str | None = None, quiet: bool 
     root = Path(root)
     action = action or plan_action(root, dev)
     vdir = venv_dir(root)
+    if action == "install" and read_stamp(root).get("dev"):
+        dev = True                      # keep the dev extras of a bin/dev-setup.sh venv
     if action == "ok":
         return
     if action == "rebuild":
@@ -152,6 +155,6 @@ def ensure(root: Path, argv: list[str], script: Path, dev: bool = False) -> None
             build(root, dev, python=base_python, action=action)
     except VenvError as e:
         print(f"[swarm] {e}", file=sys.stderr)
-        raise SystemExit(2)
+        raise SystemExit(2) from None
     py = str(venv_python(root))
     os.execv(py, [py, str(script), *argv[1:]])

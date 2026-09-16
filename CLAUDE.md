@@ -51,7 +51,7 @@ DAGS_NO_VENV=1 python3 bin/swarm.py --help    # skip the venv bootstrap
 | Path | Contents |
 |---|---|
 | `bin/resolve.py` | Pure claim resolution, readiness and quota |
-| `bin/dags/` | records, gitsync, gh, config, ledger (writes), plan (tracker → ledger), snapshot, feed, scheduler, work (worker side), actions (human levers), repos, worktree, notify, daemon, panel, cli (typer), venv, prereqs |
+| `bin/dags/` | records, gitsync, gh, config, ledger (writes), plan (tracker → ledger), snapshot, feed, boardview (what the Board shows), scheduler, work (worker side), actions (human levers), repos, worktree, notify, daemon, panel, cli (typer), venv, prereqs |
 | `bin/backends/` | Issue-backend port: `fake`, `github`. Jira is future work, see `FutureWork.md` |
 | `bin/workers/` | Worker port: `claude`, `intellij`, `vscode` (macOS launchers) |
 | `bin/skill/` | Injected into every worktree as `.swarm-task/` |
