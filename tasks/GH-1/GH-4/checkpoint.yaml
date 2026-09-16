@@ -5,5 +5,42 @@ worker_label: claude
 branch: swarm/GH-4
 dispatched_utc: '2026-09-16T21:31:50+00:00'
 needs_human: null
-logical_clock: 24
-wall_utc: '2026-09-16T21:31:52+00:00'
+logical_clock: 50
+wall_utc: '2026-09-16T22:42:08+00:00'
+plan_md: "# Plan — GH-4: S1: Backend scaffold (Spring Boot, Maven wrapper)\n\n## Understanding\n\
+  Create the minimal Spring Boot 3 / Java 21 Maven skeleton for `romanfq/matchwire-backend`\n\
+  that later backend tasks build on: a committed Maven wrapper, a `com.matchwire`\
+  \ application\nclass, `GET /health` → `{\"status\":\"ok\"}` with one test, `./mvnw\
+  \ -q verify` green on a clean\nclone, and a README section on build/test/run. No\
+  \ MatchWire features.\n\n## Approach\n- `pom.xml`: parent `spring-boot-starter-parent`\
+  \ (latest 3.x release available on Maven\n  Central), `groupId com.matchwire`, `artifactId\
+  \ matchwire-backend`, `java.version 21`.\n  Dependencies: `spring-boot-starter-web`,\
+  \ `spring-boot-starter-validation`,\n  `spring-boot-starter-test` (test scope).\
+  \ Plugin: `spring-boot-maven-plugin`.\n- Maven wrapper (Apache Maven Wrapper 3.3.x,\
+  \ `only-script` type, so no binary jar is committed):\n  `mvnw`, `mvnw.cmd`, `.mvn/wrapper/maven-wrapper.properties`\
+  \ pinned to Maven 3.9.x.\n  Maven isn't installed on this machine, so I'll take\
+  \ the scripts from the official\n  `org.apache.maven.wrapper:maven-wrapper-distribution`\
+  \ artifact on Maven Central\n  (equivalent to `mvn wrapper:wrapper -Dtype=only-script`).\
+  \ `mvnw` committed executable.\n- `src/main/java/com/matchwire/MatchwireApplication.java`:\
+  \ `@SpringBootApplication` main class.\n- `src/main/java/com/matchwire/health/HealthController.java`:\
+  \ `@RestController`,\n  `@GetMapping(\"/health\")` returning `Map.of(\"status\"\
+  , \"ok\")`.\n  (Plain controller rather than Actuator: the ticket asks for exactly\
+  \ `{\"status\":\"ok\"}` at\n  `/health` and web+validation+test as the only starters.)\n\
+  - `src/main/resources/application.properties`: `spring.application.name=matchwire-backend`.\n\
+  - `.gitignore`: `target/`, IDE files, `.mvn/wrapper/maven-wrapper.jar`.\n- `.gitattributes`:\
+  \ `mvnw` LF, `*.cmd` CRLF.\n- `README.md`: add \"Build, test and run\" section (`./mvnw\
+  \ -q verify`, `./mvnw test`,\n  `./mvnw spring-boot:run`, `curl localhost:8080/health`;\
+  \ requires JDK 21).\n\n## Tests\n- `src/test/java/com/matchwire/health/HealthControllerTest.java`:\
+  \ `@WebMvcTest(HealthController.class)`\n  with MockMvc — `GET /health` returns\
+  \ 200, JSON content type, `$.status == \"ok\"`.\n- `MatchwireApplicationTests` context-load\
+  \ test? Not added — ticket asks for one test; the\n  WebMvcTest is enough. (Happy\
+  \ to add it if the reviewer prefers.)\n- Run `./mvnw -q verify` from the worktree\
+  \ (JDK 21 Temurin is installed), and a clean-clone\n  check: `git clone` the branch\
+  \ into a temp dir and run `./mvnw -q verify` there.\n- Manual smoke: `./mvnw spring-boot:run`\
+  \ + `curl localhost:8080/health`.\n\n## Risks / open questions\n- Exact Spring Boot\
+  \ 3.x / Maven versions: I'll pick the latest stable 3.x on Central at\n  implementation\
+  \ time and note them in the PR.\n- No `mvn` locally → wrapper scripts come from\
+  \ the Maven Central distribution artifact\n  rather than `mvn wrapper:wrapper`;\
+  \ the result is the same files.\n\n---\n### Context from earlier attempts\nTried:\n\
+  - (none)\nRemaining:\n- (none)\nOpen questions:\n- (none)\n"
+plan_sha: 8e21d8659e00
