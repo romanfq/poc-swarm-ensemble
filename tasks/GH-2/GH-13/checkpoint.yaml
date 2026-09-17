@@ -1,0 +1,9 @@
+claim_id: macbookpro-68b8-207
+machine: macbookpro-68b8
+worker: vscode
+worker_label: VSCode + Human
+branch: swarm/GH-13
+dispatched_utc: '2026-09-17T06:30:20+00:00'
+needs_human: null
+logical_clock: 209
+wall_utc: '2026-09-17T06:30:22+00:00'
