@@ -4,11 +4,11 @@
 # (plus the "Next" checklist in docs/HANDOVER.md).
 #
 # holders: cowork (Claude in the Cowork app) | claude-code (Claude Code CLI on the Mac) | roman
-holder: cowork
-since: 2026-09-16
-reason: Phase 9 is seeded. 21 issues in romanfq/matchwire-spec, ledger synced, bot
-  identity recorded, both code repos protected, frontend has a main branch, this repo
-  pushed. Issue numbers and the leftovers are in docs/HANDOVER.md, "Next".
+holder: claude-code
+since: 2026-09-17
+reason: File the next-version issues Roman collected (drafts in
+  ~/Documents/DAGS/next-version-issues.md) in romanfq/poc-swarm-ensemble with gh.
+  Roman approved creating them. docs/HANDOVER.md, "Next".
 history:
   - 2026-09-16 cowork: resumed via the same Cowork task (desktop or mobile), Mac kept awake
     (`caffeinate -is`) with the desktop app open.
@@ -23,3 +23,5 @@ history:
     the plan (21 issues), plan sync, bot identity in .swarm/local.yaml, initial commit on
     the empty matchwire-frontend, branch protection on both code repos, pushed this repo.
     Test suite deliberately not re-run.
+  - 2026-09-17 cowork: drafted six next-version issues from Roman's notes while he used the
+    swarm; Cowork's browser isn't signed in to GitHub, so baton to claude-code to file them.

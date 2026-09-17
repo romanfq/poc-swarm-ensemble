@@ -385,7 +385,32 @@ Done by Cowork:
 Why this goes to Claude Code: the Cowork cloud sandbox can't reach these
 GitHub repos, and the Cowork shell on the Mac has no network.
 
-## Next (holder: cowork)
+## Next (holder: claude-code)
+**File the next-version issues** (Román asked for them and approved creating
+them in `romanfq/poc-swarm-ensemble`). While using the swarm on GH-4, Román
+noted six problems. Cowork drafted them, with causes and fix ideas, in
+`~/Documents/DAGS/next-version-issues.md` (outside the repo). The file starts
+with the filing steps:
+1. Create the `next-version` label.
+2. Create Items 1–6 with `gh issue create --repo romanfq/poc-swarm-ensemble
+   --label next-version --title ... --body-file ...`:
+   1. Sandboxing;
+   2. Nannying;
+   3. Activity feed misses plan approvals;
+   4. deferral options on the Board;
+   5. links aren't clickable;
+   6. PR lifecycle on the Board.
+3. Create the tracking issue "Next version: things to fix" last, with the real
+   issue numbers, and pin it.
+4. Don't use `swarm:*` labels there. The swarm's plan lives in `romanfq/matchwire-spec`.
+5. Román may send more items. File each one the same way and add it to the
+   tracking issue's checklist.
+6. Report the issue numbers here, set `holder: cowork` in `BATON`, and commit.
+
+Note: the swarm daemon is running on this Mac and pushes this repo with its
+ledger commits, so baton commits get published within minutes.
+
+## Phase 9 setup results (Claude Code, 2026-09-16)
 Phase 9 is seeded and GitHub is set up. Done on Román's Mac by Claude Code on
 2026-09-16, each GitHub step with his explicit yes in the chat.
 
