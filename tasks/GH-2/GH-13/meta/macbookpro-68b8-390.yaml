@@ -1,0 +1,5 @@
+autonomy: human-must-scope
+downgrades: 1
+machine: macbookpro-68b8
+logical_clock: 390
+wall_utc: '2026-09-17T12:52:09+00:00'
