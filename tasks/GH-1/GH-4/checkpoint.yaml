@@ -1,12 +1,12 @@
-claim_id: macbookpro-68b8-23
+claim_id: macbookpro-68b8-246
 machine: macbookpro-68b8
 worker: claude
 worker_label: claude
 branch: swarm/GH-4
-dispatched_utc: '2026-09-16T21:31:50+00:00'
+dispatched_utc: '2026-09-17T07:46:10+00:00'
 needs_human: null
-logical_clock: 205
-wall_utc: '2026-09-17T06:26:19+00:00'
+logical_clock: 247
+wall_utc: '2026-09-17T07:46:11+00:00'
 plan_md: "# Plan — GH-4: S1: Backend scaffold (Spring Boot, Maven wrapper)\n\n## Understanding\n\
   Create the minimal Spring Boot 3 / Java 21 Maven skeleton for `romanfq/matchwire-backend`\n\
   that later backend tasks build on: a committed Maven wrapper, a `com.matchwire`\
@@ -59,3 +59,5 @@ risks:
   zip (SHA-1 verified) since mvn isn't installed locally
 pr_url: https://github.com/romanfq/matchwire-backend/pull/1
 finished_utc: '2026-09-17T06:26:18+00:00'
+previous_claims:
+- macbookpro-68b8-23
