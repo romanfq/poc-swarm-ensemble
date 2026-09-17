@@ -1,0 +1,7 @@
+machine: teammate-b
+human: roman
+action: start
+quota_share: 1
+default_worker: claude
+logical_clock: 224
+wall_utc: '2026-09-17T07:08:50+00:00'
