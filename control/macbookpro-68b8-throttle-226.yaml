@@ -1,0 +1,6 @@
+machine: macbookpro-68b8
+human: roman
+action: throttle
+quota_share: 2
+logical_clock: 226
+wall_utc: '2026-09-17T07:09:53+00:00'
