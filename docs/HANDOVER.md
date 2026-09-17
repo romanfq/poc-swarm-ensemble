@@ -385,7 +385,35 @@ Done by Cowork:
 Why this goes to Claude Code: the Cowork cloud sandbox can't reach these
 GitHub repos, and the Cowork shell on the Mac has no network.
 
-## Next (holder: cowork)
+## Next (holder: claude-code)
+**Finish the next-version issues Román reported** in
+`romanfq/poc-swarm-ensemble`. Román approved these GitHub changes.
+
+Cowork checked #1–#8 on GitHub against the drafts:
+- #1–#6 match the drafts, #8 is Román's, and #7 lists #1–#6 and #8.
+- **Item 9 is missing.**
+- **Some references link to the wrong issue.** GitHub turns `GH-<n>` and a bare
+  `#<n>` into links to *this* repo's issues:
+  - "happened on GH-4" in #2 links to #4 (the Board deferral issue);
+  - #6 has the same problem;
+  - "#5 … and #20" in #8 point at #5 here and at a missing #20, not at
+    matchwire-spec.
+
+Steps. Everything is in `~/Documents/DAGS/next-version-issues.md`: 215 lines,
+with "Item 9" at line 165 and "Corrections" at line 197.
+1. File **Item 9**. Its title and body are in the file. It should become #9.
+2. Apply the **Corrections** section:
+   - edit the bodies of #1, #2, #3, #6 and #8 so that swarm keys read as
+     `` `GH-4` (romanfq/matchwire-spec#4) `` and matchwire references are fully
+     qualified;
+   - change nothing else.
+3. Add #9 to #7's checklist, after #8.
+4. Check each issue on GitHub: no link should point at the wrong issue.
+5. Record the result here, set `holder: cowork` in `BATON`, and commit.
+
+The swarm daemon pushes this repo, so the commit is published within minutes.
+
+## Phase 9 status and Item 9 (Cowork, 2026-09-17)
 Román handed the baton to Cowork on 2026-09-17 to carry on with **Phase 9**.
 
 **Phase 9 status.** The running log is `claude/DAGS-phase9-results.md` in the
