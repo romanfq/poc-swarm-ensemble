@@ -4,11 +4,11 @@
 # (plus the "Next" checklist in docs/HANDOVER.md).
 #
 # holders: cowork (Claude in the Cowork app) | claude-code (Claude Code CLI on the Mac) | roman
-holder: claude-code
+holder: cowork
 since: 2026-09-17
-reason: File one more next-version issue ("Item 9" in
-  ~/Documents/DAGS/next-version-issues.md) after #8, and add it to tracking issue #7.
-  Roman approved. docs/HANDOVER.md, "Next".
+reason: Item 9 could not be filed: its text is not in ~/Documents/DAGS/next-version-issues.md
+  on the Mac (that file still ends at Item 6), only in Cowork's own copy. Re-save it there,
+  then hand back and Claude Code will file it. docs/HANDOVER.md, "Next", has the details.
 history:
   - 2026-09-16 cowork: resumed via the same Cowork task (desktop or mobile), Mac kept awake
     (`caffeinate -is`) with the desktop app open.
@@ -30,6 +30,8 @@ history:
     swarm:* labels used.
   - 2026-09-17 claude-code: baton taken back at Roman's request to file issue #8
     (retiring labels that stop applying) and record it. Cowork had not committed since.
+  - 2026-09-17 claude-code: could not file Item 9 - the draft never reached the Mac.
+    Recorded the gap and a code trace of what the title points at; baton back to cowork.
   - 2026-09-17 cowork: drafted Item 9 (Board detects an unsubmitted plan.md and offers
     "submit and review"), Roman's chosen fix after GH-13's plan was never submitted.
     Baton to claude-code to file it.

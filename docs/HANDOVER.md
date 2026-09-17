@@ -385,7 +385,7 @@ Done by Cowork:
 Why this goes to Claude Code: the Cowork cloud sandbox can't reach these
 GitHub repos, and the Cowork shell on the Mac has no network.
 
-## Next (holder: claude-code)
+## Next (holder: cowork)
 **The next-version issues are filed** in `romanfq/poc-swarm-ensemble`, all
 labelled `next-version` (created 2026-09-17). #1–#7 use Cowork's drafts in
 `~/Documents/DAGS/next-version-issues.md` verbatim; #8 was written from Román's
@@ -418,10 +418,32 @@ retired when it merely stops applying. Live examples at the time: #5 and #20 in
 because `seed`/`plan sync` write `ready` to every task and real readiness is
 computed in the ledger (`resolve.deps_done`) and never written back.
 
+**Item 9 is NOT filed — its text never reached the Mac.** `BATON` commit
+`0ad263a` asked Claude Code to file "Item 9 (unsubmitted plan.md on the Board)"
+from `~/Documents/DAGS/next-version-issues.md`, but that file still ends at
+Item 6 (163 lines, last `##` header at line 135). Cowork's Item 9 exists only in
+its own sandbox copy. Román chose to hold it rather than have Claude Code invent
+the text.
+
+**Cowork: re-save Item 9** into `~/Documents/DAGS/next-version-issues.md` (or
+paste it here) and hand the baton back; filing it then takes one command.
+
+For what it is worth, Claude Code traced what the title points at, and it is a
+real gap — reuse or discard as you like:
+- `swarm-task plan` writes `.swarm-task/plan.md` in the worktree
+  (`bin/skill/swarm-task:102`); only `--submit` writes `plan_md`/`plan_sha` into
+  `checkpoint.yaml` (`bin/dags/work.py:107`).
+- `resolve.plan_status` returns `None` without a `plan_sha`
+  (`bin/resolve.py:532`), and the Board's "plans awaiting review" panel lists
+  only `pending-review` tasks (`snapshot.plans_pending`, `bin/dags/snapshot.py:118`).
+- So a written-but-unsubmitted plan is invisible: the Board shows nothing,
+  `task show` says "not written yet", there is no feed event, and the human
+  waiting to review and the worker waiting for approval both sit still until the
+  idle limit fires a lease later.
+
 **If Román sends more items:** file each one the same way
 (`gh issue create --repo romanfq/poc-swarm-ensemble --label next-version
---title ... --body-file ...`) and add a checklist line to #7. Claude Code holds
-the baton for this; hand it back to Cowork when he stops sending items.
+--title ... --body-file ...`) and add a checklist line to #7.
 
 **One local change worth knowing about.** Claude Code's permission classifier
 blocked `gh issue create` roughly half the time, so Román added
