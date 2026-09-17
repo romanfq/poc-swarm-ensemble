@@ -5,8 +5,8 @@ worker_label: claude
 branch: swarm/GH-4
 dispatched_utc: '2026-09-17T07:46:10+00:00'
 needs_human: null
-logical_clock: 247
-wall_utc: '2026-09-17T07:46:11+00:00'
+logical_clock: 383
+wall_utc: '2026-09-17T11:11:44+00:00'
 plan_md: "# Plan — GH-4: S1: Backend scaffold (Spring Boot, Maven wrapper)\n\n## Understanding\n\
   Create the minimal Spring Boot 3 / Java 21 Maven skeleton for `romanfq/matchwire-backend`\n\
   that later backend tasks build on: a committed Maven wrapper, a `com.matchwire`\
@@ -58,6 +58,6 @@ risks:
 - Wrapper scripts taken from the official maven-wrapper-distribution 3.3.4 only-script
   zip (SHA-1 verified) since mvn isn't installed locally
 pr_url: https://github.com/romanfq/matchwire-backend/pull/1
-finished_utc: '2026-09-17T06:26:18+00:00'
+finished_utc: '2026-09-17T11:11:43+00:00'
 previous_claims:
 - macbookpro-68b8-23
