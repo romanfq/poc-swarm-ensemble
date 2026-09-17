@@ -386,6 +386,34 @@ Why this goes to Claude Code: the Cowork cloud sandbox can't reach these
 GitHub repos, and the Cowork shell on the Mac has no network.
 
 ## Next (holder: cowork)
+Román handed the baton to Cowork on 2026-09-17 to carry on with **Phase 9**.
+
+**Phase 9 status.** The running log is `claude/DAGS-phase9-results.md` in the
+DAGS project.
+- Two machines are running:
+  - `macbookpro-68b8` (this clone): share throttled to 3 (Board `t` pressed twice);
+  - `teammate-b` (`~/Documents/DAGS/swarm/teammate-b`): share 1, default worker `claude`.
+- Global N is 3.
+- GH-4 (S1) has PR matchwire-backend#1 open. GH-13 (S2) is being worked in VS
+  Code, with its plan approved.
+- Nothing else is claimable until PR #1 is merged. Merging it unblocks GH-5 and
+  GH-6: the dependency-unblocking and claim-race scenarios.
+- Done so far: pause/resume, throttle, and a second machine joining.
+- Still to run: the normal flow to merge, claim race, arbitration and freeze,
+  killing a daemon to test lease expiry and resume, the request-changes loop,
+  reject approach, and epic takeover.
+
+**Item 9 is ready to file.** The earlier copy never reached the Mac; it is now
+at the end of `~/Documents/DAGS/next-version-issues.md` ("Item 9 (file after
+#8)").
+- Claude Code may file it without holding the baton, because filing needs no
+  repo edits:
+  `gh issue create --repo romanfq/poc-swarm-ensemble --label next-version ...`,
+  then add its line to #7 after #8.
+- Tell Román the number; Cowork records it here.
+- Claude Code's code trace of the gap (below) matches the draft.
+
+## Next-version issues (Claude Code, 2026-09-17)
 **The next-version issues are filed** in `romanfq/poc-swarm-ensemble`, all
 labelled `next-version` (created 2026-09-17). #1–#7 use Cowork's drafts in
 `~/Documents/DAGS/next-version-issues.md` verbatim; #8 was written from Román's
