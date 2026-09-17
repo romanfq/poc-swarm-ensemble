@@ -385,33 +385,35 @@ Done by Cowork:
 Why this goes to Claude Code: the Cowork cloud sandbox can't reach these
 GitHub repos, and the Cowork shell on the Mac has no network.
 
-## Next (holder: claude-code)
-**Finish the next-version issues Román reported** in
-`romanfq/poc-swarm-ensemble`. Román approved these GitHub changes.
+## Next (holder: cowork)
+**Done: the next-version issues are complete and correctly cross-linked**
+(Claude Code, 2026-09-17).
 
-Cowork checked #1–#8 on GitHub against the drafts:
-- #1–#6 match the drafts, #8 is Román's, and #7 lists #1–#6 and #8.
-- **Item 9 is missing.**
-- **Some references link to the wrong issue.** GitHub turns `GH-<n>` and a bare
-  `#<n>` into links to *this* repo's issues:
-  - "happened on GH-4" in #2 links to #4 (the Board deferral issue);
-  - #6 has the same problem;
-  - "#5 … and #20" in #8 point at #5 here and at a missing #20, not at
-    matchwire-spec.
+1. **Item 9 filed as [#9](https://github.com/romanfq/poc-swarm-ensemble/issues/9)**
+   — "Board: spot a plan.md that was written but not submitted, and offer
+   'submit and review'", body verbatim from the draft, `next-version` label.
+2. **Corrections applied** to #1, #2, #3, #6 and #8, exactly as the Corrections
+   section listed and nothing else:
+   - #1 `Seen on GH-4 (S1).` → `` Seen on `GH-4` (romanfq/matchwire-spec#4, S1). ``
+   - #2 both mentions (the worker quote and "the case that happened on GH-4")
+   - #3 `"roman approved plan for GH-4"`
+   - #6 `Seen on matchwire-backend#1 (GH-4):` → fully qualified, `GH-4` in backticks
+   - #8 `#5 … #20` → `romanfq/matchwire-spec#5` / `romanfq/matchwire-spec#20`
+   - #4 and #5 say `GH-N`, a placeholder, so they were left alone.
+3. **#9 added to #7's checklist**, after the #8 line. #7 now lists #1–#6, #8, #9
+   and keeps the "known from the build" list. It is still pinned.
+4. **Verified.** All nine bodies were re-read from GitHub and scanned for
+   anything GitHub would autolink into *this* repo (bare `#<n>` or `GH-<n>`
+   outside backticks, ignoring `owner/repo#<n>`). The only ones left are
+   deliberate: #7's own checklist, and #9's "a feed event once #3 lands", which
+   really does mean this repo's #3.
 
-Steps. Everything is in `~/Documents/DAGS/next-version-issues.md`: 215 lines,
-with "Item 9" at line 165 and "Corrections" at line 197.
-1. File **Item 9**. Its title and body are in the file. It should become #9.
-2. Apply the **Corrections** section:
-   - edit the bodies of #1, #2, #3, #6 and #8 so that swarm keys read as
-     `` `GH-4` (romanfq/matchwire-spec#4) `` and matchwire references are fully
-     qualified;
-   - change nothing else.
-3. Add #9 to #7's checklist, after #8.
-4. Check each issue on GitHub: no link should point at the wrong issue.
-5. Record the result here, set `holder: cowork` in `BATON`, and commit.
+**The pattern, for whoever writes the next one:** a swarm short key is written
+`` `GH-4` (romanfq/matchwire-spec#4) `` — backticks stop GitHub turning `GH-4`
+into a link to this repo's #4, and the qualified form links where it should.
+Bare `#<n>` means an issue in this repo and nothing else.
 
-The swarm daemon pushes this repo, so the commit is published within minutes.
+Nothing else on GitHub was touched, and no `swarm:*` labels were used here.
 
 ## Phase 9 status and Item 9 (Cowork, 2026-09-17)
 Román handed the baton to Cowork on 2026-09-17 to carry on with **Phase 9**.
@@ -456,7 +458,8 @@ one-line note in the chat:
 | [#5](https://github.com/romanfq/poc-swarm-ensemble/issues/5) | Board: links aren't clickable |
 | [#6](https://github.com/romanfq/poc-swarm-ensemble/issues/6) | PR lifecycle on the Board: comments, reviews, send fixes back to the worker |
 | [#8](https://github.com/romanfq/poc-swarm-ensemble/issues/8) | Labels: retire the ones that stop applying as a task moves through its lifecycle (added 2026-09-17, after #7) |
-| **[#7](https://github.com/romanfq/poc-swarm-ensemble/issues/7)** | **Next version: things to fix** — the tracking issue, **pinned**, checklist links #1–#6 and #8, and keeps the "known from the build, not yet filed" list |
+| [#9](https://github.com/romanfq/poc-swarm-ensemble/issues/9) | Board: spot a plan.md that was written but not submitted, and offer "submit and review" |
+| **[#7](https://github.com/romanfq/poc-swarm-ensemble/issues/7)** | **Next version: things to fix** — the tracking issue, **pinned**, checklist links #1–#6, #8 and #9, and keeps the "known from the build, not yet filed" list |
 
 - The `next-version` label was created first (`1d76db`, "Fix or improve in the
   next DAGS version").
@@ -474,28 +477,9 @@ retired when it merely stops applying. Live examples at the time: #5 and #20 in
 because `seed`/`plan sync` write `ready` to every task and real readiness is
 computed in the ledger (`resolve.deps_done`) and never written back.
 
-**Item 9 is NOT filed — its text never reached the Mac.** `BATON` commit
-`0ad263a` asked Claude Code to file "Item 9 (unsubmitted plan.md on the Board)"
-from `~/Documents/DAGS/next-version-issues.md`, but that file still ends at
-Item 6 (163 lines, last `##` header at line 135). Cowork's Item 9 exists only in
-its own sandbox copy. Román chose to hold it rather than have Claude Code invent
-the text.
-
-**Cowork: re-save Item 9** into `~/Documents/DAGS/next-version-issues.md` (or
-paste it here) and hand the baton back; filing it then takes one command.
-
-For what it is worth, Claude Code traced what the title points at, and it is a
-real gap — reuse or discard as you like:
-- `swarm-task plan` writes `.swarm-task/plan.md` in the worktree
-  (`bin/skill/swarm-task:102`); only `--submit` writes `plan_md`/`plan_sha` into
-  `checkpoint.yaml` (`bin/dags/work.py:107`).
-- `resolve.plan_status` returns `None` without a `plan_sha`
-  (`bin/resolve.py:532`), and the Board's "plans awaiting review" panel lists
-  only `pending-review` tasks (`snapshot.plans_pending`, `bin/dags/snapshot.py:118`).
-- So a written-but-unsubmitted plan is invisible: the Board shows nothing,
-  `task show` says "not written yet", there is no feed event, and the human
-  waiting to review and the worker waiting for approval both sit still until the
-  idle limit fires a lease later.
+**Item 9 was filed later the same day as #9**, once Cowork re-saved its text
+to `~/Documents/DAGS/next-version-issues.md`. The first attempt failed because
+that file still ended at Item 6 on the Mac; see the Next section above.
 
 **If Román sends more items:** file each one the same way
 (`gh issue create --repo romanfq/poc-swarm-ensemble --label next-version
