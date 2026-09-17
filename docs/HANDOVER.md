@@ -385,7 +385,55 @@ Done by Cowork:
 Why this goes to Claude Code: the Cowork cloud sandbox can't reach these
 GitHub repos, and the Cowork shell on the Mac has no network.
 
-## Next (holder: cowork)
+## Next (holder: claude-code)
+Román asked for the baton to go to Claude Code. **Carry on with the Phase 9
+scenarios with Román on this Mac.**
+- **Running log:** `claude/DAGS-phase9-results.md` in the DAGS project
+  (Cowork keeps it). Record what you see here too, with ledger evidence:
+  commit hashes and record names.
+- **Machines:**
+  - `macbookpro-68b8`: this clone. Share is 3 (throttle pressed twice), and 2 was
+    intended; suggest Board `t` → 2.
+  - `teammate-b`: `~/Documents/DAGS/swarm/teammate-b`, share 1, `--default-worker claude`.
+  - Global N is 3.
+- **Done:** pause/resume, throttle, and a second machine joining.
+- **GH-4 (S1) / matchwire-backend#1:**
+  - Román left a *Comment* review with an inline comment on `README.md` asking
+    for a richer description from the MatchWire spec.
+  - As the code predicts (next-version #6), the poller ignored it: it only acts
+    on a **new** review in the *Request changes* state, once per review id.
+    Inline comments are never read, and editing a comment never triggers anything.
+- **GH-13 (S2):** VS Code + human worker, plan approved (`1ee9fd7`), in progress.
+
+Steps with Román:
+1. **Request-changes loop (scenario 6).**
+   1. Román submits **Review changes → Request changes** on PR #1, with a body
+      line like `fix: rewrite the README description from the MatchWire spec`.
+   2. Check that the poller writes `completions/*-reopened-*` (with a
+      `review_id`), GH-4 goes back to the queue and is reclaimed, and the
+      worker's `swarm-task implement` shows the `fix:` item.
+   3. Check that `done` pushes to the same branch and comments on the same PR.
+      Tell the worker to run `implement` itself; it won't notice on its own
+      (next-version #2).
+2. **Merge PR #1** (Board `m`) → `done` record. GH-5 and GH-6 should become
+   ready (scenario 9), and the two machines should claim them (scenario 2:
+   note any `lost-race` withdrawals).
+3. Then, as tasks allow:
+   - arbitration and freeze (Board `a`/`f`);
+   - `kill -9` a daemon mid-task, then check lease expiry and resume on the
+     other machine after 15 minutes;
+   - reject approach (close a bot PR);
+   - epic takeover (Board `e`).
+4. **Rules while the swarm runs:**
+   - Don't change `bin/`: both daemons and every worker run that code.
+   - File any new problem Román reports as a `next-version` issue, the same way
+     as #1–#9 (swarm keys written as `` `GH-4` (romanfq/matchwire-spec#4) ``),
+     and add it to #7.
+   - Both daemons push this repo, so any commit you make is published within minutes.
+5. **Hand back:** set `holder: cowork` in `BATON` with a summary here of each
+   scenario's outcome and evidence, so Cowork can update the results log.
+
+## Next-version issues completed (Claude Code, 2026-09-17)
 **Done: the next-version issues are complete and correctly cross-linked**
 (Claude Code, 2026-09-17).
 

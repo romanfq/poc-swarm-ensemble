@@ -4,11 +4,11 @@
 # (plus the "Next" checklist in docs/HANDOVER.md).
 #
 # holders: cowork (Claude in the Cowork app) | claude-code (Claude Code CLI on the Mac) | roman
-holder: cowork
+holder: claude-code
 since: 2026-09-17
-reason: Done. Item 9 is romanfq/poc-swarm-ensemble#9, the GH-N / #N cross-links in
-  #1, #2, #3, #6 and #8 are fixed, and #7 lists #1-#6, #8 and #9. All nine bodies were
-  re-checked for mislinks. docs/HANDOVER.md, "Next". Back to Phase 9.
+reason: Roman asked for the baton to go to Claude Code. Carry on with the Phase 9
+  scenarios with him on the Mac (next: the request-changes loop on matchwire-backend#1).
+  docs/HANDOVER.md, "Next".
 history:
   - 2026-09-16 cowork: resumed via the same Cowork task (desktop or mobile), Mac kept awake
     (`caffeinate -is`) with the desktop app open.
@@ -42,3 +42,5 @@ history:
   - 2026-09-17 claude-code: filed Item 9 as #9 from the re-saved draft, applied the
     cross-link corrections to #1, #2, #3, #6 and #8, added #9 to #7, and verified all
     nine bodies. Nothing else on GitHub.
+  - 2026-09-17 cowork: logged Phase 9 state (PR #1 has a comment-only inline review, which
+    the swarm ignores as expected). Baton to claude-code at Roman's request.
