@@ -385,10 +385,11 @@ Done by Cowork:
 Why this goes to Claude Code: the Cowork cloud sandbox can't reach these
 GitHub repos, and the Cowork shell on the Mac has no network.
 
-## Next (holder: cowork)
-**The six next-version issues are filed** in `romanfq/poc-swarm-ensemble`, all
-labelled `next-version` (created 2026-09-17, bodies verbatim from
-`~/Documents/DAGS/next-version-issues.md`):
+## Next (holder: claude-code)
+**The next-version issues are filed** in `romanfq/poc-swarm-ensemble`, all
+labelled `next-version` (created 2026-09-17). #1–#7 use Cowork's drafts in
+`~/Documents/DAGS/next-version-issues.md` verbatim; #8 was written from Román's
+one-line note in the chat:
 
 | # | Item |
 |---|---|
@@ -398,7 +399,8 @@ labelled `next-version` (created 2026-09-17, bodies verbatim from
 | [#4](https://github.com/romanfq/poc-swarm-ensemble/issues/4) | Board: let me defer a newly claimed task (snooze, back in an hour, pause) |
 | [#5](https://github.com/romanfq/poc-swarm-ensemble/issues/5) | Board: links aren't clickable |
 | [#6](https://github.com/romanfq/poc-swarm-ensemble/issues/6) | PR lifecycle on the Board: comments, reviews, send fixes back to the worker |
-| **[#7](https://github.com/romanfq/poc-swarm-ensemble/issues/7)** | **Next version: things to fix** — the tracking issue, **pinned**, checklist links #1–#6 and keeps the "known from the build, not yet filed" list |
+| [#8](https://github.com/romanfq/poc-swarm-ensemble/issues/8) | Labels: retire the ones that stop applying as a task moves through its lifecycle (added 2026-09-17, after #7) |
+| **[#7](https://github.com/romanfq/poc-swarm-ensemble/issues/7)** | **Next version: things to fix** — the tracking issue, **pinned**, checklist links #1–#6 and #8, and keeps the "known from the build, not yet filed" list |
 
 - The `next-version` label was created first (`1d76db`, "Fix or improve in the
   next DAGS version").
@@ -407,9 +409,19 @@ labelled `next-version` (created 2026-09-17, bodies verbatim from
 - Issues are authored by `romanfq`, not the bot. The bot is only for PR
   authorship, so approvals work under branch protection.
 
+#8 came from Román after the tracking issue existed, so it was filed the same
+way and its checklist line was appended to #7 with `gh issue edit 7 --body-file`.
+Its body is grounded in the code: `_swap_label`
+(`bin/backends/github.py:215`) only swaps labels *within* a prefix, so nothing is
+retired when it merely stops applying. Live examples at the time: #5 and #20 in
+`matchwire-spec` both read `swarm:status:ready` while blocked by dependencies,
+because `seed`/`plan sync` write `ready` to every task and real readiness is
+computed in the ledger (`resolve.deps_done`) and never written back.
+
 **If Román sends more items:** file each one the same way
 (`gh issue create --repo romanfq/poc-swarm-ensemble --label next-version
---title ... --body-file ...`) and add a checklist line to #7.
+--title ... --body-file ...`) and add a checklist line to #7. Claude Code holds
+the baton for this; hand it back to Cowork when he stops sending items.
 
 **One local change worth knowing about.** Claude Code's permission classifier
 blocked `gh issue create` roughly half the time, so Román added
