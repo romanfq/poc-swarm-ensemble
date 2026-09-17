@@ -4,11 +4,11 @@
 # (plus the "Next" checklist in docs/HANDOVER.md).
 #
 # holders: cowork (Claude in the Cowork app) | claude-code (Claude Code CLI on the Mac) | roman
-holder: claude-code
+holder: cowork
 since: 2026-09-17
-reason: File the next-version issues Roman collected (drafts in
-  ~/Documents/DAGS/next-version-issues.md) in romanfq/poc-swarm-ensemble with gh.
-  Roman approved creating them. docs/HANDOVER.md, "Next".
+reason: The six next-version issues are filed as romanfq/poc-swarm-ensemble #1-#6, with
+  the tracking issue #7 pinned. Numbers and notes are in docs/HANDOVER.md, "Next".
+  More items from Roman get filed the same way and added to #7.
 history:
   - 2026-09-16 cowork: resumed via the same Cowork task (desktop or mobile), Mac kept awake
     (`caffeinate -is`) with the desktop app open.
@@ -25,3 +25,6 @@ history:
     Test suite deliberately not re-run.
   - 2026-09-17 cowork: drafted six next-version issues from Roman's notes while he used the
     swarm; Cowork's browser isn't signed in to GitHub, so baton to claude-code to file them.
+  - 2026-09-17 claude-code: created the next-version label and issues #1-#6 in
+    poc-swarm-ensemble, plus the pinned tracking issue #7. Nothing else on GitHub, no
+    swarm:* labels used.

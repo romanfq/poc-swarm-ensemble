@@ -5,3 +5,5 @@
 __pycache__/
 *.pyc
 .pytest_cache/
+# Claude Code, per-machine permission rules (never committed)
+.claude/settings.local.json

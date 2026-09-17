@@ -385,30 +385,37 @@ Done by Cowork:
 Why this goes to Claude Code: the Cowork cloud sandbox can't reach these
 GitHub repos, and the Cowork shell on the Mac has no network.
 
-## Next (holder: claude-code)
-**File the next-version issues** (Román asked for them and approved creating
-them in `romanfq/poc-swarm-ensemble`). While using the swarm on GH-4, Román
-noted six problems. Cowork drafted them, with causes and fix ideas, in
-`~/Documents/DAGS/next-version-issues.md` (outside the repo). The file starts
-with the filing steps:
-1. Create the `next-version` label.
-2. Create Items 1–6 with `gh issue create --repo romanfq/poc-swarm-ensemble
-   --label next-version --title ... --body-file ...`:
-   1. Sandboxing;
-   2. Nannying;
-   3. Activity feed misses plan approvals;
-   4. deferral options on the Board;
-   5. links aren't clickable;
-   6. PR lifecycle on the Board.
-3. Create the tracking issue "Next version: things to fix" last, with the real
-   issue numbers, and pin it.
-4. Don't use `swarm:*` labels there. The swarm's plan lives in `romanfq/matchwire-spec`.
-5. Román may send more items. File each one the same way and add it to the
-   tracking issue's checklist.
-6. Report the issue numbers here, set `holder: cowork` in `BATON`, and commit.
+## Next (holder: cowork)
+**The six next-version issues are filed** in `romanfq/poc-swarm-ensemble`, all
+labelled `next-version` (created 2026-09-17, bodies verbatim from
+`~/Documents/DAGS/next-version-issues.md`):
 
-Note: the swarm daemon is running on this Mac and pushes this repo with its
-ledger commits, so baton commits get published within minutes.
+| # | Item |
+|---|---|
+| [#1](https://github.com/romanfq/poc-swarm-ensemble/issues/1) | Sandboxing: workers and the Board must not change the swarm or its scripts |
+| [#2](https://github.com/romanfq/poc-swarm-ensemble/issues/2) | Nannying: workers aren't told when a human or the swarm acts on their task |
+| [#3](https://github.com/romanfq/poc-swarm-ensemble/issues/3) | Activity feed: plan approvals (and other worker/human events) don't show |
+| [#4](https://github.com/romanfq/poc-swarm-ensemble/issues/4) | Board: let me defer a newly claimed task (snooze, back in an hour, pause) |
+| [#5](https://github.com/romanfq/poc-swarm-ensemble/issues/5) | Board: links aren't clickable |
+| [#6](https://github.com/romanfq/poc-swarm-ensemble/issues/6) | PR lifecycle on the Board: comments, reviews, send fixes back to the worker |
+| **[#7](https://github.com/romanfq/poc-swarm-ensemble/issues/7)** | **Next version: things to fix** — the tracking issue, **pinned**, checklist links #1–#6 and keeps the "known from the build, not yet filed" list |
+
+- The `next-version` label was created first (`1d76db`, "Fix or improve in the
+  next DAGS version").
+- No `swarm:*` labels were used, as instructed. The swarm's own plan stays in
+  `romanfq/matchwire-spec`.
+- Issues are authored by `romanfq`, not the bot. The bot is only for PR
+  authorship, so approvals work under branch protection.
+
+**If Román sends more items:** file each one the same way
+(`gh issue create --repo romanfq/poc-swarm-ensemble --label next-version
+--title ... --body-file ...`) and add a checklist line to #7.
+
+**One local change worth knowing about.** Claude Code's permission classifier
+blocked `gh issue create` roughly half the time, so Román added
+`.claude/settings.local.json` with allow rules for `gh issue create/edit/list/pin`
+and `gh label`. That file is machine-local and is now in `.gitignore`; a fresh
+clone will hit the same prompts until it has its own copy.
 
 ## Phase 9 setup results (Claude Code, 2026-09-16)
 Phase 9 is seeded and GitHub is set up. Done on Román's Mac by Claude Code on
