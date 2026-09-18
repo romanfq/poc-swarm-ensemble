@@ -385,91 +385,56 @@ Done by Cowork:
 Why this goes to Claude Code: the Cowork cloud sandbox can't reach these
 GitHub repos, and the Cowork shell on the Mac has no network.
 
-## Next (holder: claude-code)
-**Phase 9 observations, 2026-09-18 (Claude Code).** Recorded from the ledger and
-the daemon's own counters; Cowork should fold this into
-`claude/DAGS-phase9-results.md`.
+## Next (holder: cowork)
+**The swarm is stopped and Phase 9 is paused.** Both machines have `stop`
+records — `teammate-b-stop-401` (21:46:01) and `macbookpro-68b8-stop-412` — and
+no daemon is running on the Mac. Nothing claims, prompts or heartbeats, so the
+ledger is quiet and safe to read.
 
-### Scenario 6 — request-changes loop: mechanics pass, outcome does not
-- Román submitted a real `CHANGES_REQUESTED` review on
-  romanfq/matchwire-backend#1 with the body
-  `fix: rewrite the README description from the MatchWire spec`.
-- The poller recorded `completions/teammate-b-reopened-236.yaml`, `GH-4`
-  (romanfq/matchwire-spec#4) went back to the queue, was re-claimed and
-  re-dispatched, and `done` commented on the same PR
-  ("Updated by the swarm worker.") — all as designed.
-- **But the README was never rewritten.** Both `pr-opened` records name the same
-  commit `c3d850f`: `macbookpro-68b8-pr-opened-206` (06:26:25) and
-  `macbookpro-68b8-pr-opened-384` (11:11:49). The PR still has one commit and is
-  still `CHANGES_REQUESTED`, yet the feed announced "claude has finished GH-4" a
-  second time.
-- **Why `done` allowed it:** the guard is `worktree.commits_ahead(wt, base) == 0`
-  (`bin/dags/work.py:244`) — commits ahead of `main`, not new work since the last
-  `pr-opened`. A re-run with nothing done is therefore indistinguishable from a
-  real fix. Filed as **#14**.
+### Where the scenarios stand
+- **Done earlier:** pause/resume, throttle, a second machine joining, plan
+  review and approval, and a first PR opened by the bot.
+- **Scenario 6 (request-changes loop): half passed.** The mechanics work —
+  Román's `CHANGES_REQUESTED` review with `fix: rewrite the README description
+  from the MatchWire spec` produced a `reopened` completion, the task was
+  re-claimed and re-dispatched, and `done` commented on the same PR. But both
+  `pr-opened` records name the same commit `c3d850f`, the README was never
+  rewritten, and the feed announced "finished" a second time. Filed as **#14**.
+- **Not started:** merging PR #1 (scenario 9: `GH-5`/`GH-6` unblock, scenario 2:
+  both machines race), arbitration and freeze, `kill -9` plus lease expiry and
+  resume, reject-approach, epic takeover.
 
-### The `GH-4` dispatch failure (now filed as #10)
-`teammate-b` won the re-claim at 07:35:32 but could never start: both clones map
-the same code repo, and `git worktree add` refuses a branch already checked out
-in this clone's `.worktrees/GH-4`. The first clone keeps that worktree because
-worktrees are only removed for `done`/`rejected` (`Poller._sweep_worktrees`,
-`bin/poll.py:262`), and "changes requested" is neither. It resolved itself at
-07:45:49 when `teammate-b` released the claim and `macbookpro-68b8` — the clone
-that owns the worktree — won it back at 07:46:51 (`teammate-b` withdrew,
-`lost-race`). The collision itself is now **#13**; #10 covers the fact that
-nothing surfaced it.
+### Live state to resume from
+- `GH-4` (romanfq/matchwire-spec#4): awaiting review,
+  romanfq/matchwire-backend#1 open and `CHANGES_REQUESTED`, one commit,
+  the requested README rewrite still not done. This clone's `.worktrees/GH-4`
+  is intact and must stay while this machine owns the task (#13).
+- `GH-13` (romanfq/matchwire-spec#13): claim lapses with the daemon; the plan is
+  approved and its checkpoint intact, so a worker can resume it. **Its tracker
+  label is still `swarm:status:ready`**, so the thrashing of #12 restarts with
+  the swarm unless someone runs
+  `swarm.py backend set-status GH-13 blocked` first. Román released the claim
+  but had not parked the task when the swarm was stopped.
+- Both code worktrees and every checkpoint are untouched.
 
-### `GH-13` thrashing (now filed as #12)
-Nine claims, eight with `worker: null`. The Mac sleeps, all daemon threads stop
-with it (measured: heartbeat 276 cycles of ~964 expected over two days,
-scheduler 1490/5784, poller 821/2892 — **~27% of wall time**), the 15-minute
-lease lapses, and on wake the task is re-claimed and re-prompted. Nothing stops
-it: the prompt is remembered in process memory, an undispatched claim is
-indistinguishable from a working one, and the escalation valve is dead —
-`retry_count` is **7** against `max_retries` 3, but `downgrade("human-must-scope")`
-returns the same tier, so the guard at `bin/dags/plan.py:113` never fires.
-#12 has the full design; the first two steps (don't claim what you cannot
-dispatch; make the prompt a ledger record) are enough to end the loop.
+### Warning for the next run
+The Mac sleeps, and the daemon only runs while it is awake — measured at ~27% of
+wall time. Every claim churns across a sleep (#12). Run `caffeinate -is`
+alongside the swarm for any scenario involving two machines racing, or expect
+the noise.
 
-**Immediate remedies, none applied** (they change live swarm state, so they are
-Román's call): answer the prompt on the Board (`w`); or
-`swarm.py task release GH-13` and set its tracker status to `blocked`; or pause
-the machine (`p`, or `t` 0) while away; or run `caffeinate -is` so the Mac stays
-awake while the swarm runs.
+### Issues filed this session
+#10 (Board has no log; a dispatch failure was invisible), #11 ("Not now" and
+taking a machine out of rotation, from the draft), #12 (a claim nobody answers is
+re-claimed forever, with a design), #13 (a task cannot move machines while the
+first holds its branch worktree), #14 (`done` re-announces with no new commit),
+#15 (`daemon.json`'s `started_utc`), #16 (namespace branches by plan repo).
+All labelled `next-version` and checklisted in the pinned #7, which now covers
+#1–#6 and #8–#16.
 
-### Also found
-`daemon.json`'s `started_utc` is rewritten with *now* on every refresh
-(`Daemon.write_info`, `bin/dags/daemon.py:169`), so it means "last refresh", not
-"started". `ps` was needed to learn the daemon had been up two days. Small, but
-it makes the file useless for exactly the question it looks like it answers.
-Filed as **#15**.
-
-### Issues filed since the last hand-off
-| # | Item |
-|---|---|
-| [#10](https://github.com/romanfq/poc-swarm-ensemble/issues/10) | Board: show the daemon's log and its errors (from Román: "Swarm board needs a log") |
-| [#11](https://github.com/romanfq/poc-swarm-ensemble/issues/11) | Board: an obvious "Not now" on the worker prompt, and a way out of rotation (Item 11 from the draft, verbatim) |
-| [#12](https://github.com/romanfq/poc-swarm-ensemble/issues/12) | Scheduler: a claim nobody answers is re-claimed forever — the `GH-13` thrashing, with the design above |
-| [#13](https://github.com/romanfq/poc-swarm-ensemble/issues/13) | Worktrees: a task cannot move to another machine while the first still holds its branch worktree |
-| [#14](https://github.com/romanfq/poc-swarm-ensemble/issues/14) | `swarm-task done` re-announces "finished" when nothing changed since the last PR push |
-| [#15](https://github.com/romanfq/poc-swarm-ensemble/issues/15) | `daemon.json`'s `started_utc` is rewritten on every refresh, so uptime is unavailable |
-| [#16](https://github.com/romanfq/poc-swarm-ensemble/issues/16) | Branch names need the plan repo as a namespace: `swarm/<plan-repo-slug>/<issue-number>` |
-
-All seven are labelled `next-version` and listed in #7, which now checklists
-#1–#6 and #8–#16. #16 came out of Román's question on #13 — whether a missing
-namespace explained the worktree collision. It does not (that is one branch in
-two worktrees of one repo), but it exposed a real latent bug: an issue number is
-unique only within its tracker, so two swarms sharing a code repo would collide
-on `swarm/GH-4`. #13 now carries a note saying the two are different axes, and
-why per-*machine* namespacing would break resumption. Swarm keys are written `` `GH-13` `` in backticks so GitHub
-does not autolink them into this repo.
-
-### Still open
-- `GH-13` was released by Román; setting its tracker status to `blocked`
-  (`swarm.py backend set-status GH-13 blocked`) is what stops it being
-  re-claimed, and had not been run when this was written.
-- Nothing in `bin/` has been changed: every finding above is filed as an issue,
-  not fixed, because both daemons and every worker run this code.
+**Nothing in `bin/` was changed.** Every finding is filed, not fixed: both
+daemons and every worker run that code, and the checklist forbade touching it
+while the swarm was live.
 
 ## Next-version issues completed (Claude Code, 2026-09-17)
 **Done: the next-version issues are complete and correctly cross-linked**

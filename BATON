@@ -4,11 +4,11 @@
 # (plus the "Next" checklist in docs/HANDOVER.md).
 #
 # holders: cowork (Claude in the Cowork app) | claude-code (Claude Code CLI on the Mac) | roman
-holder: claude-code
-since: 2026-09-17
-reason: Roman asked for the baton to go to Claude Code. Carry on with the Phase 9
-  scenarios with him on the Mac (next: the request-changes loop on matchwire-backend#1).
-  docs/HANDOVER.md, "Next".
+holder: cowork
+since: 2026-09-18
+reason: The swarm is stopped (both machines have stop records) and Phase 9 is paused
+  mid-scenario-6. Seven more next-version issues are filed (#10-#16). Where each
+  scenario stands, and what to do before restarting, is in docs/HANDOVER.md, "Next".
 history:
   - 2026-09-16 cowork: resumed via the same Cowork task (desktop or mobile), Mac kept awake
     (`caffeinate -is`) with the desktop app open.
@@ -44,3 +44,6 @@ history:
     nine bodies. Nothing else on GitHub.
   - 2026-09-17 cowork: logged Phase 9 state (PR #1 has a comment-only inline review, which
     the swarm ignores as expected). Baton to claude-code at Roman's request.
+  - 2026-09-18 claude-code: filed #10-#16 from Roman's reports and from ledger evidence
+    (Board log, "Not now", claim thrashing, worktree collision, done-with-no-commit,
+    started_utc, branch namespace); recorded the Phase 9 observations. Swarm stopped.
