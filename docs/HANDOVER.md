@@ -406,7 +406,7 @@ the daemon's own counters; Cowork should fold this into
 - **Why `done` allowed it:** the guard is `worktree.commits_ahead(wt, base) == 0`
   (`bin/dags/work.py:244`) — commits ahead of `main`, not new work since the last
   `pr-opened`. A re-run with nothing done is therefore indistinguishable from a
-  real fix. **Not yet filed as an issue; it deserves one.**
+  real fix. Filed as **#14**.
 
 ### The `GH-4` dispatch failure (now filed as #10)
 `teammate-b` won the re-claim at 07:35:32 but could never start: both clones map
@@ -416,7 +416,7 @@ worktrees are only removed for `done`/`rejected` (`Poller._sweep_worktrees`,
 `bin/poll.py:262`), and "changes requested" is neither. It resolved itself at
 07:45:49 when `teammate-b` released the claim and `macbookpro-68b8` — the clone
 that owns the worktree — won it back at 07:46:51 (`teammate-b` withdrew,
-`lost-race`). The collision itself is **still unfiled**; #10 covers the fact that
+`lost-race`). The collision itself is now **#13**; #10 covers the fact that
 nothing surfaced it.
 
 ### `GH-13` thrashing (now filed as #12)
@@ -442,6 +442,7 @@ awake while the swarm runs.
 (`Daemon.write_info`, `bin/dags/daemon.py:169`), so it means "last refresh", not
 "started". `ps` was needed to learn the daemon had been up two days. Small, but
 it makes the file useless for exactly the question it looks like it answers.
+Filed as **#15**.
 
 ### Issues filed since the last hand-off
 | # | Item |
@@ -449,15 +450,20 @@ it makes the file useless for exactly the question it looks like it answers.
 | [#10](https://github.com/romanfq/poc-swarm-ensemble/issues/10) | Board: show the daemon's log and its errors (from Román: "Swarm board needs a log") |
 | [#11](https://github.com/romanfq/poc-swarm-ensemble/issues/11) | Board: an obvious "Not now" on the worker prompt, and a way out of rotation (Item 11 from the draft, verbatim) |
 | [#12](https://github.com/romanfq/poc-swarm-ensemble/issues/12) | Scheduler: a claim nobody answers is re-claimed forever — the `GH-13` thrashing, with the design above |
+| [#13](https://github.com/romanfq/poc-swarm-ensemble/issues/13) | Worktrees: a task cannot move to another machine while the first still holds its branch worktree |
+| [#14](https://github.com/romanfq/poc-swarm-ensemble/issues/14) | `swarm-task done` re-announces "finished" when nothing changed since the last PR push |
+| [#15](https://github.com/romanfq/poc-swarm-ensemble/issues/15) | `daemon.json`'s `started_utc` is rewritten on every refresh, so uptime is unavailable |
 
-All three are labelled `next-version` and listed in #7, which now checklists
-#1–#6 and #8–#12. Swarm keys are written `` `GH-13` `` in backticks so GitHub
+All six are labelled `next-version` and listed in #7, which now checklists
+#1–#6 and #8–#15. Swarm keys are written `` `GH-13` `` in backticks so GitHub
 does not autolink them into this repo.
 
-### Still open for Román to decide
-- File the **worktree collision** as its own issue (offered, not yet done).
-- File the **`done` re-announces with no new commit** bug above.
-- `GH-13` is claimed right now with no worker, holding a quota slot.
+### Still open
+- `GH-13` was released by Román; setting its tracker status to `blocked`
+  (`swarm.py backend set-status GH-13 blocked`) is what stops it being
+  re-claimed, and had not been run when this was written.
+- Nothing in `bin/` has been changed: every finding above is filed as an issue,
+  not fixed, because both daemons and every worker run this code.
 
 ## Next-version issues completed (Claude Code, 2026-09-17)
 **Done: the next-version issues are complete and correctly cross-linked**
