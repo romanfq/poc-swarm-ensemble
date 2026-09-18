@@ -4,11 +4,12 @@
 # (plus the "Next" checklist in docs/HANDOVER.md).
 #
 # holders: cowork (Claude in the Cowork app) | claude-code (Claude Code CLI on the Mac) | roman
-holder: claude-code
-since: 2026-09-18
-reason: File two more next-version issues (dogfooding meta swarm; opt-in plan) and,
-  if Roman wants, walk him through the meta swarm set-up in
-  ~/Documents/DAGS/swarm/dags-meta. docs/HANDOVER.md, "Next".
+holder: cowork
+since: 2026-09-19
+reason: The meta swarm's plan is labelled and ordered: #17-#21 filed, label-issues.sh
+  applied, and `backend ready --ledger` shows exactly one claimable task (#18, the
+  opt-in change). Nothing is running. #17 was missing from the script's PLAN and was
+  labelled by hand; details in docs/HANDOVER.md, "Next".
 history:
   - 2026-09-16 cowork: resumed via the same Cowork task (desktop or mobile), Mac kept awake
     (`caffeinate -is`) with the desktop app open.
@@ -49,3 +50,6 @@ history:
     started_utc, branch namespace); recorded the Phase 9 observations. Swarm stopped.
   - 2026-09-18 cowork: triaged the issue list, scaffolded the meta (dogfooding) swarm in
     ~/Documents/DAGS/swarm/dags-meta, drafted two more issues. Baton to claude-code.
+  - 2026-09-19 claude-code: filed #17-#21, updated #7, ran tools/label-issues.sh
+    (dry run then --apply) from dags-meta, labelled #17 by hand, and verified one
+    claimable task. No swarm started; nothing in dags-meta edited.

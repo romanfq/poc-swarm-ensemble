@@ -385,79 +385,64 @@ Done by Cowork:
 Why this goes to Claude Code: the Cowork cloud sandbox can't reach these
 GitHub repos, and the Cowork shell on the Mac has no network.
 
-## Next (holder: claude-code)
-Both machines are stopped and Phase 9 is paused. Román is moving to
-**dogfooding**: a separate swarm that works on DAGS itself.
+## Next (holder: cowork)
+**The meta swarm's plan is labelled and ordered. Nothing is running.**
+Done on the Mac by Claude Code, 2026-09-19, with Román's yes at each GitHub step.
 
-**1. File two issues** from `~/Documents/DAGS/next-version-issues.md` (Román
-approved both). Add each to #7's checklist, and keep swarm keys written as
-`` `GH-4` (romanfq/matchwire-spec#4) ``.
-- **"Item 12 — dogfooding"** (line 236): run a separate meta swarm on DAGS
-  itself. It records the decisions Román took: a separate coordination repo
-  holding only the ledger; plan and code both `romanfq/poc-swarm-ensemble`; a
-  worker may change `bin/`, `tests/` and `docs/` only; merging changes nothing
-  until each machine is stopped and started.
-- **"Item 13 — opt-in plan"** (line 262): only issues carrying a swarm label
-  belong to the plan. Today every open issue in the plan repo is imported and
-  can be claimed, which is unsafe now that the plan repo is also where people
-  file things.
+### Issues filed (all `next-version`, all added to #7)
+| # | Item |
+|---|---|
+| [#17](https://github.com/romanfq/poc-swarm-ensemble/issues/17) | Dogfooding: run a separate "meta" swarm that works on DAGS itself (Item 12) |
+| [#18](https://github.com/romanfq/poc-swarm-ensemble/issues/18) | The plan should be opt-in: only issues carrying a swarm label belong to the swarm (Item 13) |
+| [#19](https://github.com/romanfq/poc-swarm-ensemble/issues/19) | `swarm.py protect` has no `--yes` (Item 14a) |
+| [#20](https://github.com/romanfq/poc-swarm-ensemble/issues/20) | `task list` has no `--json` (Item 14b) |
+| [#21](https://github.com/romanfq/poc-swarm-ensemble/issues/21) | The seed CLI test has never run (Item 14c) |
 
-**1b. Order the plan so the opt-in change comes first.** Note the opt-in
-issue's number. Everything else must be blocked by it: until it lands, the
-swarm treats every open issue in the plan repo as work it may claim, including
-the tracking issue and anything Román files while it runs.
-`tools/label-issues.sh` in the meta swarm now takes `OPTIN=<number>`, makes that
-issue the only one ready with no blocker, and adds `--add-blocked-by <OPTIN>` to
-every other task. It refuses to run without it.
+#7 now checklists #1–#6 and #8–#21, and its three "known from the build" lines
+for `protect --yes`, `task list --json` and the never-run seed test are ticked
+off, each pointing at its new issue.
 
-**1c. File the three small extras** from `next-version-issues.md`, section
-"Item 14 — small extras": `protect --yes`, `task list --json`, and running the
-never-run seed CLI test. They are small and isolated, so they are the swarm's
-first auto-pr work. Pass their numbers to the labelling script as
-`EXTRA="<n> <n> <n>"`, and tick them off #7's "known from the build" list.
+### Labelling
+Labels were **not** re-created: Román had already run `backend init --apply`
+from `dags-meta`. `OPTIN=18 EXTRA="19 20 21" tools/label-issues.sh` was shown as
+a dry run (41 `gh issue edit` commands), then applied. Nothing in `dags-meta`
+was edited.
 
-**Ownership:** `dags-meta` is Román's and Cowork's; Claude Code does not edit
-files there. Run its commands when Román asks, read whatever you need, and if
-something in it should change, say so instead. `BATON` in this repo is
-unaffected.
+### The one surprise: #17 was not in the plan
+`tools/label-issues.sh` covers 20 of the 21 issues — #17 is in neither `PLAN`
+nor `EXTRA`. That does **not** make it invisible today: `plan sync` imports every
+open issue, and `ready_from` (`bin/backends/base.py:99`) holds back only epics,
+closed issues and ones labelled `blocked`/`done`. An unlabelled issue therefore
+arrives as a claimable task with the default autonomy and
+`default_repo: romanfq/poc-swarm-ensemble`. Applying as-is would have left **two**
+claimable tasks.
 
-**2. The meta swarm exists and is running locally.**
-`~/Documents/DAGS/swarm/dags-meta`, pushed to `github.com/romanfq/dags-meta`
-(private). It holds the ledger only: `backend.yaml` (plan repo and code repo
-both `romanfq/poc-swarm-ensemble`, task test command `./bin/dev-setup.sh`, which
-runs in each worker's worktree), `humans.yaml`, a pinned copy of `bin/` and
-`templates/` from `38d8378`, `README.md`, `SETUP.md`, its own `CLAUDE.md`, and
-`tools/label-issues.sh` / `tools/upgrade-from-source.sh`.
-- Its `.swarm/venv` is built and `swarm.py` runs. The machine identity is
-  `dags-a` (renamed from the generated name).
-- `.swarm/local.yaml` maps the code repo to `~/Documents/DAGS/code/poc-swarm-ensemble`,
-  a **second checkout**, so this swarm never shares worktrees or branches with
-  the MatchWire clone (the collision in #13).
-- The bot has **write** on `poc-swarm-ensemble`, so it can open PRs there.
-- Still to do, in order, each with Román's yes:
-  1. `./bin/swarm.py backend init --apply` from `dags-meta` — creates the
-     `swarm:*`, `type:*` and `repo:` labels in the plan repo. Ask whether he has
-     already run it; nothing else works without them.
-  2. The issues above (steps 1, 1b, 1c).
-  3. `OPTIN=<n> EXTRA="<n> <n> <n>" tools/label-issues.sh`, dry run first, then
-     `--apply`. Román chose: #7 is the epic; #3, #5, #9, #11, #14, #15 and the
-     three extras are auto-pr; #1, #8 and #16 are human-must-scope; the rest
-     human-must-review.
-  4. `./bin/swarm.py plan sync` then `./bin/swarm.py backend ready --ledger`.
-     Exactly one task should be claimable: the opt-in change. If anything else
-     shows up, stop and say so.
-  5. Only then `./bin/swarm.py start --quota-share 1`, and watch the first
-     claim on the Board.
+Román chose to label it by hand, so outside the script #17 got `type:task`,
+`swarm:autonomy:human-must-review`, `swarm:status:blocked`,
+`repo:romanfq/poc-swarm-ensemble`, `--parent 7` and `--add-blocked-by 18`.
+**Cowork may want to add #17 to `PLAN`** so the whole plan comes from one place;
+the labels already on the issue make that a no-op re-run.
 
-**Careful:** `poc-swarm-ensemble` is also the MatchWire swarm's coordination
-repo, so branch protection on its `main` would block that swarm's ledger
-pushes. Leave it unprotected, or move the MatchWire ledger first. Both MatchWire
-machines are stopped; leave them stopped.
+It is a neat demonstration of #18: the gap only exists because membership of the
+plan is an accident of being open, rather than a label.
 
-**3. Hand back** with the issue numbers and anything that surprised you.
+### Verification
+- `./bin/swarm.py plan sync` from `dags-meta`: **21 imported**, ledger commit
+  `9678ec1`, which pushed itself (`plan.sync` defaults to `push=True`). All 21
+  live under `tasks/GH-7/`, the epic.
+- `./bin/swarm.py backend ready --ledger`: **exactly one task —
+  romanfq/poc-swarm-ensemble#18**, as intended.
+- `./bin/swarm.py backend ready` (tracker only) lists **nine**: #3, #5, #10, #15,
+  #16, #18, #19, #20, #21. Eight of them carry `swarm:status:ready` while being
+  blocked by #18, so only the ledger knows they are not claimable. That is #8's
+  complaint seen from the other side, and worth remembering when reading the
+  tracker during the dogfooding run.
 
-The triage of the whole list, with waves and sizes, is
-`claude/DAGS-next-version-plan.md` in the DAGS project.
+### Not done, deliberately
+- **No swarm was started.** The meta swarm's step 5 (`start --quota-share 1`)
+  is untouched, and both MatchWire machines are still stopped.
+- **Branch protection on `poc-swarm-ensemble` was not enabled** — it would block
+  the MatchWire ledger pushes.
 
 ## Phase 9 pause and triage (Cowork, 2026-09-18)
 **The swarm is stopped and Phase 9 is paused.** Both machines have `stop`
