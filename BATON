@@ -4,11 +4,11 @@
 # (plus the "Next" checklist in docs/HANDOVER.md).
 #
 # holders: cowork (Claude in the Cowork app) | claude-code (Claude Code CLI on the Mac) | roman
-holder: cowork
+holder: claude-code
 since: 2026-09-18
-reason: The swarm is stopped (both machines have stop records) and Phase 9 is paused
-  mid-scenario-6. Seven more next-version issues are filed (#10-#16). Where each
-  scenario stands, and what to do before restarting, is in docs/HANDOVER.md, "Next".
+reason: File two more next-version issues (dogfooding meta swarm; opt-in plan) and,
+  if Roman wants, walk him through the meta swarm set-up in
+  ~/Documents/DAGS/swarm/dags-meta. docs/HANDOVER.md, "Next".
 history:
   - 2026-09-16 cowork: resumed via the same Cowork task (desktop or mobile), Mac kept awake
     (`caffeinate -is`) with the desktop app open.
@@ -47,3 +47,5 @@ history:
   - 2026-09-18 claude-code: filed #10-#16 from Roman's reports and from ledger evidence
     (Board log, "Not now", claim thrashing, worktree collision, done-with-no-commit,
     started_utc, branch namespace); recorded the Phase 9 observations. Swarm stopped.
+  - 2026-09-18 cowork: triaged the issue list, scaffolded the meta (dogfooding) swarm in
+    ~/Documents/DAGS/swarm/dags-meta, drafted two more issues. Baton to claude-code.

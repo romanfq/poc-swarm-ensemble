@@ -385,7 +385,81 @@ Done by Cowork:
 Why this goes to Claude Code: the Cowork cloud sandbox can't reach these
 GitHub repos, and the Cowork shell on the Mac has no network.
 
-## Next (holder: cowork)
+## Next (holder: claude-code)
+Both machines are stopped and Phase 9 is paused. Román is moving to
+**dogfooding**: a separate swarm that works on DAGS itself.
+
+**1. File two issues** from `~/Documents/DAGS/next-version-issues.md` (Román
+approved both). Add each to #7's checklist, and keep swarm keys written as
+`` `GH-4` (romanfq/matchwire-spec#4) ``.
+- **"Item 12 — dogfooding"** (line 236): run a separate meta swarm on DAGS
+  itself. It records the decisions Román took: a separate coordination repo
+  holding only the ledger; plan and code both `romanfq/poc-swarm-ensemble`; a
+  worker may change `bin/`, `tests/` and `docs/` only; merging changes nothing
+  until each machine is stopped and started.
+- **"Item 13 — opt-in plan"** (line 262): only issues carrying a swarm label
+  belong to the plan. Today every open issue in the plan repo is imported and
+  can be claimed, which is unsafe now that the plan repo is also where people
+  file things.
+
+**1b. Order the plan so the opt-in change comes first.** Note the opt-in
+issue's number. Everything else must be blocked by it: until it lands, the
+swarm treats every open issue in the plan repo as work it may claim, including
+the tracking issue and anything Román files while it runs.
+`tools/label-issues.sh` in the meta swarm now takes `OPTIN=<number>`, makes that
+issue the only one ready with no blocker, and adds `--add-blocked-by <OPTIN>` to
+every other task. It refuses to run without it.
+
+**1c. File the three small extras** from `next-version-issues.md`, section
+"Item 14 — small extras": `protect --yes`, `task list --json`, and running the
+never-run seed CLI test. They are small and isolated, so they are the swarm's
+first auto-pr work. Pass their numbers to the labelling script as
+`EXTRA="<n> <n> <n>"`, and tick them off #7's "known from the build" list.
+
+**Ownership:** `dags-meta` is Román's and Cowork's; Claude Code does not edit
+files there. Run its commands when Román asks, read whatever you need, and if
+something in it should change, say so instead. `BATON` in this repo is
+unaffected.
+
+**2. The meta swarm exists and is running locally.**
+`~/Documents/DAGS/swarm/dags-meta`, pushed to `github.com/romanfq/dags-meta`
+(private). It holds the ledger only: `backend.yaml` (plan repo and code repo
+both `romanfq/poc-swarm-ensemble`, task test command `./bin/dev-setup.sh`, which
+runs in each worker's worktree), `humans.yaml`, a pinned copy of `bin/` and
+`templates/` from `38d8378`, `README.md`, `SETUP.md`, its own `CLAUDE.md`, and
+`tools/label-issues.sh` / `tools/upgrade-from-source.sh`.
+- Its `.swarm/venv` is built and `swarm.py` runs. The machine identity is
+  `dags-a` (renamed from the generated name).
+- `.swarm/local.yaml` maps the code repo to `~/Documents/DAGS/code/poc-swarm-ensemble`,
+  a **second checkout**, so this swarm never shares worktrees or branches with
+  the MatchWire clone (the collision in #13).
+- The bot has **write** on `poc-swarm-ensemble`, so it can open PRs there.
+- Still to do, in order, each with Román's yes:
+  1. `./bin/swarm.py backend init --apply` from `dags-meta` — creates the
+     `swarm:*`, `type:*` and `repo:` labels in the plan repo. Ask whether he has
+     already run it; nothing else works without them.
+  2. The issues above (steps 1, 1b, 1c).
+  3. `OPTIN=<n> EXTRA="<n> <n> <n>" tools/label-issues.sh`, dry run first, then
+     `--apply`. Román chose: #7 is the epic; #3, #5, #9, #11, #14, #15 and the
+     three extras are auto-pr; #1, #8 and #16 are human-must-scope; the rest
+     human-must-review.
+  4. `./bin/swarm.py plan sync` then `./bin/swarm.py backend ready --ledger`.
+     Exactly one task should be claimable: the opt-in change. If anything else
+     shows up, stop and say so.
+  5. Only then `./bin/swarm.py start --quota-share 1`, and watch the first
+     claim on the Board.
+
+**Careful:** `poc-swarm-ensemble` is also the MatchWire swarm's coordination
+repo, so branch protection on its `main` would block that swarm's ledger
+pushes. Leave it unprotected, or move the MatchWire ledger first. Both MatchWire
+machines are stopped; leave them stopped.
+
+**3. Hand back** with the issue numbers and anything that surprised you.
+
+The triage of the whole list, with waves and sizes, is
+`claude/DAGS-next-version-plan.md` in the DAGS project.
+
+## Phase 9 pause and triage (Cowork, 2026-09-18)
 **The swarm is stopped and Phase 9 is paused.** Both machines have `stop`
 records — `teammate-b-stop-401` (21:46:01) and `macbookpro-68b8-stop-412` — and
 no daemon is running on the Mac. Nothing claims, prompts or heartbeats, so the
