@@ -453,9 +453,15 @@ Filed as **#15**.
 | [#13](https://github.com/romanfq/poc-swarm-ensemble/issues/13) | Worktrees: a task cannot move to another machine while the first still holds its branch worktree |
 | [#14](https://github.com/romanfq/poc-swarm-ensemble/issues/14) | `swarm-task done` re-announces "finished" when nothing changed since the last PR push |
 | [#15](https://github.com/romanfq/poc-swarm-ensemble/issues/15) | `daemon.json`'s `started_utc` is rewritten on every refresh, so uptime is unavailable |
+| [#16](https://github.com/romanfq/poc-swarm-ensemble/issues/16) | Branch names need the plan repo as a namespace: `swarm/<plan-repo-slug>/<issue-number>` |
 
-All six are labelled `next-version` and listed in #7, which now checklists
-#1–#6 and #8–#15. Swarm keys are written `` `GH-13` `` in backticks so GitHub
+All seven are labelled `next-version` and listed in #7, which now checklists
+#1–#6 and #8–#16. #16 came out of Román's question on #13 — whether a missing
+namespace explained the worktree collision. It does not (that is one branch in
+two worktrees of one repo), but it exposed a real latent bug: an issue number is
+unique only within its tracker, so two swarms sharing a code repo would collide
+on `swarm/GH-4`. #13 now carries a note saying the two are different axes, and
+why per-*machine* namespacing would break resumption. Swarm keys are written `` `GH-13` `` in backticks so GitHub
 does not autolink them into this repo.
 
 ### Still open
