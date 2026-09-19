@@ -101,7 +101,7 @@ class Poller:
 
         self.state["first_run"] = False
         self.save()
-        for (kind, text), at in zip(rep.events, rep.stamps):
+        for (kind, text), at in zip(rep.events, rep.stamps, strict=True):
             if at:
                 self.notify(text, kind, at=at)      # stamped when it happened, not when seen
             else:
