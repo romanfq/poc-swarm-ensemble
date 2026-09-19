@@ -1826,7 +1826,7 @@ Global options go **before** the command: `--root PATH`, `--identity NAME`,
 | `throttle N [--machine M]` | Set the quota share live |
 | `status [--json]` | Status panel |
 | `board [--web] [--port 4590]` | Swarm Board |
-| `protect REPO [--branch main] [--approvals 1] [--apply]` | Branch protection (dry run by default) |
+| `protect REPO [--branch main] [--approvals 1] [--apply] [--yes]` | Branch protection (dry run by default) |
 | `plan sync` | Mirror the tracker into `tasks/` |
 | `backend get-task T` / `backend ready [--ledger]` / `backend set-status T S` / `backend init [--apply]` | Talk to the tracker; `init` also labels issues the plan is missing (D26) |
 | `backend adopt T [--autonomy TIER]` | Bring one unlabelled issue into the plan |
