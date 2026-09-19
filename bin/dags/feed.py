@@ -2,13 +2,13 @@
 always attributed to a person from humans.yaml (Ch.10.6)."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import resolve
 from dags import records as R
 
-FEED_DIRS = ("claims", "withdrawals", "arbitration", "completions")
+FEED_DIRS = ("claims", "withdrawals", "arbitration", "completions", "plan-reviews", "events")
 
 
 @dataclass(frozen=True)
@@ -17,6 +17,8 @@ class Event:
     path: str
     text: str
     kind: str
+    wall: str | None = None     # the record's wall_utc, for notification timestamps
+    machine: str | None = None
 
 
 def _name(human) -> str:
@@ -30,7 +32,44 @@ def _task_label(path: Path) -> str:
     return task_dir.name
 
 
+def _quote(text) -> str:
+    return f" — '{text}'" if text else ""
+
+
+def _describe_event(task: str, who: str, machine: str, data: dict) -> str | None:
+    """Records in a task's ``events/``: what a checkpoint change meant."""
+    k = data.get("kind")
+    worker = data.get("worker") or "the worker"
+    if k == "plan-submitted":
+        tail = "self-approved (auto-pr)" if data.get("self_approved") else "waiting for review"
+        return f"{worker} submitted a plan for {task} ({machine}) — {tail}"
+    if k == "needs-human":
+        return f"{task} needs a human decision{_quote(data.get('question'))}"
+    if k == "worker-dispatched":
+        return f"{who}'s swarm handed {task} to {worker} ({machine})"
+    if k == "awaiting-worker":
+        return f"{task} is waiting for a worker on {machine}"
+    if k == "still-working":
+        return f"{who} confirmed {task} is still being worked on ({machine})"
+    if k == "pause-requested":
+        minutes = int(data.get("grace_s") or 0) // 60
+        within = f" within {minutes} minutes" if minutes else ""
+        return (f"The quota was lowered: {task} was asked to record its progress and stop{within} "
+                f"({machine})")
+    if k == "pause-lifted":
+        return f"The quota was raised again: {task} can carry on ({machine})"
+    return None
+
+
 def describe(root: Path, path: Path, data: dict) -> Event | None:
+    ev = _describe(root, path, data)
+    if ev is None:
+        return None
+    wall = data.get("wall_utc")
+    return replace(ev, wall=str(wall) if wall else None, machine=data.get("machine"))
+
+
+def _describe(root: Path, path: Path, data: dict) -> Event | None:
     rel = path.relative_to(root).as_posix()
     parts = rel.split("/")
     clock = R.clock_of(data)
@@ -91,6 +130,15 @@ def describe(root: Path, path: Path, data: dict) -> Event | None:
             "replanned": f"{task} was re-planned and is ready again",
         }.get(k)
         return Event(clock, rel, text, f"completion:{k}") if text else None
+    if kind == "plan-reviews":
+        if data.get("decision") == "approved":
+            text = f"{who} approved the plan for {task}{_quote(data.get('note'))}"
+        else:
+            text = f"{who} sent the plan for {task} back{_quote(data.get('note'))}"
+        return Event(clock, rel, text, f"plan-review:{data.get('decision')}")
+    if kind == "events":
+        text = _describe_event(task, who, machine, data)
+        return Event(clock, rel, text, f"event:{data.get('kind')}") if text else None
     return None
 
 

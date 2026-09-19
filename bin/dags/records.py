@@ -1,7 +1,7 @@
 """Ledger records on disk (whitepaper Ch.4).
 
-Rule: append-only. Claims, withdrawals, arbitration, completions, control,
-priority and quota records are always new, uniquely named files
+Rule: append-only. Claims, withdrawals, arbitration, completions, plan
+reviews, events, control, priority and quota records are always new, uniquely named files
 (``write_new``). The only files rewritten in place are the single-writer ones
 (a machine's own heartbeat for a task, and the checkpoint owned by the current
 claim winner), written atomically with ``write_replace``.
@@ -19,7 +19,8 @@ import yaml
 # Top-level directories whose records carry a logical clock.
 RECORD_DIRS = ("tasks", "control", "priority", "quota")
 
-TASK_SUBDIRS = ("claims", "withdrawals", "arbitration", "heartbeats", "completions", "meta", "plan-reviews")
+TASK_SUBDIRS = ("claims", "withdrawals", "arbitration", "heartbeats", "completions", "meta", "plan-reviews",
+                "events")
 
 
 def slug(text: str) -> str:
@@ -120,6 +121,10 @@ def priority_name(machine: str, epic: str, action: str, clock: int) -> str:
 
 def quota_name(human: str, clock: int) -> str:
     return f"{slug(human)}-{clock}.yaml"
+
+
+def event_name(machine: str, kind: str, clock: int) -> str:
+    return f"{machine}-{kind}-{clock}.yaml"
 
 
 def heartbeat_name(machine: str) -> str:
