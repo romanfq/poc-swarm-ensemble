@@ -88,6 +88,25 @@ def test_plan_sync_and_task_list(machine):
     assert data["state"] == "open" and data["ready"] is True
 
 
+def test_task_list_json_matches_table_and_show(machine):
+    invoke("plan", "sync")
+    from dags import ledger as L
+    import resolve as rv
+    L.claim(machine, rv.index(machine.root)["T1"])
+    rows = json.loads(invoke("task", "list", "--json").stdout)
+    table = invoke("task", "list").output
+    assert [r["short"] for r in rows] == ["T1"] and "T1" in table
+    for field in ("key", "short", "title", "epic", "repo", "autonomy", "state", "ready", "owner",
+                  "claim_age_s", "pr", "plan_status"):
+        assert field in rows[0]
+    assert rows[0]["owner"] == "mac-a" and rows[0]["owner"] in table
+    assert rows[0]["claim_age_s"] is not None
+    for r in rows:
+        shown = json.loads(invoke("task", "show", r["short"]).stdout)
+        assert abs(shown.pop("claim_age_s") - r.pop("claim_age_s")) <= 5
+        assert {k: shown[k] for k in r} == r
+
+
 def test_backend_commands(machine):
     invoke("plan", "sync")
     assert invoke("backend", "ready").output.split() == ["T1"]

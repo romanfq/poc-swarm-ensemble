@@ -520,17 +520,31 @@ def epic_release(epic: str):
     console.print(f"{ctx().identity} released {epic}")
 
 
+def _task_summary(v, now) -> dict:
+    """The fields `task list --json` emits per task; `task show` prints these plus its details."""
+    age = v.claim_age_s(now)
+    return {
+        "key": v.key, "short": v.short, "title": v.title, "epic": v.epic, "repo": v.repo,
+        "autonomy": v.autonomy, "state": v.state, "ready": v.ready, "owner": v.owner_machine,
+        "worker": v.worker, "claim_age_s": None if age is None else int(age), "pr": v.pr_url,
+        "plan_status": v.plan_status,
+    }
+
+
 @task_app.command("list")
 @guarded
-def task_list(all_states: bool = typer.Option(False, "--all", help="Include done tasks.")):
+def task_list(all_states: bool = typer.Option(False, "--all", help="Include done tasks."),
+              as_json: bool = typer.Option(False, "--json", help="One JSON object per task.")):
     from rich.table import Table
     c = ctx()
     c.coord.pull()
     snap = snapshot.take(c)
+    rows = [v for v in snap.work if all_states or v.state != "done"]
+    if as_json:
+        typer.echo(json.dumps([_task_summary(v, snap.now) for v in rows], default=str, indent=2))
+        return
     t = Table("task", "title", "state", "owner", "worker", "repo", "PR")
-    for v in snap.work:
-        if v.state == "done" and not all_states:
-            continue
+    for v in rows:
         state = v.state + (" (ready)" if v.ready else "")
         t.add_row(*(Text(x) for x in (v.short, v.title, state, v.owner_machine or "", v.worker or "",
                                      v.repo or "", v.pr_url or "")))
@@ -546,11 +560,10 @@ def task_show(key: str):
     if v is None:
         fail(f"no task {key}")
     data = {
-        "key": v.key, "short": v.short, "title": v.title, "state": v.state, "ready": v.ready,
-        "epic": v.epic, "repo": v.repo, "autonomy": v.autonomy, "retries": v.retries,
+        **_task_summary(v, snap.now), "retries": v.retries,
         "winner": v.winner.id if v.winner else None, "resolution": v.res.reason,
         "claims": [c_.id for c_ in v.res.claims], "live": [c_.id for c_ in v.res.valid],
-        "arbitration": v.res.arbitration, "plan_status": v.plan_status, "pr": v.pr_url,
+        "arbitration": v.res.arbitration,
         "checkpoint": {k: val for k, val in v.checkpoint.items() if k != "plan_md"},
         "dir": str(v.dir.relative_to(c.root)),
     }

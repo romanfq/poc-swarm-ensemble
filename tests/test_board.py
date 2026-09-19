@@ -207,9 +207,6 @@ def test_daemon_log_panel(setup):
 
     def text():
         return log_text(app.query_one("#daemon-log"))
-def test_feed_links_open_on_click(setup):
-    world, a, app, opened = setup
-    url = "https://github.com/OWNER/app/pull/9"
 
     async def go():
         async with app.run_test(size=(160, 50)) as pilot:
@@ -232,6 +229,24 @@ def test_feed_links_open_on_click(setup):
 
 def test_daemon_log_panel_says_when_there_is_no_log(setup):
     world, a, app, _ = setup
+
+    async def go():
+        async with app.run_test(size=(160, 50)) as pilot:
+            await until(pilot, lambda: isinstance(app.screen, board.ChoiceScreen))
+            await pilot.press("escape")
+            panel = app.query_one("#daemon-log")
+            await until(pilot, lambda: "doesn't exist here" in log_text(panel))
+    run(go())
+
+
+def test_feed_links_open_on_click(setup):
+    world, a, app, opened = setup
+    url = "https://github.com/OWNER/app/pull/9"
+
+    async def go():
+        async with app.run_test(size=(160, 50)) as pilot:
+            await until(pilot, lambda: isinstance(app.screen, board.ChoiceScreen))
+            await pilot.press("escape")
             log = app.query_one("#feed")
             log.clear()
             app.say(f"T1 is done. The PR can be found at {url}.")
