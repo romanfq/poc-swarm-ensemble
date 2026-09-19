@@ -43,8 +43,8 @@ def run(coro):
 @pytest.fixture
 def setup(world):
     world.backend.add("E1", title="Epic", epic=True)
-    world.backend.add("T1", title="Poll", epic_of="E1", labels=["repo:OWNER/app"])
-    world.backend.add("T2", title="Parse", epic_of="E1", labels=["repo:OWNER/app"])
+    world.backend.add("T1", title="Poll", epic_of="E1", labels=["repo:OWNER/app", "type:task"])
+    world.backend.add("T2", title="Parse", epic_of="E1", labels=["repo:OWNER/app", "type:task"])
     a = world.machine("mac-a")
     world.scheduler(a, share=1).cycle()           # T1 claimed, awaiting a worker
     opened = []

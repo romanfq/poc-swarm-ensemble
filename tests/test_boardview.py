@@ -13,9 +13,9 @@ def test_age_text():
 
 def test_panels_from_a_live_ledger(world):
     world.backend.add("E1", title="Epic", epic=True)
-    world.backend.add("T1", title="Poll", epic_of="E1", labels=["repo:OWNER/app"])
-    world.backend.add("T2", title="Parse", epic_of="E1", labels=["repo:OWNER/app"])
-    world.backend.add("T3", title="Store", epic_of="E1", labels=["repo:OWNER/app"])
+    world.backend.add("T1", title="Poll", epic_of="E1", labels=["repo:OWNER/app", "type:task"])
+    world.backend.add("T2", title="Parse", epic_of="E1", labels=["repo:OWNER/app", "type:task"])
+    world.backend.add("T3", title="Store", epic_of="E1", labels=["repo:OWNER/app", "type:task"])
     a, b = world.machine("mac-a"), world.machine("mac-b")
     world.scheduler(a, share=2).cycle()               # T1, T2 claimed, awaiting worker
     work.choose_worker(a, rv.index(a.root)["T1"], "vscode", launch=world.launch, platform="darwin")
@@ -56,7 +56,7 @@ def test_panels_from_a_live_ledger(world):
 
 
 def test_review_rows_use_live_pr_status(world):
-    world.backend.add("T1", title="Poll", labels=["repo:OWNER/app"])
+    world.backend.add("T1", title="Poll", labels=["repo:OWNER/app", "type:task"])
     a = world.machine("mac-a")
     world.scheduler(a).cycle()
     d = rv.index(a.root)["T1"]

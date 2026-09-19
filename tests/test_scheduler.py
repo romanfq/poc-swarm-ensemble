@@ -16,7 +16,7 @@ def _plan(world, *tasks):
     world.backend.add("E1", title="Epic", epic=True)
     for key, extra in tasks:
         world.backend.add(key, title=f"Task {key}", epic_of="E1",
-                          labels=["repo:OWNER/app", *extra.pop("labels", [])], **extra)
+                          labels=["repo:OWNER/app", "type:task", *extra.pop("labels", [])], **extra)
 
 
 def test_claims_prepares_and_asks_for_a_worker(world):
@@ -165,8 +165,8 @@ def test_pause_resume_and_stop(world):
 def test_takeover_is_soft_priority(world):
     world.backend.add("E1", title="E1", epic=True)
     world.backend.add("E2", title="E2", epic=True)
-    world.backend.add("A1", title="a", epic_of="E1", labels=["repo:OWNER/app"])
-    world.backend.add("B1", title="b", epic_of="E2", labels=["repo:OWNER/app"])
+    world.backend.add("A1", title="a", epic_of="E1", labels=["repo:OWNER/app", "type:task"])
+    world.backend.add("B1", title="b", epic_of="E2", labels=["repo:OWNER/app", "type:task"])
     a, b = world.machine("mac-a"), world.machine("mac-b")
     plan.sync(a)
     L.priority(a, "E1", "takeover")
@@ -179,7 +179,7 @@ def test_dependencies_and_blocked_epic(world):
     a = world.machine("mac-a")
     assert world.scheduler(a, share=5).cycle().claimed == ["T1"]
     world.backend.set_status(TaskRef("E1"), "blocked")
-    world.backend.add("T3", title="x", epic_of="E1", labels=["repo:OWNER/app"])
+    world.backend.add("T3", title="x", epic_of="E1", labels=["repo:OWNER/app", "type:task"])
     assert world.scheduler(a, share=5).cycle().claimed == []
 
 

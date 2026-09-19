@@ -8,6 +8,7 @@ typer = pytest.importorskip("typer")
 pytest.importorskip("rich")
 from typer.testing import CliRunner  # noqa: E402
 
+from backends.base import TaskRef  # noqa: E402
 from backends.fake import FakeBackend  # noqa: E402
 from dags import cli  # noqa: E402
 
@@ -149,3 +150,33 @@ def test_backend_seed_dry_run_then_apply(machine, tmp_path):
         assert r.exit_code == 1 and "differs from backend.yaml" in r.output
     finally:
         gh.set_runner(None)
+
+
+def test_backend_init_labels_what_the_plan_is_missing(machine):
+    b = machine.backend
+    b.add("D1", title="Blocker", closed=True)
+    b.add("T2", title="Needs D1", epic_of="E1", blocked_by=["D1"], labels=["type:task"])
+    b.add("U1", title="Just a thought")
+    r = invoke("backend", "init")
+    assert r.exit_code == 0 and "dry run" in r.output
+    assert "label D1 type:task swarm:status:done (dependency of T2)" in r.output
+    assert "U1" not in r.output                                    # never guessed into the plan
+    assert "type:task" not in b.get_task(TaskRef("D1")).labels
+    r = runner.invoke(cli.app, ["backend", "init", "--apply"], input="y\n", catch_exceptions=False)
+    assert r.exit_code == 0, r.output
+    assert b.in_plan(TaskRef("D1")) and not b.in_plan(TaskRef("U1"))
+    assert "nothing to do" in invoke("backend", "init").output
+
+
+def test_backend_adopt(machine):
+    b = machine.backend
+    b.add("U1", title="File it, then hand it to the swarm")
+    r = invoke("backend", "adopt", "U1", "--autonomy", "auto-pr")
+    assert r.exit_code == 0 and "is in the plan" in r.output
+    t = b.get_task(TaskRef("U1"))
+    assert t.status == "ready" and t.autonomy == "auto-pr" and "type:task" in t.labels
+    assert TaskRef("U1") in b.ready_tasks()
+    r = invoke("backend", "adopt", "T1")
+    assert r.exit_code != 0 and "already in the plan" in r.output
+    b.add("U2", title="Closed", closed=True)
+    assert "reopen it first" in invoke("backend", "adopt", "U2").output

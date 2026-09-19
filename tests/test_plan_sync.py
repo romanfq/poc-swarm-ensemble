@@ -15,7 +15,7 @@ def world(swarm, tmp_path):
     backend.add("E1", title="Ingestion", epic=True)
     backend.add("T0", title="Schema", epic_of="E1", closed=True, status="done")
     backend.add("T1", title="Poll", epic_of="E1", labels=["swarm:autonomy:auto-pr", "repo:OWNER/app"])
-    backend.add("T2", title="Parse", epic_of="E1", blocked_by=["T1", "T0"])
+    backend.add("T2", title="Parse", epic_of="E1", blocked_by=["T1", "T0"], labels=["type:task"])
     backend.add("T9", title="Old closed", closed=True)
     a, b = swarm.clone("mac-a"), swarm.clone("mac-b")
     a.set_backend(backend)
@@ -64,7 +64,7 @@ def test_changes_become_revisions(world):
     backend, a, _ = world
     plan.sync(a)
     backend.set_autonomy(TaskRef("T2"), "human-must-scope")
-    backend.add("T3", title="New", epic_of="E1")
+    backend.add("T3", title="New", epic_of="E1", labels=["type:task"])
     rep = plan.sync(a)
     assert rep.imported == ["T3"] and rep.revised == ["T2"]
     d = rv.index(a.root)["T2"]
@@ -132,3 +132,89 @@ def test_lookup_by_short_or_dir(world):
     assert rv.lookup(a.root, "t1") == rv.index(a.root)["T1"]
     assert rv.label(rv.index(a.root)["T1"]) == "T1"
     assert a.task_dir_for("T1") == rv.index(a.root)["T1"]
+
+
+# -- plan scope (GH-18) ----------------------------------------------------------------
+
+def test_unlabelled_issues_are_skipped_and_counted(world):
+    backend, a, _ = world
+    backend.add("U1", title="A thought filed at midnight")
+    backend.add("U2", title="Another one", epic_of="E1")
+    backend.add("U3", title="Closed and unlabelled", closed=True)
+    rep = plan.sync(a)
+    assert sorted(rep.imported) == ["E1", "T0", "T1", "T2"]
+    assert sorted(rep.skipped) == ["U1", "U2"]                   # open ones only
+    assert "2 skipped (no swarm label)" in rep.summary()
+    assert not {"U1", "U2", "U3"} & rv.index(a.root).keys()
+    rep = plan.sync(a)
+    assert not rep.changed and rep.summary() == "no changes, 2 skipped (no swarm label)"
+
+
+def test_plan_scope_all_imports_unlabelled_issues(world, tmp_path):
+    backend, a, _ = world
+    backend.add("U1", title="A thought filed at midnight")
+    everything = FakeBackend(backend.path, plan_scope="all")
+    rep = plan.sync(a, everything)
+    assert "U1" in rep.imported and rep.skipped == []
+
+
+def test_epic_without_a_status_still_imports(world):
+    backend, a, _ = world
+    assert not backend.get_task(TaskRef("E1")).labels             # epic=True, no labels at all
+    assert "E1" in plan.sync(a).imported
+
+
+def test_unlabelled_dependency_is_reported_not_imported(world):
+    backend, a, _ = world
+    backend.add("D1", title="Blocker nobody labelled")
+    backend.add("T4", title="Needs D1", epic_of="E1", blocked_by=["D1"], labels=["type:task"])
+    rep = plan.sync(a)
+    assert "T4" in rep.imported and "D1" not in rep.imported
+    assert "D1" not in rep.skipped                                # an error, not a quiet skip
+    assert any("T4 depends on D1" in e and "backend init --apply" in e for e in rep.errors)
+    assert not rv.ledger_ready(a.root, rv.index(a.root)["T4"], timeutil.now(), 900)
+
+    fixes, notes = plan.membership_fixes(a, backend)
+    assert [(f.task.ref.key, f.status, f.kind) for f in fixes] == [("D1", "ready", "task")]
+    assert "T4" in fixes[0].reason and notes == []
+    for f in fixes:
+        plan.apply_fix(backend, f)
+    rep = plan.sync(a)
+    assert rep.imported == ["D1"] and not rep.errors
+    backend.set_status(TaskRef("D1"), "done")
+    plan.sync(a)
+    assert rv.ledger_ready(a.root, rv.index(a.root)["T4"], timeutil.now(), 900)
+
+
+def test_dependencies_of_unlabelled_dependencies_are_found(world):
+    backend, a, _ = world
+    backend.add("D2", title="Deeper", closed=True)
+    backend.add("D1", title="Blocker", blocked_by=["D2"])
+    backend.add("T4", title="Needs D1", epic_of="E1", blocked_by=["D1"], labels=["type:task"])
+    fixes, _ = plan.membership_fixes(a, backend)
+    got = {f.task.ref.key: (f.status, f.reason) for f in fixes}
+    assert got["D1"] == ("ready", "dependency of T4")
+    assert got["D2"] == ("done", "dependency of D1")
+
+
+def test_ledger_tracked_issues_without_labels_are_relabelled(world):
+    """A swarm that predates plan_scope: its issues are in the ledger but unlabelled."""
+    backend, a, _ = world
+    everything = FakeBackend(backend.path, plan_scope="all")
+    backend.add("L1", title="Hand-filed, already done", epic_of="E1")
+    backend.add("L2", title="Hand-filed, open", epic_of="E1")
+    backend.add("L3", title="Hand-filed, claimed", epic_of="E1")
+    plan.sync(a, everything)                                       # imported under the old rule
+    idx = rv.index(a.root)
+    cid = L.claim(a, idx["L1"])
+    L.complete(a, idx["L1"], "done", claim_id=cid)
+    L.claim(a, idx["L3"])
+    fixes, notes = plan.membership_fixes(a, backend)
+    got = {f.task.ref.key: (f.status, f.kind) for f in fixes}
+    assert got == {"L1": ("done", "task"), "L2": ("ready", "task"), "L3": ("claimed", "task")}
+    assert notes == []
+    for f in fixes:
+        plan.apply_fix(backend, f)
+    assert plan.membership_fixes(a, backend) == ([], [])
+    assert {"L2", "L3"} <= {t.ref.key for t in backend.all_tasks()}
+    assert backend.get_task(TaskRef("L1")).closed                  # done closes it, as set_status always has

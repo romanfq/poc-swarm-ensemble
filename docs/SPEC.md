@@ -191,7 +191,8 @@ method as a pass-through (3.3).
 > **v1.1 — D10, D18:**
 >
 > - Every shipped adapter also provides:
->   - `all_tasks()`, used by plan sync;
+>   - `all_tasks()`, used by plan sync, which lists only the plan's issues
+>     (D26), and `all_issues()`, which lists every issue;
 >   - `set_autonomy()`, used by the failure downgrade;
 >   - `web_url()` and `short_key()`, used by the Board.
 > - `Task` also carries the target code repo (`repo`), whether it is an epic,
@@ -271,6 +272,9 @@ unavailable on a personal account's repos. There the adapter uses a plain
 > - **Target repo:** a task names its code repo with a `repo:OWNER/NAME` label.
 > - **Labels:** they must exist before use; `swarm.py backend init` prints (or,
 >   with `--apply`, creates) the full set.
+> - **Plan membership (D26):** only issues carrying a `swarm:` label or
+>   `type:epic` / `type:task`, and the epics above them, belong to the plan.
+>   Every other issue in the plan repo is invisible to the swarm.
 
 ## 3.4 Selecting a backend
 
@@ -316,6 +320,32 @@ quota.
 > A task's code repo is, in order: its `repo:` label, its epic's entry in
 > `epic_repos`, then `default_repo`. The resolved repo is recorded in the
 > task's `meta.yaml`.
+>
+> **v1.1 — D26: the plan is opt-in.** `plan_scope: labelled` (the default)
+> admits an issue to the plan only when:
+>
+> - it carries a `swarm:` label (normally `swarm:status:*`) or `type:epic` /
+>   `type:task`; or
+> - it is the epic, at any depth, of an issue that does.
+>
+> GitHub issue types don't count, and membership never flows down from an epic
+> to an unlabelled sub-issue. Everything else is not imported, not listed by
+> `backend ready`, and never claimed. `plan sync` reports how many open issues
+> it skipped. `plan_scope: all` restores the v1.0 rule (every issue is in the
+> plan). The rule lives in the port (`backends/base.py`), so every adapter
+> applies it the same way.
+>
+> - **Dependencies without a label.** A plan task that depends on an
+>   unlabelled issue is an error, not a guess. `plan sync` names it and leaves
+>   it out, so the dependant stays unready. `backend init --apply` labels it:
+>   `swarm:status:ready` if open, `done` if closed, plus `type:task`.
+> - **Swarms that predate D26.** `backend init --apply` also labels every
+>   issue the ledger already tracks but that has no swarm label. The status is
+>   taken from the ledger (`done`, `claimed`, `in-progress`, `awaiting-review`,
+>   otherwise `ready`). A task that is frozen or rejected is listed for a human
+>   to label instead.
+> - **One issue at a time.** `swarm.py backend adopt ISSUE [--autonomy TIER]`
+>   brings a hand-filed issue into the plan.
 
 
 # 4. The Coordination Repository — GitHub as the State Store
@@ -1382,6 +1412,7 @@ No step needs a process that isn't one of these:
 | D23 | **Venv:** self-installing, stamped by platform and Python version, rebuilt if it came from elsewhere. `typer>=0.16`; works whether typer bundles its own click (0.17+) or uses the real package. | Folders shared with VMs can hold a venv built for the wrong system, and older typer breaks with current click. | 5.2 | Done |
 | D24 | **Notifications** always go to `.swarm/notifications.log`; desktop and webhook are opt-in in `.swarm/local.yaml`. The Board shows the log in its feed. | Ch.9.4's notify step is pluggable; the log is the one channel that always works. | 9.4, 10.3 | Done |
 | D25 | **Plan seeding:** `swarm.py backend seed FILE` creates a YAML plan's labels, issues, parents and "blocked by" links. Dry run by default; `--apply` is for humans. Issues carry a `dags-seed` marker, so re-runs only add what is missing and never rewrite. GitHub only. | The Phase 9 plan has 21 issues and 47 links. Typing them by hand is error-prone, and a failed run must be safe to repeat. | 3.3 | Done (first real run pending) |
+| D26 | **The plan is opt-in:** `plan_scope: labelled` (default) or `all`. Under `labelled`, an issue is in the plan when it carries a `swarm:` or `type:epic`/`type:task` label, or is the epic of one that does. `plan sync` reports skipped issues and unlabelled dependencies, and never imports the latter. `backend init --apply` labels unlabelled dependencies and ledger-tracked issues (upgrade path). `backend adopt` admits one issue. | A plan repo that people also use (the meta swarm's) turned every stray issue into claimable work with `default_repo`. Membership has to be deliberate, and a missing label is fixed, not inferred. | 3.3, 3.4 | Done |
 
 **D15 corrections in full:**
 
@@ -1526,6 +1557,13 @@ Commands run from the coordination repo clone unless stated otherwise.
    ./bin/swarm.py backend init --apply    # create/update them
    ```
 
+   `backend init` also lists any issues the plan is missing: dependencies of
+   plan tasks that have no swarm label, and issues the ledger already tracks
+   without one. Run it again after upgrading a swarm to D26. The procedure is:
+   upgrade `bin/`, run `backend init` and read the list, run it again with
+   `--apply`, then restart each machine. Read the dry run first: labelling an
+   open dependency `swarm:status:ready` makes it claimable.
+
 5. **Create the bot account.**
    1. Make a separate GitHub user, e.g. `project-dags-bot`.
    2. Add it as a collaborator with **Write** access to every code repo, and
@@ -1595,7 +1633,9 @@ gh issue edit 3 --repo $R --add-blocked-by $R#2      # frontend waits for backen
 ```
 
 - **Omitted labels.** No autonomy label means `human-must-review`. No `repo:`
-  label means `epic_repos` / `default_repo` applies.
+  label means `epic_repos` / `default_repo` applies. With no `swarm:` or
+  `type:` label at all, the issue is not part of the plan (D26). Use
+  `./bin/swarm.py backend adopt N` to hand an existing issue to the swarm.
 - **Sizing.** Keep each task to about an hour of work in **one** repo.
 - **Check.** `./bin/swarm.py plan sync` then `./bin/swarm.py task list` shows
   what the swarm sees. `(ready)` means the ledger's checks pass;
@@ -1777,7 +1817,8 @@ Global options go **before** the command: `--root PATH`, `--identity NAME`,
 | `board [--web] [--port 4590]` | Swarm Board |
 | `protect REPO [--branch main] [--approvals 1] [--apply]` | Branch protection (dry run by default) |
 | `plan sync` | Mirror the tracker into `tasks/` |
-| `backend get-task T` / `backend ready [--ledger]` / `backend set-status T S` / `backend init [--apply]` | Talk to the tracker |
+| `backend get-task T` / `backend ready [--ledger]` / `backend set-status T S` / `backend init [--apply]` | Talk to the tracker; `init` also labels issues the plan is missing (D26) |
+| `backend adopt T [--autonomy TIER]` | Bring one unlabelled issue into the plan |
 | `backend seed FILE [--apply] [--yes]` | Create a plan file's epics, tasks and links in the tracker (dry run by default) |
 | `quota set N [--reason]` / `quota show` | Global N |
 | `epic takeover E` / `epic release E` | Soft epic priority |
@@ -1815,6 +1856,7 @@ implement | note [--summary] [--tried …] [--remaining …] [--question …]
 | `repos.<OWNER/NAME>.base` | Base branch for worktrees and PRs | `main` |
 | `repos.<OWNER/NAME>.test_command` | Run by `done` before the PR | none |
 | `default_repo` | Repo for tasks without a `repo:` label | none |
+| `plan_scope` | `labelled`: only issues with a `swarm:`/`type:` label (and their epics) are in the plan; `all`: every issue (D26) | `labelled` |
 | `epic_repos.<epic key or short>` | Per-epic default repo | none |
 | `swarm.default_quota` | Global N without a `quota/` record | `3` |
 | `swarm.lease_minutes` / `heartbeat_minutes` | Lease window / heartbeat interval | `15` / `3` |

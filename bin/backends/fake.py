@@ -9,29 +9,33 @@ fake-backend.yaml:
     issues:
       E1: {title: Ingestion, epic: true}
       T1: {title: Poll feed, epic_of: E1, repo: OWNER/app, labels: [swarm:autonomy:auto-pr]}
-      T2: {title: Parse feed, epic_of: E1, blocked_by: [T1]}
+      T2: {title: Parse feed, epic_of: E1, blocked_by: [T1], labels: [type:task]}
+
+Only issues with a ``swarm:`` or ``type:`` label (or a ``status``), and their
+epics, are in the plan unless backend.yaml says ``plan_scope: all``.
 """
 from __future__ import annotations
 
 import threading
 from pathlib import Path
 
-from backends.base import (AUTONOMY_PREFIX, DEFAULT_AUTONOMY, STATUS_PREFIX, Task, TaskRef,
-                           parse_labels, ready_from)
+from backends.base import (AUTONOMY_PREFIX, DEFAULT_AUTONOMY, DEFAULT_PLAN_SCOPE, STATUS_PREFIX,
+                           PlanScoped, Task, TaskRef, parse_labels, plan_scope_of)
 from dags import records as R
 
 _lock = threading.Lock()
 
 
-class FakeBackend:
+class FakeBackend(PlanScoped):
     name = "fake"
 
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, plan_scope: str = DEFAULT_PLAN_SCOPE):
         self.path = Path(path)
+        self.plan_scope = plan_scope
 
     @classmethod
     def from_config(cls, cfg: dict, ctx) -> "FakeBackend":
-        return cls(ctx.root / cfg.get("path", "fake-backend.yaml"))
+        return cls(ctx.root / cfg.get("path", "fake-backend.yaml"), plan_scope_of(ctx.backend_cfg))
 
     # -- storage --------------------------------------------------------------
     def _load(self) -> dict:
@@ -68,11 +72,8 @@ class FakeBackend:
             labels=labels,
         )
 
-    def all_tasks(self) -> list[Task]:
+    def all_issues(self) -> list[Task]:
         return [self.get_task(TaskRef(k)) for k in self._load()]
-
-    def ready_tasks(self) -> list[TaskRef]:
-        return ready_from(self.all_tasks())
 
     def set_status(self, ref: TaskRef, status: str) -> None:
         with _lock:
@@ -88,6 +89,17 @@ class FakeBackend:
             labels = [x for x in issues[ref.key].get("labels") or [] if not x.startswith(AUTONOMY_PREFIX)]
             issues[ref.key]["labels"] = labels + [AUTONOMY_PREFIX + tier]
             self._save(issues)
+
+    uses_type_labels = True
+
+    def set_kind(self, ref: TaskRef, epic: bool) -> None:
+        label = "type:epic" if epic else "type:task"
+        with _lock:
+            issues = self._load()
+            labels = list(issues[ref.key].get("labels") or [])
+            if label not in labels:
+                issues[ref.key]["labels"] = labels + [label]
+                self._save(issues)
 
     def dependencies(self, ref: TaskRef) -> list[TaskRef]:
         return self.get_task(ref).dependencies

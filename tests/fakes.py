@@ -9,16 +9,17 @@ from __future__ import annotations
 import json
 
 # name -> fields. epic: bool, parent: name, deps: [names], status, autonomy, repo, closed
+# Tasks carry a status label, as `backend seed` gives them (epics get none).
 PLAN = {
     "E1": {"title": "Ingestion", "epic": True},
     "E2": {"title": "Frontend", "epic": True, "status": "blocked"},
     "T0": {"title": "Schema", "parent": "E1", "closed": True, "status": "done"},
     "T1": {"title": "Poll feed", "parent": "E1", "autonomy": "auto-pr", "repo": "OWNER/app",
-           "body": "Poll the feed every minute."},
-    "T2": {"title": "Parse feed", "parent": "E1", "deps": ["T1"]},
+           "body": "Poll the feed every minute.", "status": "ready"},
+    "T2": {"title": "Parse feed", "parent": "E1", "deps": ["T1"], "status": "ready"},
     "T3": {"title": "Blocked one", "parent": "E1", "status": "blocked"},
-    "T4": {"title": "Page", "parent": "E2"},
-    "T5": {"title": "Loose task", "deps": ["T0"]},
+    "T4": {"title": "Page", "parent": "E2", "status": "ready"},
+    "T5": {"title": "Loose task", "deps": ["T0"], "status": "ready"},
 }
 
 

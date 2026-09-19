@@ -13,6 +13,7 @@ backend.yaml:
       repo: OWNER/matchwire-swarm
       use_issue_types: false      # true: Epic/Task come from GitHub issue types (org repos)
       cache_seconds: 20
+    plan_scope: labelled          # top level; see backends.base.split_plan
 """
 from __future__ import annotations
 
@@ -20,8 +21,9 @@ import re
 import threading
 import time
 
-from backends.base import (AUTONOMY_PREFIX, AUTONOMY_TIERS, DEFAULT_AUTONOMY, REPO_PREFIX,
-                           STATUS_PREFIX, SWARM_STATUSES, Task, TaskRef, parse_labels, ready_from)
+from backends.base import (AUTONOMY_PREFIX, AUTONOMY_TIERS, DEFAULT_AUTONOMY, DEFAULT_PLAN_SCOPE,
+                           REPO_PREFIX, STATUS_PREFIX, SWARM_STATUSES, PlanScoped, Task, TaskRef,
+                           parse_labels, plan_scope_of)
 from dags import gh
 
 _ISSUE_FIELDS = """
@@ -63,17 +65,18 @@ LABEL_COLORS = {
 }
 
 
-class GitHubBackend:
+class GitHubBackend(PlanScoped):
     name = "github"
 
     def __init__(self, repo: str, use_issue_types: bool = False, cache_seconds: float = 20,
-                 extra_repos: list[str] | None = None):
+                 extra_repos: list[str] | None = None, plan_scope: str = DEFAULT_PLAN_SCOPE):
         if not repo or "/" not in repo or repo.startswith("OWNER/"):
             raise ValueError(f"backend.yaml github.repo must be OWNER/NAME (got {repo!r})")
         self.repo = repo
         self.use_issue_types = use_issue_types
         self.cache_seconds = cache_seconds
         self.extra_repos = extra_repos or []
+        self.plan_scope = plan_scope
         self._snap: dict[str, Task] | None = None
         self._snap_at = 0.0
         self._lock = threading.RLock()
@@ -81,7 +84,7 @@ class GitHubBackend:
     @classmethod
     def from_config(cls, cfg: dict, ctx) -> "GitHubBackend":
         return cls(str(cfg.get("repo", "")), bool(cfg.get("use_issue_types", False)),
-                   float(cfg.get("cache_seconds", 20)))
+                   float(cfg.get("cache_seconds", 20)), plan_scope=plan_scope_of(ctx.backend_cfg))
 
     # -- refs -----------------------------------------------------------------
     def ref(self, number: int | str, repo: str | None = None) -> TaskRef:
@@ -177,11 +180,8 @@ class GitHubBackend:
         with self._lock:
             self._snap = None
 
-    def all_tasks(self) -> list[Task]:
+    def all_issues(self) -> list[Task]:
         return list(self._snapshot().values())
-
-    def ready_tasks(self) -> list[TaskRef]:
-        return ready_from(self.all_tasks())
 
     def get_task(self, ref: TaskRef) -> Task:
         hit = self._snapshot().get(ref.key)
@@ -245,6 +245,24 @@ class GitHubBackend:
             if not self.get_task(ref).closed:
                 gh.gh(["issue", "close", str(num), "--repo", repo, "--reason", "completed"])
                 self.invalidate()
+
+    @property
+    def uses_type_labels(self) -> bool:
+        return not self.use_issue_types
+
+    def set_kind(self, ref: TaskRef, epic: bool) -> None:
+        """Add type:epic / type:task (plan membership). Only adds: other
+        `type:` labels people use (type:bug, ...) are left alone."""
+        label = "type:epic" if epic else "type:task"
+        try:
+            current = self.get_task(ref).labels
+        except KeyError:
+            current = []
+        if label in current:
+            return
+        repo, num = self._split(ref)
+        gh.gh(["issue", "edit", str(num), "--repo", repo, "--add-label", label])
+        self.invalidate()
 
     def set_autonomy(self, ref: TaskRef, tier: str) -> None:
         if tier not in AUTONOMY_TIERS:

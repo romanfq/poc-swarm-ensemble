@@ -23,7 +23,7 @@ except ImportError:  # pragma: no cover - typer < 0.17
     import click
 
 import resolve
-from backends.base import SWARM_STATUSES, TaskRef
+from backends.base import AUTONOMY_TIERS, SWARM_STATUSES, TaskRef
 from dags import actions, daemon, gh, panel, plan, prereqs, repos, snapshot, timeutil, work
 from dags import ledger as L
 from dags.config import ConfigError, Context
@@ -355,24 +355,63 @@ def backend_set_status(key: str, status: str):
 @backend_app.command("init")
 @guarded
 def backend_init(apply: bool = typer.Option(False, "--apply", help="Create the labels on GitHub (humans only).")):
-    """Create the swarm labels in the plan repo (prints the commands unless --apply)."""
+    """Create the swarm labels, and label the issues the plan is missing (prints the changes unless --apply)."""
     c = ctx()
     b = c.backend
-    if not hasattr(b, "init_commands"):
-        fail(f"the {b.name} backend needs no initialisation")
     code_repos = sorted((c.backend_cfg.get("repos") or {}).keys())
-    cmds = b.init_commands(code_repos)
+    cmds = b.init_commands(code_repos) if hasattr(b, "init_commands") else []
     for cmd in cmds:
         console.print("gh " + " ".join(f"'{a}'" if " " in a else a for a in cmd), markup=False)
+    fixes, notes = plan.membership_fixes(c, b)
+    for fix in fixes:
+        labels = [x for x in (f"type:{fix.kind}" if fix.kind else None,
+                              f"swarm:status:{fix.status}" if fix.status else None) if x]
+        closes = " and close it" if fix.status == "done" and not fix.task.closed else ""
+        console.print(f"label {plan.short_of(b, fix.task.ref)} {' '.join(labels)}{closes} ({fix.reason})",
+                      markup=False)
+    for note in notes:
+        console.print(escape(f"note: {note}"), style="yellow")
+    if not cmds and not fixes:
+        console.print(f"[green]nothing to do[/] — the {b.name} backend needs no labels and the plan is complete")
+        return
     if not apply:
-        console.print("[dim]dry run — re-run with --apply to create them[/]")
+        console.print("[dim]dry run — re-run with --apply to make these changes[/]")
         return
     c.require_human()
-    if not typer.confirm(f"Create/update {len(cmds)} labels in {getattr(b, 'repo', '?')}?"):
+    what = [f"{len(cmds)} labels" if cmds else "", f"label {len(fixes)} issues" if fixes else ""]
+    if not typer.confirm(f"Create/update {' and '.join(x for x in what if x)} in {getattr(b, 'repo', b.name)}?"):
         raise typer.Exit(1)
     for cmd in cmds:
         gh.gh(cmd)
-    console.print("[green]labels ready[/]")
+    for fix in fixes:
+        plan.apply_fix(b, fix)
+    console.print("[green]labels ready[/]" + (" — next: `swarm.py plan sync`" if fixes else ""))
+
+
+@backend_app.command("adopt")
+@guarded
+def backend_adopt(key: str,
+                  autonomy: str = typer.Option(None, "--autonomy", help="Also set the autonomy tier.")):
+    """Bring one issue into the plan: label it swarm:status:ready (and type:task)."""
+    c = ctx()
+    b = c.backend
+    if autonomy is not None and autonomy not in AUTONOMY_TIERS:
+        fail(f"--autonomy must be one of {', '.join(AUTONOMY_TIERS)}")
+    ref = _ref_for(key)
+    t = b.get_task(ref)
+    in_plan = getattr(b, "in_plan", None)
+    if in_plan is None or in_plan(ref):
+        fail(f"{plan.short_of(b, ref)} is already in the plan")
+    if t.closed:
+        fail(f"{plan.short_of(b, ref)} is closed; reopen it first")
+    kinds = getattr(b, "uses_type_labels", False)
+    if kinds:
+        b.set_kind(ref, t.is_epic)
+    if not t.is_epic or not kinds:          # an epic needs some swarm label to count
+        b.set_status(ref, "ready")
+    if autonomy:
+        b.set_autonomy(ref, autonomy)
+    console.print(f"[green]{escape(plan.short_of(b, ref))} is in the plan[/] — next: `swarm.py plan sync`")
 
 
 @backend_app.command("seed")
