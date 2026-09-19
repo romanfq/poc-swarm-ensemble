@@ -4,12 +4,11 @@
 # (plus the "Next" checklist in docs/HANDOVER.md).
 #
 # holders: cowork (Claude in the Cowork app) | claude-code (Claude Code CLI on the Mac) | roman
-holder: cowork
+holder: claude-code
 since: 2026-09-19
-reason: The meta swarm's plan is labelled and ordered: #17-#21 filed, label-issues.sh
-  applied, and `backend ready --ledger` shows exactly one claimable task (#18, the
-  opt-in change). Nothing is running. #17 was missing from the script's PLAN and was
-  labelled by hand; details in docs/HANDOVER.md, "Next".
+reason: The meta swarm starts its first task here (GH-18, the opt-in change). Its worker
+  is a Claude Code session editing this repo in a worktree, so the baton is yours for
+  the duration. docs/HANDOVER.md, "Next".
 history:
   - 2026-09-16 cowork: resumed via the same Cowork task (desktop or mobile), Mac kept awake
     (`caffeinate -is`) with the desktop app open.
@@ -53,3 +52,5 @@ history:
   - 2026-09-19 claude-code: filed #17-#21, updated #7, ran tools/label-issues.sh
     (dry run then --apply) from dags-meta, labelled #17 by hand, and verified one
     claimable task. No swarm started; nothing in dags-meta edited.
+  - 2026-09-19 cowork: scaffolded dags-meta, triaged the issue list, checked the gate
+    (only #18 claimable). Baton to claude-code for the first dogfood task.

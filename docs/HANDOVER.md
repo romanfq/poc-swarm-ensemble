@@ -385,7 +385,42 @@ Done by Cowork:
 Why this goes to Claude Code: the Cowork cloud sandbox can't reach these
 GitHub repos, and the Cowork shell on the Mac has no network.
 
-## Next (holder: cowork)
+## Next (holder: claude-code)
+**The meta swarm's first task runs in this repo.** Román starts `dags-a` from
+`~/Documents/DAGS/swarm/dags-meta` with `--quota-share 1`. It claims
+**#18** (the opt-in change: only issues carrying a swarm label belong to the
+plan) — the gate was checked and #18 is the only claimable task.
+
+**Why you hold the baton:** the worker *is* a Claude Code session, editing this
+repo in a worktree under `~/Documents/DAGS/code/poc-swarm-ensemble` on branch
+`swarm/GH-18`. The baton rule says only `claude-code` edits this repo, so it
+stays with you until the task is merged. Cowork will not touch this repo
+meanwhile; it keeps `dags-meta` and the logs.
+
+**If you are the worker session** (started by the Board in a worktree): follow
+`.swarm-task/README.md` exactly — `plan`, wait for Román's approval, then
+`implement`, then `done`. Stay inside your worktree, and change only `bin/`,
+`tests/` and `docs/`. Never touch `tasks/`, `control/`, `quota/`, `priority/`,
+`BATON`, `CLAUDE.md`, `backend.yaml` or `humans.yaml`. Don't run `swarm.py`
+commands other than through `.swarm-task/swarm-task`. Nothing will tell you when
+the plan is approved (that is issue #2): ask Román, or poll
+`.swarm-task/swarm-task status`.
+
+**If you are helping Román outside the worktree:** review the PR before merge —
+it must touch only the three allowed paths — and after merge run, in
+`dags-meta`, `tools/upgrade-from-source.sh ~/Documents/DAGS/code/poc-swarm-ensemble`,
+commit there, then stop and start the machine so the swarm picks up its own fix.
+Don't edit files in `dags-meta`; running its scripts is fine.
+
+**Known rough edges, expected on this run:** no notification when a plan is
+approved (#2); daemon errors invisible on the Board (#10); links not clickable
+(#5); `done` accepting an empty round (#14). Note anything new as a
+`next-version` issue and add it to #7.
+
+**Hand back** to cowork when #18 is merged and the machine restarted, with what
+happened and anything worth filing.
+
+## Meta swarm plan labelled (Claude Code, 2026-09-19)
 **The meta swarm's plan is labelled and ordered. Nothing is running.**
 Done on the Mac by Claude Code, 2026-09-19, with Román's yes at each GitHub step.
 
