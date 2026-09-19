@@ -5,7 +5,7 @@ the rich Panel a human scans in one glance.
 """
 from __future__ import annotations
 
-from dags import daemon, snapshot
+from dags import boardview, daemon, snapshot
 
 
 def status_rows(ctx, identity_new: bool = False, synced: bool = True, share: int | None = None,
@@ -41,7 +41,10 @@ def status_rows(ctx, identity_new: bool = False, synced: bool = True, share: int
     rows.append(("board", "● available  textual, `swarm.py board` or start --attach to view", "ok"))
     rows.append(("quota", f"{snap.quota_used}/{snap.quota_n} in use swarm-wide  ·  this machine {snap.mine_used}"
                           f"/{share if share is not None else '?'}", "plain"))
-    waiting = snap.awaiting_worker()
+    failed = [t for t in snap.live_claims if t.dispatch_failed]
+    for t in failed:
+        rows.append(("not started", f"{t.short} on {t.owner_machine}: {boardview.dispatch_failed_text(t)}", "warn"))
+    waiting = [t for t in snap.awaiting_worker() if not t.dispatch_failed]
     if waiting:
         rows.append(("needs you", "worker choice for " + ", ".join(t.short for t in waiting), "warn"))
     pending = snap.plans_pending()

@@ -97,6 +97,52 @@ def test_poller_flags_and_log_tail(tmp_path):
     assert boardview.announcement("finished", "x") == "[swarm-board] x"
 
 
+def test_daemon_log_tail(tmp_path):
+    log = tmp_path / "swarm.log"
+    tail = boardview.DaemonLogTail(log)
+    assert tail.backlog() == [] and tail.read() == []
+    log.write_text(
+        "2026-09-18 07:35:00,001 INFO dags.daemon: daemon teammate-b up (pid 1)\n"
+        "2026-09-18 07:35:32,120 WARNING dags.scheduler: GH-4: dispatch failed: git worktree add failed (128):\n"
+        "fatal: 'swarm/GH-4' is already used by worktree\n"
+        "2026-09-18 07:36:00,000 ERROR dags.scheduler: scheduler cycle failed\n"
+        "Traceback (most recent call last):\n"
+        "  File \"x.py\", line 1\n"
+        "RuntimeError: boom\n")
+    back = tail.backlog()                              # errors from before the Board opened
+    assert [(e.level, e.logger) for e in back] == [("WARNING", "dags.scheduler"), ("ERROR", "dags.scheduler")]
+    assert back[0].line == ("2026-09-18 07:35:32 WARNING dags.scheduler: GH-4: dispatch failed: "
+                            "git worktree add failed (128):\nfatal: 'swarm/GH-4' is already used by worktree")
+    assert back[1].text.endswith("RuntimeError: boom")
+    assert tail.read() == []
+
+    with open(log, "a") as f:
+        f.write("2026-09-18 07:37:00,000 INFO dags.poll: nothing new\n"
+                "2026-09-18 07:37:30,000 WARNING dags.scheduler: plan sync failed: tracker down\n"
+                "2026-09-18 07:38:00,000 WARNING dags.scheduler: half a li")
+    assert [e.text for e in tail.read()] == ["plan sync failed: tracker down"]
+    with open(log, "a") as f:
+        f.write("ne\nstray output from a subprocess\n")
+    got = tail.read()
+    assert [e.text for e in got] == ["half a line\nstray output from a subprocess"]
+
+    tail.level = "INFO"
+    assert [e.level for e in tail.backlog()] == ["INFO", "WARNING", "ERROR", "INFO", "WARNING", "WARNING"]
+    tail.level = "ERROR"
+    assert [e.level for e in tail.backlog()] == ["ERROR"]
+    small = boardview.DaemonLogTail(log, level="INFO", limit=2)
+    assert [e.text.splitlines()[0] for e in small.backlog()] == ["plan sync failed: tracker down", "half a line"]
+    gen = small.generation
+    assert small.read_tagged() == (gen, [])
+
+    log.write_text("")                                 # truncated
+    assert tail.read() == []
+    log.write_text("2026-09-18 08:00:00,000 ERROR dags.daemon: after rotation\n")
+    assert [e.text for e in tail.read()] == ["after rotation"]
+
+    assert [boardview.next_level(x) for x in ("WARNING", "INFO", "ERROR", "DEBUG")] == \
+        ["INFO", "ERROR", "WARNING", "WARNING"]
+    assert boardview.short_error("git worktree add failed (128):\nfatal: already used", 14) == "fatal: alread…"
 def test_find_urls():
     text = "GH-5 done. The PR can be found at https://github.com/o/r/pull/7. See (https://x.test/a?b=1), too"
     assert [u for _, _, u in boardview.find_urls(text)] == ["https://github.com/o/r/pull/7", "https://x.test/a?b=1"]

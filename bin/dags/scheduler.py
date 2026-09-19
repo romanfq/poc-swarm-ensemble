@@ -21,6 +21,9 @@ from dags import plan, timeutil, work, worktree
 
 log = logging.getLogger("dags.scheduler")
 
+# failed dispatches of one claim before the claim is given back (GH-10)
+DISPATCH_ATTEMPTS = 3
+
 
 @dataclass
 class CycleReport:
@@ -54,6 +57,8 @@ class Scheduler:
         self.started_clock = started_clock
         self._announced: set[str] = set()
         self._status_cache: dict[str, str] = {}
+        self._reported: dict[str, str] = {}      # error source -> last error notified
+        self._backoff: dict[str, float] = {}     # task key -> epoch seconds before which we don't claim it
 
     # -- helpers ------------------------------------------------------------------
     @property
@@ -69,6 +74,27 @@ class Scheduler:
             self._status_cache[key] = status
         except Exception as e:  # noqa: BLE001
             log.warning("set_status(%s, %s) failed: %s", key, status, e)
+
+    def report_error(self, source: str, text: str, rep: CycleReport) -> None:
+        """An error the humans must see: in the report every time (the daemon
+        logs those to swarm.log), in the feed (and desktop / webhook) once until
+        it changes or clears."""
+        rep.errors.append(text)
+        if self._reported.get(source) != text:
+            self._reported[source] = text
+            self.notify(text, "error")
+
+    def clear_error(self, source: str) -> None:
+        self._reported.pop(source, None)
+
+    def backed_off(self, key: str) -> bool:
+        until = self._backoff.get(key)
+        if until is None:
+            return False
+        if timeutil.now().timestamp() >= until:
+            del self._backoff[key]
+            return False
+        return True
 
     def eligible(self, meta: dict) -> bool:
         if meta.get("is_epic") or not meta.get("repo"):
@@ -90,8 +116,9 @@ class Scheduler:
             try:
                 plan.sync(ctx)
             except Exception as e:  # noqa: BLE001 - tracker hiccups must not stop the loop
-                rep.errors.append(f"plan sync: {e}")
-                log.warning("plan sync failed: %s", e)
+                self.report_error("plan sync", f"plan sync failed: {e}", rep)
+            else:
+                self.clear_error("plan sync")
 
         ctl = self.control_state()
         last = ctl.get("last") or {}
@@ -116,12 +143,13 @@ class Scheduler:
         try:
             backend_ready = {r.key for r in ctx.backend.ready_tasks()}
         except Exception as e:  # noqa: BLE001
-            rep.errors.append(f"backend: {e}")
+            self.report_error("backend", f"backend: {e}", rep)
             return rep
+        self.clear_error("backend")
         idx = resolve.index(ctx.root)
         candidates = []
         for key, d in idx.items():
-            if key not in backend_ready:
+            if key not in backend_ready or self.backed_off(key):
                 continue
             meta = resolve.read_meta(d)
             if not self.eligible(meta):
@@ -230,13 +258,13 @@ class Scheduler:
         if self.default_worker:
             try:
                 work.choose_worker(self.ctx, d, self.default_worker, launch=self.launch, platform=self.platform)
-                rep.dispatched.append(label)
-                self.notify(f"Handed {label} to {workers.WORKERS[self.default_worker].label}", "dispatched")
-                return
             except Exception as e:  # noqa: BLE001
-                rep.errors.append(f"{label}: dispatch failed: {e}")
-                log.warning("dispatch of %s failed: %s", label, e)
+                self.dispatch_failed(d, cid, e, rep)
                 return
+            self.clear_error(f"dispatch {label}")
+            rep.dispatched.append(label)
+            self.notify(f"Handed {label} to {workers.WORKERS[self.default_worker].label}", "dispatched")
+            return
         rep.awaiting_worker.append(label)
         if cid in self._announced:
             return
@@ -249,12 +277,41 @@ class Scheduler:
         try:
             work.prepare(self.ctx, d, cid)
         except Exception as e:  # noqa: BLE001
-            rep.errors.append(f"{label}: prepare failed: {e}")
+            self.report_error(f"prepare {label}", f"{label}: preparing the worktree failed: {e}", rep)
         autonomy = str(resolve.read_meta(d).get("autonomy") or "")
         text = workers.prompt_text(label)
         if len(workers.allowed_for(autonomy)) < len(workers.WORKERS):
             text += f"\n  ({autonomy}: human workers only)"
         self.notify(text, "needs-worker")
+
+
+    def dispatch_failed(self, d: Path, cid: str, err: Exception, rep: CycleReport) -> None:
+        """Record the failure where every Board sees it (the checkpoint), and
+        give the claim back after DISPATCH_ATTEMPTS so the task isn't held by a
+        worker that never started (GH-10)."""
+        ctx = self.ctx
+        label = resolve.label(d)
+        error = str(err).strip() or type(err).__name__
+        self.report_error(f"dispatch {label}", f"{label}: dispatch failed: {error}", rep)
+        prev = L.read_checkpoint(d).get("dispatch_failed") or {}
+        attempts = (int(prev.get("attempts") or 0) if prev.get("claim_id") == cid else 0) + 1
+        try:
+            L.update_checkpoint(ctx, d, cid, dispatch_failed={
+                "claim_id": cid, "attempts": attempts, "error": error, "at": timeutil.iso()})
+        except Exception as e:  # noqa: BLE001 - lost the claim meanwhile, or the push failed
+            log.warning("recording the dispatch failure of %s failed: %s", label, e)
+            return
+        if attempts < DISPATCH_ATTEMPTS:
+            return
+        L.withdraw(ctx, d, cid, "dispatch-failed")
+        key = str(resolve.read_meta(d)["key"])
+        self._backoff[key] = timeutil.now().timestamp() + ctx.settings.lease_s
+        self._status_cache.pop(key, None)
+        self._set_status(d, "ready")
+        self.clear_error(f"dispatch {label}")
+        rep.released.append(label)
+        self.notify(f"{label} released: its worker could not be started on {self.me} "
+                    f"({attempts} attempts). Last error: {error}", "error")
 
 
 def _clock(data: dict) -> int:

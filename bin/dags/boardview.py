@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -55,14 +56,31 @@ def age_text(seconds: float | None) -> str:
     return f"{seconds // 3600}h{(seconds % 3600) // 60:02d}m"
 
 
+def short_error(text: str, width: int = 80) -> str:
+    """First meaningful line of an error, cut to fit a table cell."""
+    lines = [ln.strip() for ln in str(text).splitlines() if ln.strip()]
+    line = next((ln for ln in lines if ln.startswith("fatal:")), lines[0] if lines else "")
+    return line if len(line) <= width else line[:width - 1] + "…"
+
+
+def dispatch_failed_text(t: snapshot.TaskView) -> str:
+    f = t.dispatch_failed
+    if not f:
+        return ""
+    return f"dispatch failed ×{f.get('attempts') or 1}: {short_error(f.get('error') or '')}"
+
+
 def claim_rows(snap: snapshot.Snapshot) -> list[tuple[str, tuple]]:
     rows = []
     for t in snap.live_claims:
         w = t.winner
+        failed = dispatch_failed_text(t)
+        worker = t.worker or ("not started" if failed else "awaiting worker")
         rows.append((t.key, (t.short, t.title, w.machine, w.human or "?", str(w.clock),
-                             age_text(t.claim_age_s(snap.now)), t.worker or "awaiting worker",
+                             age_text(t.claim_age_s(snap.now)), worker,
                              t.state + (" · needs human" if t.needs_human else "")
-                             + (" · pausing (quota)" if t.pausing else ""))))
+                             + (" · pausing (quota)" if t.pausing else "")
+                             + (f" · {failed}" if failed else ""))))
     return rows
 
 
@@ -176,3 +194,106 @@ class LogTail:
 
 def announcement(kind: str, text: str) -> str:
     return f"[swarm-board] {text}"
+
+
+# -- the daemon's own log (GH-10) ------------------------------------------------------
+
+DAEMON_LOG_LINE = re.compile(
+    r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})(?:,\d+)? (DEBUG|INFO|WARNING|ERROR|CRITICAL) (\S+): (.*)$")
+LEVELS = {"DEBUG": 10, "INFO": 20, "WARNING": 30, "ERROR": 40, "CRITICAL": 50}
+# what the Board's `l` key steps through, starting from the default
+LEVEL_CYCLE = ("WARNING", "INFO", "ERROR")
+
+
+@dataclass
+class LogEntry:
+    time: str
+    level: str
+    logger: str
+    text: str
+
+    @property
+    def line(self) -> str:
+        head = f"{self.time} {self.level}"
+        return f"{head} {self.logger}: {self.text}" if self.logger else f"{head} {self.text}"
+
+
+def next_level(level: str) -> str:
+    i = LEVEL_CYCLE.index(level) if level in LEVEL_CYCLE else -1
+    return LEVEL_CYCLE[(i + 1) % len(LEVEL_CYCLE)]
+
+
+class DaemonLogTail:
+    """Entries of this machine's .swarm/swarm.log at or above ``level``.
+
+    ``backlog()`` returns the last ``limit`` of them already in the file, so an
+    error from before the Board opened is still shown; ``read()`` returns what
+    was appended since. Lines that don't start a log record (tracebacks, a
+    worker's stray output) belong to the record before them. ``generation``
+    changes on every ``backlog()``, so a ``read()`` that raced a reload can be
+    told apart and dropped.
+    """
+
+    def __init__(self, path: Path, level: str = "WARNING", limit: int = 50, max_bytes: int = 512_000):
+        self.path = Path(path)
+        self.level = level
+        self.limit = limit
+        self.max_bytes = max_bytes
+        self.offset = 0
+        self.partial = ""
+        self._last_level = "INFO"
+        self.generation = 0
+        self._lock = threading.Lock()
+
+    def keep(self, e: LogEntry) -> bool:
+        return LEVELS.get(e.level, 0) >= LEVELS.get(self.level, 30)
+
+    def _parse(self, chunk: str) -> list[LogEntry]:
+        text = self.partial + chunk
+        complete, _, self.partial = text.rpartition("\n")
+        entries: list[LogEntry] = []
+        for line in complete.splitlines():
+            m = DAEMON_LOG_LINE.match(line)
+            if m:
+                entries.append(LogEntry(m.group(1), m.group(2), m.group(3), m.group(4)))
+                self._last_level = m.group(2)
+            elif entries:
+                entries[-1].text += "\n" + line
+            elif line.strip():
+                entries.append(LogEntry("", self._last_level, "", line))
+        return entries
+
+    def _chunk(self, start: int) -> str:
+        with open(self.path, encoding="utf-8", errors="replace") as f:
+            f.seek(start)
+            chunk = f.read()
+            self.offset = f.tell()
+        return chunk
+
+    def backlog(self) -> list[LogEntry]:
+        with self._lock:
+            self.generation += 1
+            return self._backlog()
+
+    def _backlog(self) -> list[LogEntry]:
+        self.offset, self.partial = 0, ""
+        if not self.path.exists():
+            return []
+        size = self.path.stat().st_size
+        start = max(0, size - self.max_bytes)
+        chunk = self._chunk(start)
+        if start:
+            chunk = chunk.split("\n", 1)[1] if "\n" in chunk else ""   # drop the cut first line
+        return [e for e in self._parse(chunk) if self.keep(e)][-self.limit:]
+
+    def read(self) -> list[LogEntry]:
+        return self.read_tagged()[1]
+
+    def read_tagged(self) -> tuple[int, list[LogEntry]]:
+        """``read()`` plus the generation it belongs to."""
+        with self._lock:
+            if not self.path.exists():
+                return self.generation, []
+            if self.path.stat().st_size < self.offset:
+                self.offset, self.partial = 0, ""        # rotated/truncated
+            return self.generation, [e for e in self._parse(self._chunk(self.offset)) if self.keep(e)]

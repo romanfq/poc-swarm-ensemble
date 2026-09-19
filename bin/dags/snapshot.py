@@ -61,6 +61,12 @@ class TaskView:
         return bool(req and self.winner and req.get("claim_id") == self.winner.id)
 
     @property
+    def dispatch_failed(self) -> dict | None:
+        """The current claim's worker could not be started: {attempts, error, at} (GH-10)."""
+        f = self.checkpoint.get("dispatch_failed")
+        return f if f and self.winner and f.get("claim_id") == self.winner.id else None
+
+    @property
     def needs_human(self) -> str | None:
         return self.checkpoint.get("needs_human") or None
 

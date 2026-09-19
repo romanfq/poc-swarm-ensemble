@@ -228,6 +228,7 @@ class BoardApp(App):
     .panel-title { height: 1; padding: 0 1; background: $primary-background; text-style: bold; }
     DataTable { height: 1fr; min-height: 4; }
     #feed { height: 1fr; border: round $primary; }
+    #daemon-log { height: 1fr; border: round $warning; }
     """
     BINDINGS = [
         Binding("p", "pause", "Pause"),
@@ -243,6 +244,7 @@ class BoardApp(App):
         Binding("o", "open_ticket", "Ticket"),
         Binding("O,shift+o", "open_pr", "PR"),
         Binding("n", "set_quota", "Global N"),
+        Binding("l", "log_level", "Log level"),
         Binding("ctrl+r", "refresh", "Refresh", show=False),
         Binding("q", "quit", "Quit"),
     ]
@@ -261,6 +263,7 @@ class BoardApp(App):
         self.pr_status: dict[str, dict] = {}
         self.seen: set[str] = set()
         self.tail = boardview.LogTail(ctx.swarm_dir / "notifications.log")
+        self.daemon_log = boardview.DaemonLogTail(ctx.swarm_dir / daemon.LOGFILE)
         self.prompted: set[str] = set()
         self.prompt_open = False
         self._poller = None
@@ -287,6 +290,8 @@ class BoardApp(App):
             with Vertical(id="right"):
                 yield Static("Activity", classes="panel-title")
                 yield RichLog(id="feed", wrap=True, markup=False, highlight=False, max_lines=500)
+                yield Static("", id="daemon-log-title", classes="panel-title", markup=False)
+                yield RichLog(id="daemon-log", wrap=True, markup=False, highlight=False, max_lines=500)
         yield Footer()
 
     def on_mount(self) -> None:
@@ -296,6 +301,7 @@ class BoardApp(App):
             self.query_one(f"#{tid}", DataTable).add_columns(*cols)
         log = self.query_one("#feed", RichLog)
         for line in boardview.initial_feed(self.ctx.root, self.seen):
+            self.load_daemon_log()
             log.write(linkify(line))
         self.refresh_data()
         self.set_interval(self.refresh_s, self.refresh_data)
@@ -343,6 +349,7 @@ class BoardApp(App):
                     pass
         new_feed = [e.text for e in feed.new_events(ctx.root, self.seen)]
         notes = self.tail.read()
+        logged = self.daemon_log.read_tagged()
         flagged = boardview.poller_flags(ctx.swarm_dir)
         pid = daemon.running_pid(ctx)
         info = daemon.info(ctx) if pid else {}
@@ -380,7 +387,38 @@ class BoardApp(App):
             log.write(linkify(line))
         for kind, text in notes:
             log.write(linkify(boardview.announcement(kind, text)))
+        generation, entries = logged
+        if generation == self.daemon_log.generation:     # else the panel was reloaded meanwhile
+            self.write_daemon_log(entries)
+
         self.maybe_prompt_worker()
+
+    # -- the daemon's log (GH-10) --------------------------------------------------------
+    LOG_STYLES = {"WARNING": "yellow", "ERROR": "red", "CRITICAL": "bold red", "DEBUG": "dim"}
+
+    def write_daemon_log(self, entries) -> None:
+        panel = self.query_one("#daemon-log", RichLog)
+        for e in entries:
+            panel.write(Text(e.line, style=self.LOG_STYLES.get(e.level, "")))
+
+    def load_daemon_log(self) -> None:
+        """(Re)fill the panel from the file at the current level."""
+        tail = self.daemon_log
+        path = f".swarm/{daemon.LOGFILE}"
+        self.query_one("#daemon-log-title", Static).update(f"Daemon log ({path}, this machine) · ≥{tail.level}")
+        panel = self.query_one("#daemon-log", RichLog)
+        panel.clear()
+        entries = tail.backlog()
+        if not entries:
+            where = "yet" if tail.path.exists() else f"— {path} doesn't exist here"
+            panel.write(f"no daemon log entries at ≥{tail.level} on {self.ctx.identity} {where}")
+        self.write_daemon_log(entries)
+
+    def action_log_level(self) -> None:
+        if self.busy():
+            return
+        self.daemon_log.level = boardview.next_level(self.daemon_log.level)
+        self.load_daemon_log()
 
     # -- selection -----------------------------------------------------------------------
     @staticmethod

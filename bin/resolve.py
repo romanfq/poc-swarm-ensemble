@@ -472,7 +472,7 @@ def order_candidates(candidates: Iterable[tuple[str, dict]], machine: str,
 # Failure accounting (Ch.8) and thrash detection (Ch.9.4)
 # ---------------------------------------------------------------------------
 
-NON_FAILURE_WITHDRAWALS = {"lost-race", "released", "arbitration", "quota"}
+NON_FAILURE_WITHDRAWALS = {"lost-race", "released", "arbitration", "quota", "dispatch-failed"}
 
 
 def retry_count(task_dir, now: datetime, lease_s: float) -> int:
