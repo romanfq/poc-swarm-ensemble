@@ -89,3 +89,19 @@ def test_poller_flags_and_log_tail(tmp_path):
     log.write_text("")
     assert tail.read() == []
     assert boardview.announcement("finished", "x") == "[swarm-board] x"
+
+
+def test_find_urls():
+    text = "GH-5 done. The PR can be found at https://github.com/o/r/pull/7. See (https://x.test/a?b=1), too"
+    assert [u for _, _, u in boardview.find_urls(text)] == ["https://github.com/o/r/pull/7", "https://x.test/a?b=1"]
+    start, end, url = boardview.find_urls(text)[0]
+    assert text[start:end] == url
+    assert boardview.find_urls("no links, just http:// and words") == []
+
+
+def test_link_kind():
+    assert boardview.link_kind("review", "PR") == "pr"
+    assert boardview.link_kind("review", "task") == "ticket"
+    assert boardview.link_kind("review", "title") == "pr"
+    assert boardview.link_kind("review", None) == "pr"
+    assert boardview.link_kind("claims", "title") == "ticket"
