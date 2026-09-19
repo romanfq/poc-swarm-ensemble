@@ -20,3 +20,4 @@ jobs:
           cache-dependency-path: bin/requirements*.txt
       - run: pip install -r bin/requirements-dev.txt
       - run: python -m pytest -q tests
+      - run: pipx run ruff==0.16.8 check bin tests
