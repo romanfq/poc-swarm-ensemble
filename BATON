@@ -54,3 +54,8 @@ history:
     claimable task. No swarm started; nothing in dags-meta edited.
   - 2026-09-19 cowork: scaffolded dags-meta, triaged the issue list, checked the gate
     (only #18 claimable). Baton to claude-code for the first dogfood task.
+  - 2026-09-19 cowork: no hand-off — the baton stays with claude-code. At Román's
+    request, queued two items in docs/HANDOVER.md, "Next": add
+    .github/workflows/tests.yml (a build; `pull_request` tests the merge result, which
+    is what 9c69647 lacked), and file the issue that `done` never reads a PR's checks.
+    Items 15 and 16 are still unfiled. Nothing on GitHub, no code written.
