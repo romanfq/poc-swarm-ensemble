@@ -10,7 +10,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from dags import feed, snapshot
+from dags import daemon, feed, snapshot
 
 CLAIM_COLUMNS = ("task", "title", "machine", "human", "clock", "age", "worker", "state")
 REVIEW_COLUMNS = ("task", "title", "PR", "review", "checks")
@@ -95,14 +95,15 @@ def quota(snap: snapshot.Snapshot) -> Quota:
     return Quota(snap.quota_used, snap.quota_n, snap.mine_used, snap.share)
 
 
-def machine_line(snap: snapshot.Snapshot, daemon_pid: int | None) -> str:
+def machine_line(snap: snapshot.Snapshot, daemon_pid: int | None, info: dict | None = None) -> str:
     st = snap.machines.get(snap.machine, {})
     if st.get("stopped") or not daemon_pid:
         state = "stopped" if st.get("stopped") else "daemon not running"
-    elif st.get("paused"):
-        state = "paused"
     else:
-        state = "running"
+        state = "paused" if st.get("paused") else "running"
+        up = daemon.uptime_text(info or {})
+        if up:
+            state += f" ({up})"
     others = [f"{m}: {'paused' if s.get('paused') else 'stopped' if s.get('stopped') else 'on'}"
               for m, s in snap.machines.items() if m != snap.machine]
     tail = f"   ·   others — {', '.join(others)}" if others else ""

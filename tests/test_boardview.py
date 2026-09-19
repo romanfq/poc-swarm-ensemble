@@ -1,4 +1,6 @@
 """What the Board shows (Ch.10.5), without Textual."""
+from datetime import timedelta
+
 import resolve as rv
 from dags import boardview, snapshot, work
 from dags import ledger as L
@@ -48,6 +50,10 @@ def test_panels_from_a_live_ledger(world):
     snap = snapshot.take(a, share=2)
     assert boardview.machine_line(snap, 123) == "mac-a · running   ·   others — mac-b: paused"
     assert boardview.machine_line(snap, None).startswith("mac-a · daemon not running")
+    from dags import timeutil
+    info = {"started_utc": timeutil.iso(timeutil.now() - timedelta(hours=3, minutes=5, seconds=10))}
+    assert boardview.machine_line(snap, 123, info).startswith("mac-a · running (up 3h 5m)   ·   others")
+    assert boardview.machine_line(snap, None, info).startswith("mac-a · daemon not running   ·")
 
     assert boardview.epic_of(snap, "T1") == "E1"
     assert not boardview.holds_takeover(snap, "E1")

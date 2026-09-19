@@ -299,7 +299,8 @@ class BoardApp(App):
         notes = self.tail.read()
         flagged = boardview.poller_flags(ctx.swarm_dir)
         pid = daemon.running_pid(ctx)
-        self.call_from_thread(self.apply, snap, new_feed, notes, flagged, pid)
+        info = daemon.info(ctx) if pid else {}
+        self.call_from_thread(self.apply, snap, new_feed, notes, flagged, pid, info)
 
     def _fill(self, tid: str, rows: list[tuple[str, tuple]]) -> None:
         table = self.query_one(f"#{tid}", DataTable)
@@ -316,9 +317,9 @@ class BoardApp(App):
                         pass
                     break
 
-    def apply(self, snap, new_feed, notes, flagged, pid) -> None:
+    def apply(self, snap, new_feed, notes, flagged, pid, info=None) -> None:
         self.snap = snap
-        self.query_one("#machine", Static).update(boardview.machine_line(snap, pid))
+        self.query_one("#machine", Static).update(boardview.machine_line(snap, pid, info))
         q = boardview.quota(snap)
         self.query_one("#quota-label", Label).update(q.text)
         self.query_one("#quota", ProgressBar).update(total=max(q.total, 1), progress=min(q.used, max(q.total, 1)))
