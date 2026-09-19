@@ -199,10 +199,12 @@ Plan repo `romanfq/matchwire-spec`: 3 epics (BE, FE, E2E), 18 tasks from
 the real repos; both are public branch-protected (1 review), so worker PRs
 need a human approval same as here.
 - **`GH-4` (S1, backend scaffold): merged.**
-- **`GH-13` (S2, frontend scaffold): stuck.** Still `swarm:status:ready` in
-  the tracker, which is what let it thrash — claimed and re-claimed with no
-  worker chosen, ~9 times, while the Mac slept between checks (`#12`
-  documents why and proposes a fix). Nobody has set it to `blocked` yet.
+- **`GH-13` (S2, frontend scaffold): stuck, now parked.** It thrashed —
+  claimed and re-claimed with no worker chosen, ~9 times, while the Mac slept
+  between checks (`#12` documents why and proposes a fix). Set to
+  `swarm:status:blocked` on 2026-09-19 so it won't be re-claimed; the scaffold
+  itself still isn't done. Set back to `ready` when someone's actually going
+  to work it.
 - Both machines stopped; see the branch-protection note above before
   restarting either.
 
@@ -222,9 +224,8 @@ from `dags-meta` before restarting.
    `dags-meta` still holds two claims from before it stopped (`GH-16`,
    `GH-21`) — decide whether to release them or let them lapse before
    restarting it.
-2. **`GH-13` (MatchWire) needs parking** before that swarm restarts, or `#12`'s
-   thrashing resumes immediately: `swarm.py backend set-status GH-13 blocked`
-   from this repo, against `romanfq/matchwire-spec`.
+2. **`GH-13` is parked** (`swarm:status:blocked`, done 2026-09-19) — the
+   scaffold still needs doing, just not by accident on restart.
 3. **The MatchWire-ledger-vs-ruleset conflict** (Branch protection section
    above) needs a real decision before either MatchWire machine restarts.
    Not designed yet — surface it to Román rather than guessing.
