@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import resolve
-from backends.base import Task, TaskRef, downgrade
+from backends.base import Task, TaskRef, downgrade, is_marked
 from dags import records as R
 from dags import timeutil
 
@@ -41,6 +41,7 @@ class SyncReport:
     replanned: list[str] = field(default_factory=list)
     downgraded: list[str] = field(default_factory=list)
     status_fixed: list[str] = field(default_factory=list)
+    skipped: list[str] = field(default_factory=list)       # open issues outside the plan
     errors: list[str] = field(default_factory=list)
 
     @property
@@ -48,8 +49,12 @@ class SyncReport:
         return bool(self.imported or self.revised or self.done_imported or self.replanned or self.downgraded)
 
     def summary(self) -> str:
-        parts = [f"{len(v)} {k.replace('_', ' ')}" for k, v in self.__dict__.items() if v and k != "errors"]
-        return ", ".join(parts) or "no changes"
+        parts = [f"{len(v)} {k.replace('_', ' ')}" for k, v in self.__dict__.items()
+                 if v and k not in ("errors", "skipped")]
+        text = ", ".join(parts) or "no changes"
+        if self.skipped:
+            text += f", {len(self.skipped)} skipped (no swarm label)"
+        return text
 
 
 def short_of(backend, ref: TaskRef) -> str:
@@ -79,6 +84,113 @@ def task_dir_for(root: Path, backend, t: Task) -> Path:
     return root / "tasks" / epic / R.slug(short_of(backend, t.ref))
 
 
+def plan_members(backend) -> tuple[list[Task], list[Task]]:
+    """(members, skipped) under the backend's plan_scope. A backend without
+    the shared rule counts everything as a member."""
+    split = getattr(backend, "plan_split", None)
+    return split() if split else (backend.all_tasks(), [])
+
+
+@dataclass
+class Outside:
+    """Dependencies of plan members that the listing doesn't cover as members."""
+    members: dict[str, Task] = field(default_factory=dict)      # marked, e.g. in another repo
+    unlabelled: dict[str, Task] = field(default_factory=dict)   # not in the plan: a human must label them
+    dependants: dict[str, list[str]] = field(default_factory=dict)
+
+
+def outside_dependencies(backend, members: list[Task], errors: list[str] | None = None) -> Outside:
+    """Follow members' dependencies (transitively) to issues that aren't members.
+    Marked ones join the plan as before; unmarked ones are reported, never
+    imported: an unlabelled dependency is a mistake to fix, not to guess about."""
+    scope = getattr(backend, "plan_scope", "all")
+    listed = {t.ref.key: t for t in backend.all_issues()} if hasattr(backend, "all_issues") else {}
+    known = {t.ref.key for t in members}
+    out = Outside()
+    queue = [(t, d) for t in members for d in t.dependencies]
+    while queue:
+        t, d = queue.pop(0)
+        if d.key in known:
+            if d.key in out.unlabelled and t.ref.key not in out.dependants[d.key]:
+                out.dependants[d.key].append(t.ref.key)
+            continue
+        dep = listed.get(d.key)
+        if dep is None:
+            try:
+                dep = backend.get_task(d)
+            except Exception as e:  # noqa: BLE001 - unknown deps simply stay unready
+                if errors is not None:
+                    errors.append(f"{d.key}: {e}")
+                continue
+        known.add(d.key)
+        if scope == "all" or is_marked(dep):
+            out.members[d.key] = dep
+        else:
+            out.unlabelled[d.key] = dep
+            out.dependants[d.key] = [t.ref.key]
+        queue += [(dep, dd) for dd in dep.dependencies]
+    return out
+
+
+@dataclass
+class Label:
+    """One membership fix `backend init --apply` makes."""
+    task: Task
+    status: str | None          # swarm:status to set, or None
+    kind: str | None            # "task" / "epic" type label to add, or None
+    reason: str
+
+
+# ledger state -> the status label that mirrors it
+LEDGER_STATUS = {"open": "ready", "done": "done", "claimed": "claimed",
+                 "in-progress": "in-progress", "awaiting-review": "awaiting-review"}
+
+
+def membership_fixes(ctx, backend) -> tuple[list[Label], list[str]]:
+    """What `backend init` labels so the plan is complete under plan_scope:
+    (1) issues the ledger already tracks but that carry no swarm label (swarms
+    that predate plan_scope), their status taken from the ledger; (2) issues
+    outside the plan that a member depends on. Returns (fixes, notes) where
+    notes are cases a human must decide."""
+    members, skipped = plan_members(backend)
+    kinds = bool(getattr(backend, "uses_type_labels", False))
+    fixes: list[Label] = []
+    notes: list[str] = []
+    seen: set[str] = set()
+    now = timeutil.now()
+    idx = resolve.index(ctx.root)
+    for t in skipped:
+        d = idx.get(t.ref.key)
+        if d is None:
+            continue
+        seen.add(t.ref.key)
+        if t.is_epic:
+            fixes.append(Label(t, None if kinds else "ready", "epic" if kinds else None, "tracked in the ledger"))
+            continue
+        state = resolve.task_state(d, now, ctx.settings.lease_s, ctx.human_names)
+        status = LEDGER_STATUS.get(state)
+        if status is None:
+            notes.append(f"{short_of(backend, t.ref)} is tracked in the ledger but {state}; "
+                         f"label it by hand (`swarm.py backend adopt` or set-status)")
+            continue
+        fixes.append(Label(t, status, "task" if kinds else None, f"tracked in the ledger ({state})"))
+    out = outside_dependencies(backend, members)
+    for key, t in out.unlabelled.items():
+        if key in seen:
+            continue
+        who = ", ".join(short_of(backend, TaskRef(k)) for k in out.dependants.get(key, []))
+        fixes.append(Label(t, "done" if t.closed else "ready", "task" if kinds else None,
+                           f"dependency of {who}"))
+    return fixes, notes
+
+
+def apply_fix(backend, fix: Label) -> None:
+    if fix.kind:
+        backend.set_kind(fix.task.ref, fix.kind == "epic")
+    if fix.status:
+        backend.set_status(fix.task.ref, fix.status)
+
+
 def _stamp(ctx, clock: int, **data) -> dict:
     return {**data, "machine": ctx.identity, "logical_clock": clock, "wall_utc": timeutil.iso()}
 
@@ -86,15 +198,18 @@ def _stamp(ctx, clock: int, **data) -> dict:
 def sync(ctx, backend=None, push: bool = True) -> SyncReport:
     backend = backend or ctx.backend
     report = SyncReport()
-    tasks = {t.ref.key: t for t in backend.all_tasks()}
-    # dependencies that live outside the listed set (other repos, archived)
-    for t in list(tasks.values()):
-        for d in t.dependencies:
-            if d.key not in tasks:
-                try:
-                    tasks[d.key] = backend.get_task(d)
-                except Exception as e:  # noqa: BLE001 - unknown deps simply stay unready
-                    report.errors.append(f"{d.key}: {e}")
+    members, skipped = plan_members(backend)
+    tasks = {t.ref.key: t for t in members}
+    # dependencies outside the listed plan: marked ones (other repos) join it,
+    # unlabelled ones are reported and left out, so their dependants stay unready
+    outside = outside_dependencies(backend, members, report.errors)
+    tasks.update(outside.members)
+    for key in outside.unlabelled:
+        for dependant in outside.dependants.get(key, []):
+            report.errors.append(
+                f"{short_of(backend, TaskRef(dependant))} depends on {short_of(backend, TaskRef(key))}, "
+                f"which has no swarm label; run `swarm.py backend init --apply` to label it")
+    report.skipped = [t.ref.key for t in skipped if not t.closed and t.ref.key not in outside.unlabelled]
     default_repo = ctx.default_repo()
     epic_repos = dict(ctx.backend_cfg.get("epic_repos") or {})
     settings = ctx.settings

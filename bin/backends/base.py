@@ -15,6 +15,12 @@ DEFAULT_AUTONOMY = "human-must-review"
 STATUS_PREFIX = "swarm:status:"
 AUTONOMY_PREFIX = "swarm:autonomy:"
 REPO_PREFIX = "repo:"
+SWARM_PREFIX = "swarm:"
+TYPE_LABELS = ("type:epic", "type:task")
+
+# Which tracker issues belong to the plan (backend.yaml `plan_scope`).
+PLAN_SCOPES = ("labelled", "all")
+DEFAULT_PLAN_SCOPE = "labelled"
 
 
 @dataclass(frozen=True)
@@ -87,8 +93,12 @@ class IssueBackend(Protocol):
 
     # Helpers every shipped adapter provides (used by plan sync and the Board).
     def all_tasks(self) -> list[Task]:
-        """Every task and epic the swarm should know about (open ones, plus
-        closed ones the adapter can list cheaply)."""
+        """Every task and epic in the plan (see ``plan_scope``): open ones,
+        plus closed ones the adapter can list cheaply."""
+        ...
+
+    def all_issues(self) -> list[Task]:
+        """Every issue the adapter can list, in the plan or not."""
         ...
 
     def set_autonomy(self, ref: TaskRef, tier: str) -> None: ...
@@ -109,6 +119,58 @@ def ready_from(tasks: list[Task]) -> list[TaskRef]:
             continue
         out.append(t.ref)
     return out
+
+
+def plan_scope_of(cfg: dict) -> str:
+    """The ``plan_scope`` setting from backend.yaml (top level)."""
+    scope = str(cfg.get("plan_scope") or DEFAULT_PLAN_SCOPE).strip()
+    if scope not in PLAN_SCOPES:
+        raise ValueError(f"backend.yaml: plan_scope must be one of {', '.join(PLAN_SCOPES)} (got {scope!r})")
+    return scope
+
+
+def is_marked(t: Task) -> bool:
+    """Carries a label that puts it in the plan: any ``swarm:`` label, or a type label."""
+    return any(lb.startswith(SWARM_PREFIX) or lb in TYPE_LABELS for lb in t.labels)
+
+
+def split_plan(tasks: list[Task], scope: str = DEFAULT_PLAN_SCOPE) -> tuple[list[Task], list[Task]]:
+    """(members, skipped). Under ``labelled`` an issue is in the plan when it
+    is marked, or is an ancestor (via ``epic``) of an issue that is, so an
+    epic seeded without a status still counts. Under ``all`` everything is."""
+    if scope == "all":
+        return list(tasks), []
+    by_key = {t.ref.key: t for t in tasks}
+    keep: set[str] = set()
+    for t in tasks:
+        if not is_marked(t):
+            continue
+        cur: Task | None = t
+        while cur is not None and cur.ref.key not in keep:
+            keep.add(cur.ref.key)
+            cur = by_key.get(cur.epic.key) if cur.epic else None
+    return [t for t in tasks if t.ref.key in keep], [t for t in tasks if t.ref.key not in keep]
+
+
+class PlanScoped:
+    """The plan-membership rule, shared by every adapter. An adapter provides
+    ``all_issues()`` and sets ``plan_scope``; this supplies the scoped views."""
+    plan_scope: str = DEFAULT_PLAN_SCOPE
+
+    def all_issues(self) -> list[Task]:
+        raise NotImplementedError
+
+    def plan_split(self) -> tuple[list[Task], list[Task]]:
+        return split_plan(self.all_issues(), self.plan_scope)
+
+    def all_tasks(self) -> list[Task]:
+        return self.plan_split()[0]
+
+    def ready_tasks(self) -> list[TaskRef]:
+        return ready_from(self.all_tasks())
+
+    def in_plan(self, ref: TaskRef) -> bool:
+        return any(t.ref.key == ref.key for t in self.all_tasks())
 
 
 def parse_labels(labels: list[str]) -> dict:

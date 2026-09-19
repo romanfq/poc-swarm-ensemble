@@ -171,7 +171,7 @@ def test_daemon_threads_run_and_stop(swarm, tmp_path, monkeypatch):
     from backends.fake import FakeBackend
     ctx = swarm.clone("mac-a")
     backend = FakeBackend(tmp_path / "b.yaml")
-    backend.add("T1", title="x", labels=["repo:OWNER/app"])
+    backend.add("T1", title="x", labels=["repo:OWNER/app", "type:task"])
     ctx.set_backend(backend)
     seen = []
     d = daemon.Daemon(ctx, daemon.Options(quota_share=0, poll_interval=0.05, cycle_interval=0.05,

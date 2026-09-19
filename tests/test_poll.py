@@ -29,7 +29,7 @@ def pr_open(world):
     """mac-a's claude worker has opened a PR for T1 (auto-pr)."""
     world.backend.add("E1", title="Epic", epic=True)
     world.backend.add("T1", title="Poll", epic_of="E1", labels=["repo:OWNER/app", "swarm:autonomy:auto-pr"])
-    world.backend.add("T2", title="Parse", epic_of="E1", blocked_by=["T1"], labels=["repo:OWNER/app"])
+    world.backend.add("T2", title="Parse", epic_of="E1", blocked_by=["T1"], labels=["repo:OWNER/app", "type:task"])
     a = world.machine("mac-a")
     poller = Poller(a, notify=world.notify)
     poller.cycle()                                   # first run: quiet baseline
@@ -44,7 +44,7 @@ def pr_open(world):
 
 
 def test_first_run_is_quiet_then_feed_flows(world):
-    world.backend.add("T1", title="x", labels=["repo:OWNER/app"])
+    world.backend.add("T1", title="x", labels=["repo:OWNER/app", "type:task"])
     a = world.machine("mac-a")
     world.scheduler(a).cycle()
     p = Poller(a, notify=world.notify, use_gh=False)
@@ -125,8 +125,8 @@ def test_changes_requested_reopens_once(pr_open):
 
 
 def test_overlapping_prs_need_a_merge_order(world):
-    world.backend.add("T1", title="a", labels=["repo:OWNER/app"])
-    world.backend.add("T2", title="b", labels=["repo:OWNER/app"])
+    world.backend.add("T1", title="a", labels=["repo:OWNER/app", "type:task"])
+    world.backend.add("T2", title="b", labels=["repo:OWNER/app", "type:task"])
     a = world.machine("mac-a")
     world.scheduler(a, share=2).cycle()
     idx = rv.index(a.root)
@@ -143,7 +143,7 @@ def test_overlapping_prs_need_a_merge_order(world):
 
 
 def test_stale_heartbeat_is_reported(world):
-    world.backend.add("T1", title="a", labels=["repo:OWNER/app"])
+    world.backend.add("T1", title="a", labels=["repo:OWNER/app", "type:task"])
     a = world.machine("mac-a")
     p = Poller(a, notify=world.notify, use_gh=False)
     p.cycle()
@@ -160,7 +160,7 @@ def test_stale_heartbeat_is_reported(world):
 
 
 def test_conflicts_escalate_to_arbitration(world):
-    world.backend.add("T1", title="a", labels=["repo:OWNER/app"])
+    world.backend.add("T1", title="a", labels=["repo:OWNER/app", "type:task"])
     a, b = world.machine("mac-a"), world.machine("mac-b")
     from dags import plan
     plan.sync(a)
@@ -182,7 +182,7 @@ def test_conflicts_escalate_to_arbitration(world):
 
 
 def test_feed_describes_records(world):
-    world.backend.add("T1", title="a", labels=["repo:OWNER/app"])
+    world.backend.add("T1", title="a", labels=["repo:OWNER/app", "type:task"])
     a = world.machine("mac-a")
     jane = world.machine("jane-mac", human="jane")
     world.scheduler(a).cycle()

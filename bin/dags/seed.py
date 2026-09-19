@@ -209,7 +209,9 @@ def seeded(backend) -> dict[str, Task]:
     if hasattr(backend, "invalidate"):
         backend.invalidate()                   # always decide from a fresh read
     out: dict[str, Task] = {}
-    for t in backend.all_tasks():
+    # every issue, in the plan or not: the marker, not the labels, says what we seeded
+    listing = backend.all_issues() if hasattr(backend, "all_issues") else backend.all_tasks()
+    for t in listing:
         m = MARKER_RE.search(t.body or "")
         if not m:
             continue
