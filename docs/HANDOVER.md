@@ -420,6 +420,38 @@ approved (#2); daemon errors invisible on the Board (#10); links not clickable
 **Hand back** to cowork when #18 is merged and the machine restarted, with what
 happened and anything worth filing.
 
+
+### Queued by Cowork, 2026-09-19 (Román's instruction; the baton stays with you)
+
+**A build for this repo, and the issue that a build makes obvious.** Full draft,
+including the workflow file to commit verbatim:
+`~/Documents/DAGS/issue-draft-ci-and-pr-checks.md`. Summary in
+`~/Documents/DAGS/next-version-issues.md` as Item 17.
+
+1. **Commit `.github/workflows/tests.yml`** (there is no `.github/` yet): a
+   `pull_request` + `push: main` job on `ubuntu-latest`, pip-installing
+   `bin/requirements-dev.txt` and running `python -m pytest -q tests`. Not
+   `dev-setup.sh` — the runner is already a clean environment, and
+   `tests/conftest.py` puts `bin/` on `sys.path` itself. Verify the no-venv path
+   and `ruff check` locally first; if ruff has a backlog, drop that step and
+   file the cleanup rather than landing a red build.
+   *Why:* a `pull_request` job tests `refs/pull/N/merge`, the merge result. That
+   is what `9c69647` ("Merge branch 'main' into swarm/GH-10") needed and did not
+   have — it dropped 11 lines of `tests/test_board.py` and left `main` unable to
+   collect. Actions is free and unlimited on public repos.
+2. **Ask Román, apply nothing:** requiring `tests` as a status check on `main`,
+   and "require branches to be up to date before merging". Both are his call;
+   the second is real friction with four wave-1 PRs open.
+3. **File the issue in the draft (part B):** `done` opens the PR and never looks
+   at its checks. Add it to #7.
+4. **Still unfiled from earlier:** Item 15 (pause survives a restart) and Item 16
+   (shared test runs, with the announced-window addendum and Román's three
+   decisions), both in `~/Documents/DAGS/next-version-issues.md`. They were not
+   in the #17–#21 batch. File both, add to #7, and tell Román that Item 16 may
+   shrink a lot once the build exists — do not close it.
+
+Cowork wrote no code here and touched only this file and `BATON`.
+
 ## Meta swarm plan labelled (Claude Code, 2026-09-19)
 **The meta swarm's plan is labelled and ordered. Nothing is running.**
 Done on the Mac by Claude Code, 2026-09-19, with Román's yes at each GitHub step.
