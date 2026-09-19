@@ -194,6 +194,35 @@ def test_daemon_threads_run_and_stop(swarm, tmp_path, monkeypatch):
     assert daemon.info(ctx)["identity"] == "mac-a"
 
 
+def test_write_info_keeps_the_start_time(swarm, monkeypatch):
+    """#15: started_utc is stamped once; each refresh only moves refreshed_utc and awake_s."""
+    from datetime import datetime, timezone
+    from dags import timeutil
+    ctx = swarm.clone("mac-a")
+    d = daemon.Daemon(ctx, daemon.Options(no_poller=True))
+    d.write_info()
+    first = daemon.info(ctx)
+    later = datetime.fromisoformat(first["started_utc"]).replace(tzinfo=timezone.utc).timestamp() + 7200
+    monkeypatch.setattr(timeutil, "now", lambda: datetime.fromtimestamp(later, timezone.utc))
+    d.write_info()
+    second = daemon.info(ctx)
+    assert second["started_utc"] == first["started_utc"]
+    assert timeutil.parse(second["refreshed_utc"]) > timeutil.parse(first["refreshed_utc"])
+    assert second["awake_s"] >= first["awake_s"] >= 0
+
+
+def test_uptime_text():
+    from datetime import datetime, timezone
+    at = datetime(2026, 9, 18, 21, 43, tzinfo=timezone.utc)
+    two_days = {"started_utc": "2026-09-16T21:43:00+00:00", "awake_s": 43200}
+    assert daemon.uptime_text(two_days, at) == "up 2d 0h · awake 25%"
+    assert daemon.uptime_text({"started_utc": "2026-09-18T18:38:00+00:00"}, at) == "up 3h 5m"
+    assert daemon.uptime_text({"started_utc": "2026-09-18T21:31:00+00:00", "awake_s": 900}, at) \
+        == "up 12m · awake 100%"
+    assert daemon.uptime_text({}, at) == ""
+    assert daemon._duration(45) == "45s"
+
+
 # -- status rows (Ch.5.4) --------------------------------------------------------------------
 
 def test_status_rows_without_daemon(swarm):

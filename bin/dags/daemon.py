@@ -83,6 +83,33 @@ def info(ctx) -> dict:
         return {}
 
 
+def _duration(seconds: float) -> str:
+    s = int(max(seconds, 0))
+    if s < 60:
+        return f"{s}s"
+    if s < 3600:
+        return f"{s // 60}m"
+    if s < 86400:
+        return f"{s // 3600}h {s % 3600 // 60}m"
+    return f"{s // 86400}d {s % 86400 // 3600}h"
+
+
+def uptime_text(inf: dict, at=None) -> str:
+    """'up 2d 3h · awake 27%' from daemon.json, or '' when it has no start time (#15).
+
+    ``awake_s`` is monotonic time, which stops while the Mac sleeps, so its share
+    of the wall-clock uptime is how much of that time the machine was awake (#12).
+    """
+    up = timeutil.age_seconds(inf.get("started_utc"), at)
+    if up is None:
+        return ""
+    text = f"up {_duration(up)}"
+    awake = inf.get("awake_s")
+    if isinstance(awake, (int, float)) and up > 0:
+        text += f" · awake {min(round(100 * awake / up), 100)}%"
+    return text
+
+
 # -- control from the CLI -----------------------------------------------------------------
 
 def spawn(ctx, opts: Options, script: Path, python: str | None = None, wait_s: float = 10.0) -> int:
@@ -138,6 +165,8 @@ class Daemon:
         self.stop = threading.Event()
         self.notify = notify or Notifier(ctx.swarm_dir, ctx.local)
         self.started_clock = resolve.max_clock(ctx.root)
+        self.started_utc = timeutil.iso()
+        self.started_mono = time.monotonic()
         self.scheduler = Scheduler(ctx, opts.quota_share, opts.default_worker, notify=self.notify,
                                    launch=launch, platform=platform, started_clock=self.started_clock)
         self.heartbeater = Heartbeater(ctx, notify=self.notify)
@@ -166,7 +195,8 @@ class Daemon:
             loop.start()
 
     def write_info(self) -> None:
-        data = {"pid": os.getpid(), "identity": self.ctx.identity, "started_utc": timeutil.iso(),
+        data = {"pid": os.getpid(), "identity": self.ctx.identity, "started_utc": self.started_utc,
+                "refreshed_utc": timeutil.iso(), "awake_s": round(time.monotonic() - self.started_mono, 1),
                 "options": asdict(self.opts),
                 "threads": {lp.name: {"alive": lp.is_alive(), "cycles": lp.cycles, "error": lp.last_error}
                             for lp in self.loops}}
