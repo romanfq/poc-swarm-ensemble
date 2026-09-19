@@ -45,6 +45,39 @@ def test_protect_is_a_dry_run_by_default(machine):
     assert "dry run" in r.output
 
 
+def test_protect_yes_alone_is_still_a_dry_run(machine, fake_gh):
+    r = invoke("protect", "OWNER/app", "--yes")
+    assert r.exit_code == 0 and "dry run" in r.output
+    assert fake_gh.calls == []
+
+
+def test_protect_apply_yes_calls_gh_without_prompting(machine, fake_gh):
+    r = invoke("protect", "OWNER/app", "--apply", "--yes")
+    assert r.exit_code == 0, r.output
+    assert "Set branch protection" not in r.output
+    assert '"enforce_admins": true' in r.output and "branch protection set" in r.output
+    [call] = fake_gh.calls
+    assert call["args"][:2] == ["api", "repos/OWNER/app/branches/main/protection"]
+    assert json.loads(call["input"])["enforce_admins"] is True
+
+
+def test_protect_apply_alone_still_prompts(machine, fake_gh):
+    r = runner.invoke(cli.app, ["protect", "OWNER/app", "--apply"], input="n\n")
+    assert r.exit_code == 1 and "Set branch protection on OWNER/app:main?" in r.output
+    assert fake_gh.calls == []
+    r = runner.invoke(cli.app, ["protect", "OWNER/app", "--apply"], input="y\n")
+    assert r.exit_code == 0 and "branch protection set" in r.output
+    assert len(fake_gh.calls) == 1
+
+
+@pytest.mark.parametrize("flags", [["--apply"], ["--apply", "--yes"]])
+def test_protect_refuses_a_non_human_operator(machine, fake_gh, flags):
+    (machine.swarm_dir / "local.yaml").write_text("human: nobody\nworker_token: none\n")
+    r = runner.invoke(cli.app, ["protect", "OWNER/app", *flags], input="y\n")
+    assert r.exit_code == 1 and "not listed in humans.yaml" in r.output
+    assert fake_gh.calls == []
+
+
 def test_plan_sync_and_task_list(machine):
     r = invoke("plan", "sync")
     assert r.exit_code == 0 and "imported" in r.output

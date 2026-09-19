@@ -279,7 +279,8 @@ def board(web: bool = typer.Option(False, "--web", help="Serve the Board at http
 @app.command()
 @guarded
 def protect(repo: str, branch: str = typer.Option("main"), approvals: int = typer.Option(1),
-            apply: bool = typer.Option(False, "--apply", help="Actually call the GitHub API (humans only).")):
+            apply: bool = typer.Option(False, "--apply", help="Actually call the GitHub API (humans only)."),
+            yes: bool = typer.Option(False, "--yes", "-y", help="Don't ask for confirmation.")):
     """Branch protection for a code repo (Ch.5.5, plan §2.11). Prints the call unless --apply."""
     body = json.dumps(actions.protection_body(approvals), indent=2)
     cmd = actions.protection_command(repo, branch)
@@ -291,7 +292,7 @@ def protect(repo: str, branch: str = typer.Option("main"), approvals: int = type
         console.print("[dim]dry run — re-run with --apply to set it[/]")
         return
     ctx().require_human()
-    if not typer.confirm(f"Set branch protection on {repo}:{branch}?"):
+    if not yes and not typer.confirm(f"Set branch protection on {repo}:{branch}?"):
         raise typer.Exit(1)
     gh.gh(cmd, input=body)
     console.print("[green]branch protection set[/]")
