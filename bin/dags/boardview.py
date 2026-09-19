@@ -19,7 +19,7 @@ PLAN_COLUMNS = ("task", "title", "machine", "plan")
 
 LOG_LINE = re.compile(r"^(\d{4}-\d{2}-\d{2}T\S+) \[([^\]]+)\] (.*)$")
 # notification kinds the Board renders itself instead of echoing from the log
-SKIP_KINDS = {"feed", "needs-worker"}
+SKIP_KINDS = {"feed", "needs-worker", "dispatched"}
 
 
 def age_text(seconds: float | None) -> str:

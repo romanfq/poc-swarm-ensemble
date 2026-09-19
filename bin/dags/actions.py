@@ -24,12 +24,16 @@ class ActionError(RuntimeError):
 
 # -- machine (Ch.10.2) ---------------------------------------------------------------
 
-def pause(ctx, machine: str | None = None) -> None:
-    L.control(ctx, "pause", machine)
+def pause(ctx, machine: str | None = None) -> str:
+    """Does nothing if the machine is already paused. Returns what happened."""
+    m = machine or ctx.identity
+    return f"paused {m}" if L.control(ctx, "pause", machine) else f"{m} is already paused"
 
 
-def resume(ctx, machine: str | None = None) -> None:
-    L.control(ctx, "resume", machine)
+def resume(ctx, machine: str | None = None) -> str:
+    """Does nothing if the machine isn't paused. Returns what happened."""
+    m = machine or ctx.identity
+    return f"resumed {m}" if L.control(ctx, "resume", machine) else f"{m} isn't paused"
 
 
 def throttle(ctx, share: int, machine: str | None = None) -> None:

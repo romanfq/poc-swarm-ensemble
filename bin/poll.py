@@ -34,23 +34,28 @@ from dags import records as R  # noqa: E402
 log = logging.getLogger("dags.poll")
 
 STATE_FILE = "poller-state.json"
+# feed events this machine's scheduler already sends to notify when it writes them
+SCHEDULER_ANNOUNCES = {"event:worker-dispatched", "event:awaiting-worker",
+                       "event:pause-requested", "event:pause-lifted"}
 
 
 @dataclass
 class PollReport:
     events: list[tuple[str, str]] = field(default_factory=list)      # (kind, text)
+    stamps: list[str | None] = field(default_factory=list)            # per event: the record's wall_utc
     needs_arbitration: list[str] = field(default_factory=list)
     overlaps: list[tuple[str, str, list[str]]] = field(default_factory=list)
     pr_status: dict[str, dict] = field(default_factory=dict)          # task key -> {state, review, checks, url}
 
-    def add(self, kind: str, text: str) -> None:
+    def add(self, kind: str, text: str, at: str | None = None) -> None:
         self.events.append((kind, text))
+        self.stamps.append(at)
 
 
 class Poller:
     def __init__(self, ctx, notify=None, use_gh: bool = True):
         self.ctx = ctx
-        self.notify = notify or (lambda text, kind="info": log.info(text))
+        self.notify = notify or (lambda text, kind="info", at=None: log.info(text))
         self.use_gh = use_gh
         self.state_path = ctx.swarm_dir / STATE_FILE
         self.state = self._load()
@@ -96,8 +101,11 @@ class Poller:
 
         self.state["first_run"] = False
         self.save()
-        for kind, text in rep.events:
-            self.notify(text, kind)
+        for (kind, text), at in zip(rep.events, rep.stamps):
+            if at:
+                self.notify(text, kind, at=at)      # stamped when it happened, not when seen
+            else:
+                self.notify(text, kind)
         return rep
 
     def _feed(self, rep: PollReport, quiet: bool) -> None:
@@ -109,7 +117,9 @@ class Poller:
         for e in fresh:
             if e.kind == "completion:pr-opened":
                 continue            # announced by the contract watcher after cleanup
-            rep.add("feed", e.text)
+            if e.kind in SCHEDULER_ANNOUNCES and e.machine == self.ctx.identity:
+                continue            # this machine's scheduler already notified it
+            rep.add("feed", e.text, e.wall)
 
     def _diff_states(self, snap: snapshot.Snapshot, rep: PollReport, quiet: bool) -> None:
         old = self.state["states"]

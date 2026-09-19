@@ -216,16 +216,14 @@ def stop(wait: float = typer.Option(120, help="Seconds to wait for the loops to 
 @guarded
 def pause(machine: Optional[str] = typer.Option(None, help="Another machine (defaults to this one).")):
     """Stop claiming new tasks; in-flight work carries on (Ch.10.2)."""
-    actions.pause(ctx(), machine)
-    console.print(f"paused {machine or ctx().identity}")
+    console.print(actions.pause(ctx(), machine))
 
 
 @app.command()
 @guarded
 def resume(machine: Optional[str] = typer.Option(None)):
     """Resume claiming."""
-    actions.resume(ctx(), machine)
-    console.print(f"resumed {machine or ctx().identity}")
+    console.print(actions.resume(ctx(), machine))
 
 
 @app.command()
