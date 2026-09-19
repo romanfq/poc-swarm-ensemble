@@ -17,9 +17,31 @@ REVIEW_COLUMNS = ("task", "title", "PR", "review", "checks")
 ARBITRATION_COLUMNS = ("task", "claimants", "why")
 PLAN_COLUMNS = ("task", "title", "machine", "plan")
 
+# what a click (or Enter) on a table cell opens: the column's own link, else the table's default
+LINK_COLUMNS = {"task": "ticket", "PR": "pr"}
+DEFAULT_LINK = {"review": "pr"}
+
+URL = re.compile(r"https?://[^\s<>\"']+")
+URL_TRAILING = ".,;:!?)]}'\""
+
 LOG_LINE = re.compile(r"^(\d{4}-\d{2}-\d{2}T\S+) \[([^\]]+)\] (.*)$")
 # notification kinds the Board renders itself instead of echoing from the log
 SKIP_KINDS = {"feed", "needs-worker", "dispatched"}
+
+
+def find_urls(text: str) -> list[tuple[int, int, str]]:
+    """(start, end, url) for each http(s) link in text, minus trailing punctuation."""
+    found = []
+    for m in URL.finditer(text):
+        url = m.group(0).rstrip(URL_TRAILING)
+        if "://" in url and not url.endswith("://"):
+            found.append((m.start(), m.start() + len(url), url))
+    return found
+
+
+def link_kind(table_id: str, column: str | None) -> str:
+    """Which link a selected cell opens: "pr" or "ticket"."""
+    return LINK_COLUMNS.get(column or "") or DEFAULT_LINK.get(table_id, "ticket")
 
 
 def age_text(seconds: float | None) -> str:
