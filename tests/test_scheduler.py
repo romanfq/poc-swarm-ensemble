@@ -367,3 +367,89 @@ def test_quota_released_immediately_without_a_worker_and_lifted_when_raised(worl
     world.scheduler(a, share=3).cycle()
     assert L.read_checkpoint(rv.index(a.root)["T2"]).get("pause_requested") is None
     assert any(t.startswith("Quota raised again: T2") for _, t in world.notes)
+
+
+def test_failed_dispatch_is_notified_recorded_and_released(world, monkeypatch):
+    """GH-10: a worker that can't be started must not hold the claim silently forever."""
+    import dags.timeutil as tu
+    from dags import boardview, panel, snapshot
+    from dags import scheduler as S
+    _plan(world, ("T1", {}))
+    a = world.machine("mac-a")
+    real = work.choose_worker
+    err = ("git worktree add -q .../GH-4 swarm/T1 failed (128):\n"
+           "fatal: 'swarm/T1' is already used by worktree at '.../T1'")
+
+    def broken(*args, **kw):
+        raise RuntimeError(err)
+    monkeypatch.setattr(work, "choose_worker", broken)
+    s = world.scheduler(a, worker="claude")
+
+    rep = s.cycle()
+    d = rv.index(a.root)["T1"]
+    assert rep.claimed == ["T1"] and rep.dispatched == [] and world.launched == []
+    assert rep.errors == [f"T1: dispatch failed: {err}"]
+    cid = rv.resolve(d, tu.now(), 900).winner.id
+    assert rv.task_state(d, tu.now(), 900) == "claimed"
+    errors = [t for k, t in world.notes if k == "error"]
+    assert errors == [f"T1: dispatch failed: {err}"]
+    f = L.read_checkpoint(d)["dispatch_failed"]
+    assert (f["claim_id"], f["attempts"], f["error"]) == (cid, 1, err)
+
+    # every Board sees it, not just this machine's log
+    b = world.machine("mac-b")
+    view = snapshot.take(b).by_key("T1")
+    assert view.dispatch_failed["attempts"] == 1
+    row = dict(boardview.claim_rows(snapshot.take(b)))["T1"]
+    assert row[6] == "not started"
+    assert row[7] == "claimed · dispatch failed ×1: fatal: 'swarm/T1' is already used by worktree at '.../T1'"
+    rows = {label: value for label, value, _ in panel.status_rows(b)}
+    assert rows["not started"].startswith("T1 on mac-a: dispatch failed ×1")
+    assert "needs you" not in rows
+
+    rep = s.cycle()                                     # retried: same error, notified only once
+    assert rep.errors and rep.released == []
+    assert [t for k, t in world.notes if k == "error"] == errors
+    assert L.read_checkpoint(d)["dispatch_failed"]["attempts"] == 2
+
+    rep = s.cycle()                                     # third attempt: the claim is given back
+    assert rep.released == ["T1"]
+    w = list(rv.read_withdrawals(d).values())[0]
+    assert (w["claim_id"], w["reason"]) == (cid, "dispatch-failed")
+    assert rv.retry_count(d, tu.now(), 900) == 0          # the worker never ran: not a failure
+    assert rv.ledger_ready(a.root, d, tu.now(), 900)
+    assert world.backend.get_task(TaskRef("T1")).status == "ready"
+    kind, text = world.notes[-1]
+    assert kind == "error" and text.startswith("T1 released: its worker could not be started on mac-a (3 attempts)")
+    assert snapshot.take(a).by_key("T1").dispatch_failed is None
+
+    # this machine backs off for a lease; another machine may take it meanwhile
+    assert s.cycle().claimed == []
+    assert S.DISPATCH_ATTEMPTS == 3
+    monkeypatch.setattr(work, "choose_worker", real)
+    try:
+        tu.set_offset(901)
+        rep = s.cycle()
+        assert rep.claimed == ["T1"] and rep.dispatched == ["T1"]
+        assert L.read_checkpoint(d).get("dispatch_failed") is None
+        assert snapshot.take(a).by_key("T1").dispatch_failed is None
+    finally:
+        tu.set_offset(0)
+
+
+def test_plan_sync_errors_are_notified_once_until_they_clear(world, monkeypatch):
+    _plan(world, ("T1", {}))
+    a = world.machine("mac-a")
+    s = world.scheduler(a)
+    calls = {"n": 0}
+
+    def flaky(ctx):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise RuntimeError("tracker down")
+    monkeypatch.setattr(plan, "sync", flaky)
+    for _ in range(3):
+        s.cycle()
+    monkeypatch.setattr(plan, "sync", lambda ctx: (_ for _ in ()).throw(RuntimeError("tracker down")))
+    s.cycle()
+    assert [t for k, t in world.notes if k == "error"] == ["plan sync failed: tracker down"] * 2

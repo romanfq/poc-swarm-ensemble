@@ -75,7 +75,7 @@ def choose_worker(ctx, task_dir: Path, choice: str, launch=None, platform: str |
     wt = prepare(ctx, task_dir, claim_id, name)
     L.update_checkpoint(ctx, task_dir, claim_id, worker=name, worker_label=w.label,
                         branch=worktree.branch_name(task_dir), dispatched_utc=timeutil.iso(),
-                        needs_human=None)
+                        needs_human=None, dispatch_failed=None)
     task = workers.ClaimedTask(key=str(meta["key"]), short=resolve.label(task_dir),
                                title=str(meta.get("title") or ""), claim_id=claim_id,
                                autonomy=autonomy, repo=meta.get("repo"),

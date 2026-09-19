@@ -32,6 +32,11 @@ def shown(widget) -> str:
     return str(widget.render())
 
 
+def log_text(widget) -> str:
+    """A RichLog's text with its wrapping undone."""
+    return " ".join(line.text.strip() for line in widget.lines)
+
+
 def records(root, sub):
     return [d for _, d in R.read_dir(root / sub)]
 
@@ -191,3 +196,44 @@ def test_non_humans_get_an_error_not_a_crash(setup):
             await until(pilot, lambda: any(sev == "error" for _, sev in notes))
     run(go())
     assert rv.global_quota(a.root, 3) == 3
+
+
+def test_daemon_log_panel(setup):
+    """GH-10: this machine's .swarm/swarm.log is on the Board, with a level filter."""
+    world, a, app, _ = setup
+    log = a.swarm_dir / "swarm.log"
+    log.write_text("2026-09-18 07:35:00,000 INFO dags.daemon: daemon up\n"
+                   "2026-09-18 07:35:32,000 WARNING dags.scheduler: T9: dispatch failed: before the Board\n")
+
+    def text():
+        return log_text(app.query_one("#daemon-log"))
+
+    async def go():
+        async with app.run_test(size=(160, 50)) as pilot:
+            await until(pilot, lambda: isinstance(app.screen, board.ChoiceScreen))
+            await pilot.press("escape")
+            await until(pilot, lambda: "before the Board" in text())
+            assert "daemon up" not in text()
+            assert "≥WARNING" in shown(app.query_one("#daemon-log-title"))
+            with open(log, "a") as f:
+                f.write("2026-09-18 07:36:00,000 ERROR dags.scheduler: T1: dispatch failed: new one\n")
+            await until(pilot, lambda: "new one" in text())
+            await pilot.press("l")                                   # WARNING -> INFO
+            await until(pilot, lambda: "daemon up" in text())
+            assert "≥INFO" in shown(app.query_one("#daemon-log-title"))
+            await pilot.press("l")                                   # INFO -> ERROR
+            await until(pilot, lambda: "before the Board" not in text())
+            assert "new one" in text()
+    run(go())
+
+
+def test_daemon_log_panel_says_when_there_is_no_log(setup):
+    world, a, app, _ = setup
+
+    async def go():
+        async with app.run_test(size=(160, 50)) as pilot:
+            await until(pilot, lambda: isinstance(app.screen, board.ChoiceScreen))
+            await pilot.press("escape")
+            panel = app.query_one("#daemon-log")
+            await until(pilot, lambda: "doesn't exist here" in log_text(panel))
+    run(go())
