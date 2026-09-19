@@ -101,7 +101,11 @@ def read_checkpoint(task_dir: Path) -> dict:
 
 
 def update_checkpoint(ctx: Context, task_dir: Path, claim_id: str, *, append: dict | None = None,
-                      push: bool = True, check_owner: bool = True, **fields) -> dict:
+                      push: bool = True, check_owner: bool = True, event: dict | None = None,
+                      **fields) -> dict:
+    """``event`` ({"kind": ..., **fields}) also writes an append-only
+    ``events/`` record in the same commit, with the checkpoint's clock, so
+    the activity feed sees a change the checkpoint only overwrites."""
     out = {}
 
     def build():
@@ -124,10 +128,39 @@ def update_checkpoint(ctx: Context, task_dir: Path, claim_id: str, *, append: di
         cp["logical_clock"] = resolve.next_clock(ctx.root)
         cp["wall_utc"] = timeutil.iso()
         out.update(cp)
-        return [R.write_replace(task_dir / "checkpoint.yaml", cp)]
+        paths = [R.write_replace(task_dir / "checkpoint.yaml", cp)]
+        if event:
+            paths.append(_write_event(ctx, task_dir, cp["logical_clock"], claim_id=claim_id, **event))
+        return paths
 
     _tx(ctx, f"checkpoint {task_dir.name}", build, push=push)
     return out
+
+
+# -- events (feed only) — append-only notes of what a checkpoint change meant ------------
+
+def _write_event(ctx: Context, task_dir: Path, clock: int, kind: str, **fields) -> Path:
+    return R.write_new(task_dir / "events" / R.event_name(ctx.identity, kind, clock),
+                       _stamp(ctx, clock, kind=kind, **fields))
+
+
+def record_event(ctx: Context, task_dir: Path, kind: str, once_per_claim: bool = False,
+                 push: bool = True, **fields) -> bool:
+    """An event with no checkpoint change. ``once_per_claim`` skips it when
+    this machine already recorded ``kind`` for the same ``claim_id``.
+    Returns whether a record was written."""
+    wrote = []
+
+    def build():
+        if once_per_claim:
+            for _, d in R.read_dir(task_dir / "events"):
+                if d.get("kind") == kind and d.get("claim_id") == fields.get("claim_id"):
+                    return []
+        wrote.append(_write_event(ctx, task_dir, resolve.next_clock(ctx.root), kind, **fields))
+        return wrote
+
+    _tx(ctx, f"{kind} {task_dir.name}", build, push=push)
+    return bool(wrote)
 
 
 # -- completions ------------------------------------------------------------------
@@ -174,16 +207,23 @@ def arbitrate(ctx: Context, task_dir: Path, winner: str | None, reason: str,
     _tx(ctx, f"{human} arbitrates {task_dir.name}: {verb}", build)
 
 
-def control(ctx: Context, action: str, target_machine: str | None = None, **fields) -> None:
+def control(ctx: Context, action: str, target_machine: str | None = None, **fields) -> bool:
+    """Returns False (and writes nothing) for a pause or resume that wouldn't
+    change the machine's state, checked after the pull."""
     human = ctx.operator
     machine = target_machine or ctx.identity
+    wrote = []
 
     def build():
+        if action in ("pause", "resume") and machine_control(ctx.root, machine)["paused"] == (action == "pause"):
+            return []
+        wrote.append(True)
         clock = resolve.next_clock(ctx.root)
         return [R.write_new(ctx.root / "control" / R.control_name(machine, action, clock),
                             _stamp(ctx, clock, machine=machine, human=human, action=action, **fields))]
 
     _tx(ctx, f"{action} {machine}", build)
+    return bool(wrote)
 
 
 def priority(ctx: Context, epic: str, action: str) -> None:

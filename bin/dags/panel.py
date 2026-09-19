@@ -53,7 +53,8 @@ def status_rows(ctx, identity_new: bool = False, synced: bool = True, share: int
     if snap.awaiting_review:
         rows.append(("review", ", ".join(f"{t.short} {t.pr_url}" for t in snap.awaiting_review), "warn"))
     if pid:
-        rows.append(("daemon", f"pid {pid}  ·  log .swarm/swarm.log", "plain"))
+        up = daemon.uptime_text(inf)
+        rows.append(("daemon", f"pid {pid}  ·  {up + '  ·  ' if up else ''}log .swarm/swarm.log", "plain"))
     return rows
 
 

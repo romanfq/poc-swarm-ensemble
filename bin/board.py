@@ -20,10 +20,12 @@ if __package__ in (None, ""):
 import threading  # noqa: E402
 
 from rich.markup import escape  # noqa: E402
+from rich.style import Style  # noqa: E402
 from rich.text import Text  # noqa: E402
 from textual import work  # noqa: E402
 from textual.app import App, ComposeResult  # noqa: E402
 from textual.binding import Binding  # noqa: E402
+from textual.coordinate import Coordinate  # noqa: E402
 from textual.containers import Horizontal, Vertical, VerticalScroll  # noqa: E402
 from textual.screen import ModalScreen  # noqa: E402
 from textual.widgets import (Button, DataTable, Footer, Header, Input, Label, Markdown,  # noqa: E402
@@ -34,6 +36,47 @@ import workers  # noqa: E402
 from dags import actions, boardview, daemon, feed, gh, snapshot  # noqa: E402
 from dags import work as worklib  # noqa: E402
 from dags.config import Context  # noqa: E402
+
+# ---------------------------------------------------------------------------
+# links (GH-5): Textual captures the mouse, so the terminal's own Cmd-click
+# never sees a URL. Links are made clickable here and open via BoardApp.open_link.
+# ---------------------------------------------------------------------------
+
+def link_style(url: str) -> Style:
+    return Style(underline=True, link=url) + Style.from_meta({"@click": f"app.open_link({url!r})"})
+
+
+def linkify(text: str) -> Text:
+    """text with each http(s) URL underlined and opening on click."""
+    out = Text(text)
+    for start, end, url in boardview.find_urls(text):
+        out.stylize(link_style(url), start, end)
+    return out
+
+
+class LinkTable(DataTable):
+    """A DataTable that remembers which column a click landed on, so selecting a
+    row (a click on the highlighted row, or Enter) can open that cell's link."""
+
+    clicked_column: str | None = None
+
+    async def _on_click(self, event) -> None:
+        # no super(): Textual dispatches DataTable._on_click itself, after this one
+        row, column = event.style.meta.get("row"), event.style.meta.get("column")
+        self.clicked_column = None
+        if not (isinstance(row, int) and isinstance(column, int) and row >= 0
+                and 0 <= column < len(self.ordered_columns)):
+            return
+        self.clicked_column = str(self.ordered_columns[column].label)
+        if row == self.cursor_row:
+            # the row is already highlighted: whichever cell was clicked, DataTable
+            # should treat it as a click on the cursor and post RowSelected
+            self.cursor_coordinate = Coordinate(row, column)
+
+    def action_select_cursor(self) -> None:
+        self.clicked_column = None
+        super().action_select_cursor()
+
 
 # ---------------------------------------------------------------------------
 # modal screens
@@ -143,15 +186,18 @@ class PlanScreen(ModalScreen[str | None]):
     """Review gate for human-must-review plans (plan §2.8)."""
     BINDINGS = [Binding("escape", "cancel", "Cancel")]
 
-    def __init__(self, task: str, plan_md: str):
+    def __init__(self, task: str, plan_md: str, links: list[tuple[str, str]] | None = None):
         super().__init__()
         # not self.task: Textual's MessagePump already owns that name.
         self.task_key = task
         self.plan_md = plan_md
+        self.links = links or []
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
             yield Label(f"Plan for {self.task_key}", markup=False)
+            for name, url in self.links:
+                yield Static(linkify(f"{name}: {url}"), classes="link", markup=False)
             with VerticalScroll(id="plan"):
                 yield Markdown(self.plan_md or "_empty plan_")
             with Horizontal(id="buttons"):
@@ -196,7 +242,7 @@ class BoardApp(App):
         Binding("v", "review_plan", "Review plan"),
         Binding("m", "merge", "Approve & merge"),
         Binding("o", "open_ticket", "Ticket"),
-        Binding("O,shift+o", "open_pr", "PR", show=False),
+        Binding("O,shift+o", "open_pr", "PR"),
         Binding("n", "set_quota", "Global N"),
         Binding("l", "log_level", "Log level"),
         Binding("ctrl+r", "refresh", "Refresh", show=False),
@@ -212,7 +258,7 @@ class BoardApp(App):
         self.platform = platform
         self.use_gh = use_gh
         self.run_poller = run_poller
-        self._open_link = open_url or actions.open_url
+        self._open_link = open_url             # None: Textual's App.open_url (a browser tab under --web)
         self.snap: snapshot.Snapshot | None = None
         self.pr_status: dict[str, dict] = {}
         self.seen: set[str] = set()
@@ -234,13 +280,13 @@ class BoardApp(App):
         with Horizontal(id="main"):
             with Vertical(id="left"):
                 yield Static("Live claims", classes="panel-title")
-                yield DataTable(id="claims", cursor_type="row", zebra_stripes=True)
+                yield LinkTable(id="claims", cursor_type="row", zebra_stripes=True)
                 yield Static("Awaiting review", classes="panel-title")
-                yield DataTable(id="review", cursor_type="row", zebra_stripes=True)
+                yield LinkTable(id="review", cursor_type="row", zebra_stripes=True)
                 yield Static("Needs arbitration", classes="panel-title")
-                yield DataTable(id="arbitration", cursor_type="row", zebra_stripes=True)
+                yield LinkTable(id="arbitration", cursor_type="row", zebra_stripes=True)
                 yield Static("Plans awaiting review", classes="panel-title")
-                yield DataTable(id="plans", cursor_type="row", zebra_stripes=True)
+                yield LinkTable(id="plans", cursor_type="row", zebra_stripes=True)
             with Vertical(id="right"):
                 yield Static("Activity", classes="panel-title")
                 yield RichLog(id="feed", wrap=True, markup=False, highlight=False, max_lines=500)
@@ -255,8 +301,8 @@ class BoardApp(App):
             self.query_one(f"#{tid}", DataTable).add_columns(*cols)
         log = self.query_one("#feed", RichLog)
         for line in boardview.initial_feed(self.ctx.root, self.seen):
-            log.write(line)
-        self.load_daemon_log()
+            self.load_daemon_log()
+            log.write(linkify(line))
         self.refresh_data()
         self.set_interval(self.refresh_s, self.refresh_data)
 
@@ -306,14 +352,17 @@ class BoardApp(App):
         logged = self.daemon_log.read_tagged()
         flagged = boardview.poller_flags(ctx.swarm_dir)
         pid = daemon.running_pid(ctx)
-        self.call_from_thread(self.apply, snap, new_feed, notes, flagged, pid, logged)
+        info = daemon.info(ctx) if pid else {}
+        self.call_from_thread(self.apply, snap, new_feed, notes, flagged, pid, info)
 
     def _fill(self, tid: str, rows: list[tuple[str, tuple]]) -> None:
         table = self.query_one(f"#{tid}", DataTable)
         selected = self.selected_key(table)
         table.clear()
+        linked = [str(c.label) in boardview.LINK_COLUMNS for c in table.ordered_columns]
         for key, cells in rows:
-            table.add_row(*(Text(str(c)) for c in cells), key=key)
+            table.add_row(*(Text(str(c), style="underline" if linked[i] and c else "")
+                            for i, c in enumerate(cells)), key=key)
         if selected is not None:
             for i, (key, _) in enumerate(rows):
                 if key == selected:
@@ -323,9 +372,9 @@ class BoardApp(App):
                         pass
                     break
 
-    def apply(self, snap, new_feed, notes, flagged, pid, logged=(0, ())) -> None:
+    def apply(self, snap, new_feed, notes, flagged, pid, info=None) -> None:
         self.snap = snap
-        self.query_one("#machine", Static).update(boardview.machine_line(snap, pid))
+        self.query_one("#machine", Static).update(boardview.machine_line(snap, pid, info))
         q = boardview.quota(snap)
         self.query_one("#quota-label", Label).update(q.text)
         self.query_one("#quota", ProgressBar).update(total=max(q.total, 1), progress=min(q.used, max(q.total, 1)))
@@ -335,12 +384,13 @@ class BoardApp(App):
         self._fill("plans", boardview.plan_rows(snap))
         log = self.query_one("#feed", RichLog)
         for line in new_feed:
-            log.write(line)
+            log.write(linkify(line))
         for kind, text in notes:
-            log.write(boardview.announcement(kind, text))
+            log.write(linkify(boardview.announcement(kind, text)))
         generation, entries = logged
         if generation == self.daemon_log.generation:     # else the panel was reloaded meanwhile
             self.write_daemon_log(entries)
+
         self.maybe_prompt_worker()
 
     # -- the daemon's log (GH-10) --------------------------------------------------------
@@ -413,7 +463,7 @@ class BoardApp(App):
 
     def say(self, text: str) -> None:
         self.said.append(text)
-        self.query_one("#feed", RichLog).write(f"[swarm-board] {text}")
+        self.query_one("#feed", RichLog).write(linkify(f"[swarm-board] {text}"))
 
     # -- machine commands (Ch.10.2) -------------------------------------------------------------
     def action_refresh(self) -> None:
@@ -552,27 +602,53 @@ class BoardApp(App):
                 self.run_job(f"merged {view.pr_url}", actions.merge, self.ctx, view.dir)
         self.push_screen(ConfirmScreen(f"Approve and squash-merge {view.pr_url} ({view.short})?"), done)
 
+    # -- links (GH-5) ------------------------------------------------------------------------------
+    def action_open_link(self, url: str) -> None:
+        self.open_link(url)
+
+    def open_link(self, url: str) -> None:
+        """Open url on the UI thread: through Textual, a new tab in the viewer's browser
+        under `board --web` and the default browser in a terminal."""
+        try:
+            (self._open_link or self.open_url)(url)
+        except Exception as e:  # noqa: BLE001
+            self.notify(escape(f"could not open {url}: {e}"), severity="error", timeout=8)
+            return
+        self.notify(escape(f"opened {url}"))
+
+    def open_task_link(self, key: str, kind: str) -> None:
+        if kind == "pr":
+            url = actions.pr_url(self.task_dir(key))
+            missing = "no PR yet"
+        else:
+            url = actions.ticket_url(self.ctx, self.task_dir(key))
+            missing = "no ticket link"
+        if url:
+            self.open_link(url)
+        else:
+            self.notify(missing, severity="warning")
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        """Enter on a row, or a click on the highlighted row: open the clicked cell's link."""
+        table = event.data_table
+        if self.busy() or event.row_key.value is None:
+            return
+        column = getattr(table, "clicked_column", None)
+        self.open_task_link(event.row_key.value, boardview.link_kind(table.id or "", column))
+
     def action_open_ticket(self) -> None:
         if self.busy():
             return
         key = self.selected_task()
         if key:
-            url = actions.ticket_url(self.ctx, self.task_dir(key))
-            if url:
-                self.run_job(f"opened {url}", self._open_link, url)
-            else:
-                self.notify("no ticket link", severity="warning")
+            self.open_task_link(key, "ticket")
 
     def action_open_pr(self) -> None:
         if self.busy():
             return
         key = self.selected_task(("review",))
         if key:
-            url = actions.pr_url(self.task_dir(key))
-            if url:
-                self.run_job(f"opened {url}", self._open_link, url)
-            else:
-                self.notify("no PR yet", severity="warning")
+            self.open_task_link(key, "pr")
 
     def action_review_plan(self) -> None:
         if self.busy():
@@ -594,7 +670,8 @@ class BoardApp(App):
             if decision:
                 self.run_job(f"plan for {view.short}: {decision}", worklib.approve_plan,
                                 self.ctx, view.dir, decision)
-        self.push_screen(PlanScreen(view.short, plan_md), done)
+        links = [("Ticket", actions.ticket_url(self.ctx, view.dir)), ("PR", view.pr_url)]
+        self.push_screen(PlanScreen(view.short, plan_md, [(n, u) for n, u in links if u]), done)
 
     # -- worker choice (Ch.7.3, Ch.10.7) ------------------------------------------------------------
     def maybe_prompt_worker(self) -> None:

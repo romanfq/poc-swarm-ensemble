@@ -233,7 +233,8 @@ class Scheduler:
             elif not req:
                 L.update_checkpoint(ctx, d, c.id, pause_requested={
                     "claim_id": c.id, "at": timeutil.iso(),
-                    "reason": "the quota was lowered below the tasks running"})
+                    "reason": "the quota was lowered below the tasks running"},
+                    event={"kind": "pause-requested", "grace_s": int(lease)})
                 rep.pausing.append(label)
                 self.notify(f"The quota was lowered: {label} should record its progress "
                             f"(swarm-task note) and stop. It will be released in "
@@ -248,7 +249,8 @@ class Scheduler:
                 continue
             res = resolve.resolve(d, now, lease, humans)
             if res.winner is not None and res.winner.id == req.get("claim_id") and res.winner in res.valid:
-                L.update_checkpoint(ctx, d, res.winner.id, pause_requested=None)
+                L.update_checkpoint(ctx, d, res.winner.id, pause_requested=None,
+                                    event={"kind": "pause-lifted"})
                 self.notify(f"Quota raised again: {resolve.label(d)} can carry on.", "quota")
 
     def after_win(self, d: Path, cid: str, rep: CycleReport) -> None:
@@ -267,6 +269,10 @@ class Scheduler:
         if cid in self._announced:
             return
         self._announced.add(cid)
+        try:
+            L.record_event(self.ctx, d, "awaiting-worker", once_per_claim=True, claim_id=cid)
+        except Exception as e:  # noqa: BLE001
+            log.warning("could not record that %s awaits a worker: %s", label, e)
         # prepare the worktree now so the human's choice is instant
         try:
             work.prepare(self.ctx, d, cid)

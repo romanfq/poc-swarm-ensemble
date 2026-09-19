@@ -11,16 +11,38 @@ import threading
 from dataclasses import dataclass
 from pathlib import Path
 
-from dags import feed, snapshot
+from dags import daemon, feed, snapshot
 
 CLAIM_COLUMNS = ("task", "title", "machine", "human", "clock", "age", "worker", "state")
 REVIEW_COLUMNS = ("task", "title", "PR", "review", "checks")
 ARBITRATION_COLUMNS = ("task", "claimants", "why")
 PLAN_COLUMNS = ("task", "title", "machine", "plan")
 
+# what a click (or Enter) on a table cell opens: the column's own link, else the table's default
+LINK_COLUMNS = {"task": "ticket", "PR": "pr"}
+DEFAULT_LINK = {"review": "pr"}
+
+URL = re.compile(r"https?://[^\s<>\"']+")
+URL_TRAILING = ".,;:!?)]}'\""
+
 LOG_LINE = re.compile(r"^(\d{4}-\d{2}-\d{2}T\S+) \[([^\]]+)\] (.*)$")
 # notification kinds the Board renders itself instead of echoing from the log
-SKIP_KINDS = {"feed", "needs-worker"}
+SKIP_KINDS = {"feed", "needs-worker", "dispatched"}
+
+
+def find_urls(text: str) -> list[tuple[int, int, str]]:
+    """(start, end, url) for each http(s) link in text, minus trailing punctuation."""
+    found = []
+    for m in URL.finditer(text):
+        url = m.group(0).rstrip(URL_TRAILING)
+        if "://" in url and not url.endswith("://"):
+            found.append((m.start(), m.start() + len(url), url))
+    return found
+
+
+def link_kind(table_id: str, column: str | None) -> str:
+    """Which link a selected cell opens: "pr" or "ticket"."""
+    return LINK_COLUMNS.get(column or "") or DEFAULT_LINK.get(table_id, "ticket")
 
 
 def age_text(seconds: float | None) -> str:
@@ -113,14 +135,15 @@ def quota(snap: snapshot.Snapshot) -> Quota:
     return Quota(snap.quota_used, snap.quota_n, snap.mine_used, snap.share)
 
 
-def machine_line(snap: snapshot.Snapshot, daemon_pid: int | None) -> str:
+def machine_line(snap: snapshot.Snapshot, daemon_pid: int | None, info: dict | None = None) -> str:
     st = snap.machines.get(snap.machine, {})
     if st.get("stopped") or not daemon_pid:
         state = "stopped" if st.get("stopped") else "daemon not running"
-    elif st.get("paused"):
-        state = "paused"
     else:
-        state = "running"
+        state = "paused" if st.get("paused") else "running"
+        up = daemon.uptime_text(info or {})
+        if up:
+            state += f" ({up})"
     others = [f"{m}: {'paused' if s.get('paused') else 'stopped' if s.get('stopped') else 'on'}"
               for m, s in snap.machines.items() if m != snap.machine]
     tail = f"   ·   others — {', '.join(others)}" if others else ""

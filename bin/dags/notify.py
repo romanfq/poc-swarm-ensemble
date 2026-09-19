@@ -51,8 +51,9 @@ class Notifier:
         self.run = run or subprocess.run
         self.platform = platform or sys.platform
 
-    def __call__(self, text: str, kind: str = "info") -> None:
-        line = f"{timeutil.iso()} [{kind}] {text}"
+    def __call__(self, text: str, kind: str = "info", at: str | None = None) -> None:
+        """``at``: when it happened (a record's wall_utc); defaults to now."""
+        line = f"{at or timeutil.iso()} [{kind}] {text}"
         self.log_file.parent.mkdir(parents=True, exist_ok=True)
         with open(self.log_file, "a", encoding="utf-8") as f:
             f.write(line + "\n")

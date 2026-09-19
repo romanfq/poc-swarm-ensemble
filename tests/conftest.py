@@ -224,7 +224,7 @@ class CodeWorld:
     def launch(self, cmd):
         self.launched.append(cmd)
 
-    def notify(self, text, kind="info"):
+    def notify(self, text, kind="info", at=None):
         self.notes.append((kind, text))
 
     def scheduler(self, ctx, share=1, worker=None, **kw):

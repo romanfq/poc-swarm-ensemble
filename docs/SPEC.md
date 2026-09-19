@@ -386,6 +386,7 @@ tasks/EPIC-14/TASK-3/
   heartbeats/<machine>.yaml               # single writer
   checkpoint.yaml                         # single writer (Ch.8)
   completions/<machine>-<kind>-<clock>.yaml
+  events/<machine>-<kind>-<clock>.yaml    # feed-only notes of checkpoint changes (10.3)
 tasks/EPIC-14/_epic/meta.yaml             # the epic itself
 control/<machine>-<action>-<clock>.yaml   # pause/resume/stop/start/throttle (Ch.10.3)
 priority/<machine>-<epic>-<action>-<clock>.yaml   # epic takeover/release (Ch.10.4)
@@ -1229,6 +1230,16 @@ Every Board, each cycle, turns new records into plain-English lines:
 > - the daemon's notifications, prefixed `[swarm-board]`. For example: "claude
 >   has finished TASK-3. The PR can be found at …", or "Still working on
 >   TASK-5?".
+>
+> **v1.1 — GH-3:** plan reviews ("Roman approved the plan for GH-4", "… sent
+> the plan for GH-4 back — '<note>'") and what a worker or human did through
+> the checkpoint: plan submitted, a worker asking a human, a worker handed the
+> task or awaited, "still working" confirmed, a quota pause requested or
+> lifted. The checkpoint is rewritten in place, so each of these writes a small
+> append-only `events/` record in the same commit. Pause and resume write
+> nothing when the machine is already in that state, and notification log
+> lines for feed events carry the record's `wall_utc`, not the time the
+> poller saw it.
 
 ## 10.4 Epic takeover, defined precisely
 
@@ -1921,6 +1932,7 @@ humans:
 | `arbitration/human-<n>-<c>.yaml` | `human`, `winner` (claim id or `none`), `reason`, optional `action: withdraw` |
 | `plan-reviews/human-<n>-<c>.yaml` | `human`, `plan_sha`, `decision` (`approved` / `changes-requested`), `note` |
 | `completions/<m>-<kind>-<c>.yaml` | `kind` (`pr-opened`, `done`, `reopened`, `rejected`, `replanned`), `pr_url`, plus: `claim_id`, `worker`, `commit` (pr-opened); `merged_by`, `merged_utc`, `imported`, `reason` (done); `review_id`, `reviewer` (reopened) |
+| `events/<m>-<kind>-<c>.yaml` | `kind` (`plan-submitted`, `needs-human`, `worker-dispatched`, `awaiting-worker`, `still-working`, `pause-requested`, `pause-lifted`), `claim_id`, plus: `plan_sha`, `self_approved`, `worker` (plan-submitted); `question` (needs-human); `worker`, `human` (worker-dispatched); `human` (still-working); `grace_s` (pause-requested). Read only by the feed; same clock as the checkpoint write it accompanies |
 | `control/<m>-<action>-<c>.yaml` | `machine`, `human`, `action` (`start`, `pause`, `resume`, `throttle`, `stop`), `quota_share`, `default_worker` (start) |
 | `priority/<m>-<epic>-<action>-<c>.yaml` | `epic`, `machine`, `human`, `action` (`takeover` / `release`) |
 | `quota/<human>-<c>.yaml` | `human`, `n`, `reason` |

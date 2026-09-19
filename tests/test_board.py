@@ -207,6 +207,9 @@ def test_daemon_log_panel(setup):
 
     def text():
         return log_text(app.query_one("#daemon-log"))
+def test_feed_links_open_on_click(setup):
+    world, a, app, opened = setup
+    url = "https://github.com/OWNER/app/pull/9"
 
     async def go():
         async with app.run_test(size=(160, 50)) as pilot:
@@ -229,6 +232,27 @@ def test_daemon_log_panel(setup):
 
 def test_daemon_log_panel_says_when_there_is_no_log(setup):
     world, a, app, _ = setup
+            log = app.query_one("#feed")
+            log.clear()
+            app.say(f"T1 is done. The PR can be found at {url}.")
+            await until(pilot, lambda: any(url in line.text for line in log.lines))
+            y, line = next((i, line.text) for i, line in enumerate(log.lines) if url in line.text)
+            assert url + "." in line                                    # wrapped whole, not split
+            await pilot.click("#feed", offset=(1 + line.index(url) + 3, 1 + y))   # inside the border
+            await until(pilot, lambda: opened == [url])
+    run(go())
+
+
+def test_table_cells_open_their_links(setup):
+    from dags import actions
+    from dags import ledger as L
+    world, a, app, opened = setup
+    d = rv.index(a.root)["T1"]
+    work.choose_worker(a, d, "claude", launch=world.launch, platform="darwin")
+    pr = world.prs.add("OWNER/app", "swarm/T1")
+    L.complete(a, d, "pr-opened", claim_id=rv.resolve(d, timeutil.now(), 900).winner.id,
+               pr_url=pr["url"], worker="claude")
+    world.scheduler(a, share=2).cycle()           # T2 claimed, so the claims panel has a row
 
     async def go():
         async with app.run_test(size=(160, 50)) as pilot:
@@ -236,4 +260,20 @@ def test_daemon_log_panel_says_when_there_is_no_log(setup):
             await pilot.press("escape")
             panel = app.query_one("#daemon-log")
             await until(pilot, lambda: "doesn't exist here" in log_text(panel))
+            review = app.query_one("#review")
+            await until(pilot, lambda: review.row_count == 1)
+            x = sum(c.get_render_width(review) for c in review.ordered_columns[:2]) + 2
+            assert review.cursor_row == 0                  # the only row is highlighted, so
+            await pilot.click("#review", offset=(x, 1))    # a click on its PR cell opens the PR
+            await until(pilot, lambda: opened == [pr["url"]])
+            await pilot.click("#review", offset=(2, 1))    # and its task cell opens the ticket
+            await until(pilot, lambda: len(opened) == 2)
+            claims = app.query_one("#claims")
+            await until(pilot, lambda: claims.row_count >= 1)
+            claims.focus()
+            await pilot.press("enter")                      # Enter on a claims row: its ticket
+            await until(pilot, lambda: len(opened) == 3)
+            key = app.selected_key(claims)
+            assert opened[2] == actions.ticket_url(a, a.task_dir_for(key))
     run(go())
+    assert opened[1] == actions.ticket_url(a, d)

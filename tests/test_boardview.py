@@ -1,4 +1,6 @@
 """What the Board shows (Ch.10.5), without Textual."""
+from datetime import timedelta
+
 import resolve as rv
 from dags import boardview, snapshot, work
 from dags import ledger as L
@@ -48,6 +50,10 @@ def test_panels_from_a_live_ledger(world):
     snap = snapshot.take(a, share=2)
     assert boardview.machine_line(snap, 123) == "mac-a · running   ·   others — mac-b: paused"
     assert boardview.machine_line(snap, None).startswith("mac-a · daemon not running")
+    from dags import timeutil
+    info = {"started_utc": timeutil.iso(timeutil.now() - timedelta(hours=3, minutes=5, seconds=10))}
+    assert boardview.machine_line(snap, 123, info).startswith("mac-a · running (up 3h 5m)   ·   others")
+    assert boardview.machine_line(snap, None, info).startswith("mac-a · daemon not running   ·")
 
     assert boardview.epic_of(snap, "T1") == "E1"
     assert not boardview.holds_takeover(snap, "E1")
@@ -137,3 +143,17 @@ def test_daemon_log_tail(tmp_path):
     assert [boardview.next_level(x) for x in ("WARNING", "INFO", "ERROR", "DEBUG")] == \
         ["INFO", "ERROR", "WARNING", "WARNING"]
     assert boardview.short_error("git worktree add failed (128):\nfatal: already used", 14) == "fatal: alread…"
+def test_find_urls():
+    text = "GH-5 done. The PR can be found at https://github.com/o/r/pull/7. See (https://x.test/a?b=1), too"
+    assert [u for _, _, u in boardview.find_urls(text)] == ["https://github.com/o/r/pull/7", "https://x.test/a?b=1"]
+    start, end, url = boardview.find_urls(text)[0]
+    assert text[start:end] == url
+    assert boardview.find_urls("no links, just http:// and words") == []
+
+
+def test_link_kind():
+    assert boardview.link_kind("review", "PR") == "pr"
+    assert boardview.link_kind("review", "task") == "ticket"
+    assert boardview.link_kind("review", "title") == "pr"
+    assert boardview.link_kind("review", None) == "pr"
+    assert boardview.link_kind("claims", "title") == "ticket"

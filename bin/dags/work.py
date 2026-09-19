@@ -75,7 +75,8 @@ def choose_worker(ctx, task_dir: Path, choice: str, launch=None, platform: str |
     wt = prepare(ctx, task_dir, claim_id, name)
     L.update_checkpoint(ctx, task_dir, claim_id, worker=name, worker_label=w.label,
                         branch=worktree.branch_name(task_dir), dispatched_utc=timeutil.iso(),
-                        needs_human=None, dispatch_failed=None)
+                        needs_human=None,
+                        event={"kind": "worker-dispatched", "worker": w.label, "human": ctx.operator})
     task = workers.ClaimedTask(key=str(meta["key"]), short=resolve.label(task_dir),
                                title=str(meta.get("title") or ""), claim_id=claim_id,
                                autonomy=autonomy, repo=meta.get("repo"),
@@ -111,9 +112,13 @@ def submit_plan(ctx, task_dir: Path, plan_md: str) -> str:
     meta = resolve.read_meta(task_dir)
     sha = plan_sha(plan_md)
     fields = {"plan_md": plan_md, "plan_sha": sha, "needs_human": None}
-    if meta.get("autonomy") == "auto-pr":
+    self_approved = meta.get("autonomy") == "auto-pr"
+    if self_approved:
         fields["plan_self_approved"] = sha            # self-review allowed (plan §2.8)
-    L.update_checkpoint(ctx, task_dir, claim_id, **fields)
+    cp = L.read_checkpoint(task_dir)
+    event = {"kind": "plan-submitted", "plan_sha": sha, "self_approved": self_approved,
+             "worker": cp.get("worker_label") or cp.get("worker")}
+    L.update_checkpoint(ctx, task_dir, claim_id, event=event, **fields)
     status = resolve.plan_status(task_dir, ctx.human_names)
     if status != "approved":
         _try_backend(ctx, ctx.backend.post_comment, _ref(task_dir),
@@ -162,13 +167,15 @@ def implement_gate(ctx, task_dir: Path) -> dict:
 
 def block(ctx, task_dir: Path, question: str) -> None:
     claim_id = my_claim(ctx, task_dir)
-    L.update_checkpoint(ctx, task_dir, claim_id, needs_human=question, append={"open_questions": [question]})
+    L.update_checkpoint(ctx, task_dir, claim_id, needs_human=question, append={"open_questions": [question]},
+                        event={"kind": "needs-human", "question": question})
     _try_backend(ctx, ctx.backend.post_comment, _ref(task_dir), f"DAGS: worker needs a human decision:\n\n{question}")
 
 
 def still_working(ctx, task_dir: Path) -> None:
     claim_id = my_claim(ctx, task_dir)
-    L.update_checkpoint(ctx, task_dir, claim_id, human_confirmed_utc=timeutil.iso())
+    L.update_checkpoint(ctx, task_dir, claim_id, human_confirmed_utc=timeutil.iso(),
+                        event={"kind": "still-working", "human": ctx.operator})
 
 
 def release(ctx, task_dir: Path, reason: str = "released") -> None:
