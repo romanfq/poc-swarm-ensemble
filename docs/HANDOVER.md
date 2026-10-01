@@ -70,6 +70,15 @@ frontend `~/Documents/DAGS/matchwire/fe/matchwire-frontend`.
   to solve the friction *without* removing the review gate — so it's used in
   practice, but nothing stops falling back to an admin bypass if D2b is ever
   inconvenient. See "Branch protection and CI".
+- **D27, added 2026-10-01: a coordination repo never doubles as a code repo
+  with branch protection.** The MatchWire swarm's coordination repo is
+  `romanfq/dags-matchwire` (private, no bot access, no PRs). Why: `Coord.push()`
+  pushes `HEAD:<branch>` straight to the remote, hundreds of times a day, which
+  the `main` ruleset rejects; 328 of 369 commits on `main` since 1 September
+  (89%) were ledger commits. Rejected: a ledger branch in this repo (a
+  convention held up by nothing; needs a guard, which is a code change) and a
+  ruleset bypass (disables review for the one account meant to satisfy it).
+  Design: `~/Documents/DAGS/design-matchwire-ledger-vs-ruleset.md`.
 
 **Plan defaults adopted** (no objection raised)
 - **D6: leases (§2.3).** Wall-clock, corrected for skew against GitHub's
