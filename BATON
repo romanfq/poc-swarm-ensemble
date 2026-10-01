@@ -4,10 +4,12 @@
 # (plus the "Next" checklist in docs/HANDOVER.md).
 #
 # holders: cowork (Claude in the Cowork app) | claude-code (Claude Code CLI on the Mac) | roman
-holder: roman
+holder: claude-code
 since: 2026-10-01
-reason: the MatchWire ledger move is done (D27, PR #43); the MatchWire swarm is running
-  from ~/Documents/DAGS/swarm/dags-matchwire. Nothing queued - see docs/HANDOVER.md, "Next".
+reason: Roman is handing the baton over for the GitHub and ledger housekeeping Cowork
+  queued: close #16 as superseded by D27, release two bare claims, label the
+  filed-but-invisible issues, upgrade dags-meta, reconcile the code clone. No
+  next-version fix starts yet. Baton comes back to cowork. docs/HANDOVER.md, "Next".
 history:
   - 2026-09-16 cowork: resumed via the same Cowork task (desktop or mobile), Mac kept awake
     (`caffeinate -is`) with the desktop app open.
@@ -77,3 +79,8 @@ history:
     into #7, PR #43 (bot-authored, merged; first CI run failed on test_seed, fixed). The
     swarm was started by Roman from the new clone and verified: ledger pushes land there,
     no Actions run here.
+  - 2026-10-01 cowork: verified the ledger move landed (dags-matchwire has all 21 task
+    dirs; poc-swarm-ensemble tracks no ledger). Assessed GH-16's unmerged b1d472d: 183
+    lines, not 670 (the earlier figure came from diffing a stale local main), and
+    superseded by D27 - recommended closing. Re-triaged the backlog into waves. Baton to
+    claude-code for the housekeeping only, then back to cowork.
