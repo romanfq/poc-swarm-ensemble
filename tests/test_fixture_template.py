@@ -19,7 +19,9 @@ def test_swarm_template_matches_a_fresh_build(tmp_path, swarm_template):
     assert [r.split()[0] for r in _state(copy / "remote.git")[0].splitlines()] == \
            [r.split()[0] for r in _state(fresh / "remote.git")[0].splitlines()]
     assert sh(["git", "remote", "get-url", "origin"], copy / "seed").strip() == str(copy / "remote.git")
-    sh(["git", "pull", "-q"], copy / "seed")           # the copied remote is usable
+    # the copied remote is usable from the copied seed (it has no upstream, so fetch, don't pull)
+    sh(["git", "fetch", "-q", "origin"], copy / "seed")
+    assert sh(["git", "rev-parse", "origin/main"], copy / "seed") == sh(["git", "rev-parse", "main"], copy / "seed")
 
 
 def test_code_template_matches_a_fresh_build(tmp_path, code_template):
