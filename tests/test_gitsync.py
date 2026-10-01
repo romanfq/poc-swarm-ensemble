@@ -31,7 +31,7 @@ def test_commit_and_push_reach_other_clones(swarm):
 def test_commit_without_changes_is_a_noop(swarm):
     a = swarm.clone("mac-a")
     head = a.coord.head()
-    assert a.coord.commit([a.root / "backend.yaml"], "nothing") is False
+    assert a.coord.commit([a.root / "CONVENTIONS.md"], "nothing") is False
     assert a.coord.head() == head
 
 

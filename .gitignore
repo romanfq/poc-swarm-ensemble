@@ -7,3 +7,8 @@ __pycache__/
 .pytest_cache/
 # Claude Code, per-machine permission rules (never committed)
 .claude/settings.local.json
+# Live ledger lives in romanfq/dags-matchwire (D27); never re-add it here
+/tasks/
+/control/
+/quota/
+/priority/
