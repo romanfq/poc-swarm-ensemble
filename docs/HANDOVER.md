@@ -220,23 +220,47 @@ from `dags-meta` before restarting.
 
 ## Next (holder: claude-code)
 
-1. **Both swarms are stopped; nothing is claiming anything right now.**
-   `dags-meta` still holds two claims from before it stopped (`GH-16`,
-   `GH-21`) — decide whether to release them or let them lapse before
-   restarting it.
-2. **`GH-13` is parked** (`swarm:status:blocked`, done 2026-09-19) — the
-   scaffold still needs doing, just not by accident on restart.
-3. **The MatchWire-ledger-vs-ruleset conflict** (Branch protection section
-   above) needs a real decision before either MatchWire machine restarts.
-   Not designed yet — surface it to Román rather than guessing.
-4. **If restoring the ruff step to CI**, pin the version
-   (`pipx run ruff==<version> check bin tests`) so a future ruff release can't
-   turn `main` red on its own.
-5. **Filing more `next-version` issues:** same recipe as `#1`–`#37` —
+1. **Implement the MatchWire ledger move — this is the one thing blocking both
+   swarms from restarting.** Cowork designed it on 2026-10-01; the full plan,
+   with the exact commands, is
+   `~/Documents/DAGS/design-matchwire-ledger-vs-ruleset.md`. Read it before
+   starting. **Option A is the decision:** the MatchWire swarm gets its own
+   coordination repo, `romanfq/dags-matchwire` (private), in the shape `dags-meta`
+   already proves. Record it as D27 here.
+
+   Two facts from the code the design rests on, so you do not re-derive them:
+   `Coord.push()` pushes `HEAD:{self.branch()}` and hardcodes nothing
+   (`bin/dags/gitsync.py:136`, `:140`, `:143`), and worktrees are cut from the
+   *code* repo's checkout at `rcfg.get("base", "main")`
+   (`work.py:57`, `:238`, `worktree.py:42`), never from the coordination clone —
+   so moving the ledger cannot contaminate a worker's branch or PR.
+
+   Order matters: pre-flight (both machines stopped, nothing unpushed, capture
+   `swarm.py task list --json` as a baseline) → build the new repo → **prove the
+   migration by diffing `task list --json` before and against after; a non-empty
+   diff means stop and report** → (`GH-13` is already parked on the tracker; `dags-meta`'s two stale claims live in
+   its own ledger, not this one) → only then the PR that removes
+   `tasks/`, `control/`, `quota/`, `priority/`, `backend.yaml` and `humans.yaml`
+   from this repo → `paths-ignore` in the workflow → restart one machine.
+
+   **Ask Román before `gh repo create` and before the removal PR.** The removal PR
+   is bot-authored per D2b. Checked already: no test reads the repo-root
+   `backend.yaml`/`humans.yaml` — `tests/conftest.py` writes its own (`:122`,
+   `:123`) — but `test_gitsync.py:34` uses `backend.yaml` as a known-unchanged
+   file and will need another one.
+
+2. **File the two follow-ups** from the design's last section: the spec permits
+   this mistake (and `swarm.py status` could warn when the coordination repo's
+   `main` is protected), and 89% of `main`'s commits since 1 September were ledger
+   noise, which argues for a `swarm.py log` that reads the ledger not git.
+
+3. **Filing more `next-version` issues:** same recipe as `#1`–`#37` —
    `gh issue create --repo romanfq/poc-swarm-ensemble --label next-version
    --title ... --body-file ...`, add a checklist line to `#7`. Check for
    autolink collisions (bare `#<n>` links into *this* repo; backtick a swarm
    short key like `` `GH-4` `` when it could be misread that way) before
    filing.
-6. **Hand back:** update this section and `BATON`'s `history:`, commit
+
+4. **Hand back:** update this section and `BATON`'s `history:`, commit
    locally, push (both daemons are stopped, so nothing pushes this for you).
+
