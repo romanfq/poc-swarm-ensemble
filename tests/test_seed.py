@@ -239,9 +239,9 @@ def test_matchwire_plan_is_valid():
     assert len(tiers) == 18
 
 
-def test_matchwire_plan_matches_backend_yaml():
+def test_matchwire_plan_matches_backend_yaml_example():
     import yaml
-    cfg = yaml.safe_load((ROOT / "backend.yaml").read_text())
+    cfg = yaml.safe_load((ROOT / "templates" / "backend.yaml.example").read_text())
     plan = seed.load(ROOT / "poc" / "matchwire" / "plan.yaml")
     assert plan.repo == cfg["github"]["repo"]
     assert seed.validate(plan, cfg["github"]["repo"], sorted(cfg["repos"])) == []
