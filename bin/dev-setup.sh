@@ -21,4 +21,6 @@ if action != "ok":
 print(f"[dev-setup] .swarm/venv ready ({action})")
 PYEOF
 
-exec .swarm/venv/bin/python -m pytest -q tests "$@"
+# -n auto: the tests are independent (each builds its own repos under tmp_path). --durations feeds
+# the time estimate that "swarm-task done" records in the checkpoint.
+exec .swarm/venv/bin/python -m pytest -q -n auto --durations=20 tests "$@"

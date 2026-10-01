@@ -69,6 +69,7 @@ def ledger(tmp_path):
 
 # --- multi-machine fixtures (Phase 2+) -------------------------------------------
 
+import shutil  # noqa: E402
 import subprocess  # noqa: E402
 
 GIT_ENV = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.com",
@@ -113,10 +114,25 @@ humans:
 class Swarm:
     """A bare 'GitHub' remote plus any number of machine clones."""
 
-    def __init__(self, base: Path):
+    def __init__(self, base: Path, template: Path | None = None):
         self.base = base
         self.remote = base / "remote.git"
-        sh(["git", "init", "-q", "--bare", "-b", "main", str(self.remote)], base)
+        if template is None:
+            self.build(base)
+        else:
+            self.copy_template(template, base)
+
+    @staticmethod
+    def copy_template(template: Path, base: Path) -> None:
+        """Copy a prebuilt remote + seed instead of running git init/commit/push again."""
+        shutil.copytree(template / "remote.git", base / "remote.git", symlinks=True)
+        shutil.copytree(template / "seed", base / "seed", symlinks=True)
+        sh(["git", "remote", "set-url", "origin", str(base / "remote.git")], base / "seed")
+
+    @staticmethod
+    def build(base: Path) -> None:
+        remote = base / "remote.git"
+        sh(["git", "init", "-q", "--bare", "-b", "main", str(remote)], base)
         seed = base / "seed"
         sh(["git", "init", "-q", "-b", "main", str(seed)], base)
         (seed / "backend.yaml").write_text(BACKEND_YAML)
@@ -128,7 +144,6 @@ class Swarm:
         real = Path(__file__).resolve().parent.parent / "templates"
         for f in real.iterdir():
             (tpl / f.name).write_text(f.read_text())
-        import shutil
         shutil.copytree(real.parent / "bin", seed / "bin",
                         ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
         for d in ("tasks", "control", "priority", "quota"):
@@ -136,7 +151,7 @@ class Swarm:
             (seed / d / ".gitkeep").write_text("")
         sh(["git", "add", "-A"], seed)
         sh(["git", "commit", "-qm", "seed"], seed)
-        sh(["git", "remote", "add", "origin", str(self.remote)], seed)
+        sh(["git", "remote", "add", "origin", str(remote)], seed)
         sh(["git", "push", "-q", "origin", "main"], seed)
 
     def clone(self, machine: str, human: str = "roman"):
@@ -150,9 +165,17 @@ class Swarm:
         return Context(path, identity=machine)
 
 
+@pytest.fixture(scope="session")
+def swarm_template(tmp_path_factory):
+    """The bare remote and seed commit, built once per session and copied per test."""
+    base = tmp_path_factory.mktemp("swarm-template")
+    Swarm.build(base)
+    return base
+
+
 @pytest.fixture
-def swarm(tmp_path):
-    return Swarm(tmp_path)
+def swarm(tmp_path, swarm_template):
+    return Swarm(tmp_path, template=swarm_template)
 
 
 class FakeGh:
@@ -186,25 +209,34 @@ class CodeWorld:
     """A coordination swarm plus one code repo ('OWNER/app') with a bare remote,
     a shared fake backend, fake gh PRs and a launcher that records commands."""
 
-    def __init__(self, swarm, base: Path, gh_runner):
+    def __init__(self, swarm, base: Path, gh_runner, template: Path | None = None):
         from backends.fake import FakeBackend
         from fakes import FakePRs
         self.swarm = swarm
         self.base = base
         self.code_remote = base / "app.git"
-        sh(["git", "init", "-q", "--bare", "-b", "main", str(self.code_remote)], base)
-        seed = base / "app-seed"
-        sh(["git", "init", "-q", "-b", "main", str(seed)], base)
-        (seed / "README.md").write_text("app\n")
-        sh(["git", "add", "-A"], seed)
-        sh(["git", "commit", "-qm", "seed"], seed)
-        sh(["git", "push", "-q", str(self.code_remote), "main"], seed)
+        if template is None:
+            self.build(base)
+        else:
+            shutil.copytree(template / "app.git", self.code_remote, symlinks=True)
+            shutil.copytree(template / "app-seed", base / "app-seed", symlinks=True)
         self.backend = FakeBackend(base / "backend.yaml")
         self.prs = FakePRs()
         gh_runner.handler = self.prs
         self.machines: dict = {}
         self.launched: list[list[str]] = []
         self.notes: list[tuple[str, str]] = []
+
+    @staticmethod
+    def build(base: Path) -> None:
+        remote = base / "app.git"
+        sh(["git", "init", "-q", "--bare", "-b", "main", str(remote)], base)
+        seed = base / "app-seed"
+        sh(["git", "init", "-q", "-b", "main", str(seed)], base)
+        (seed / "README.md").write_text("app\n")
+        sh(["git", "add", "-A"], seed)
+        sh(["git", "commit", "-qm", "seed"], seed)
+        sh(["git", "push", "-q", str(remote), "main"], seed)
 
     def machine(self, name: str, human: str = "roman", extra: str = ""):
         if name in self.machines:
@@ -232,6 +264,14 @@ class CodeWorld:
         return Scheduler(ctx, share, worker, notify=self.notify, launch=self.launch, platform="darwin", **kw)
 
 
+@pytest.fixture(scope="session")
+def code_template(tmp_path_factory):
+    """The code repo's bare remote and seed, built once per session and copied per test."""
+    base = tmp_path_factory.mktemp("code-template")
+    CodeWorld.build(base)
+    return base
+
+
 @pytest.fixture
-def world(swarm, tmp_path, fake_gh):
-    return CodeWorld(swarm, tmp_path, fake_gh)
+def world(swarm, tmp_path, fake_gh, code_template):
+    return CodeWorld(swarm, tmp_path, fake_gh, template=code_template)

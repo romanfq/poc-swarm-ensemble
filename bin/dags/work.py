@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -208,13 +209,28 @@ def render(ctx, task_dir: Path, cp: dict) -> tuple[str, str]:
     return commit, body
 
 
-def run_tests(command: str | None, wt: Path, runner=subprocess.run) -> None:
+_DURATION_LINE = re.compile(r"^\s*(\d+(?:\.\d+)?)s\s+(?:call|setup|teardown)\s+(\S+)", re.M)
+
+
+def parse_durations(output: str, limit: int = 10) -> list[dict]:
+    """The slowest tests from pytest's ``--durations`` report, slowest first (setup, call and
+    teardown of one test are added up)."""
+    totals: dict[str, float] = {}
+    for secs, test in _DURATION_LINE.findall(output or ""):
+        totals[test] = totals.get(test, 0.0) + float(secs)
+    slowest = sorted(totals.items(), key=lambda kv: -kv[1])[:limit]
+    return [{"test": t, "seconds": round(s, 1)} for t, s in slowest]
+
+
+def run_tests(command: str | None, wt: Path, runner=subprocess.run) -> str:
+    """Run the repo's test command; returns its output (the durations come from it)."""
     if not command:
-        return
+        return ""
     r = runner(command, shell=True, cwd=str(wt), capture_output=True, text=True)
+    out = (r.stdout or "") + (r.stderr or "")
     if r.returncode != 0:
-        tail = ((r.stdout or "") + (r.stderr or ""))[-3000:]
-        raise WorkError(f"tests failed (`{command}`), not opening a PR (plan §2.10):\n{tail}")
+        raise WorkError(f"tests failed (`{command}`), not opening a PR (plan §2.10):\n{out[-3000:]}")
+    return out
 
 
 def finish(ctx, task_dir: Path, wt: Path, *, skip_tests: bool = False, test_runner=subprocess.run) -> str:
@@ -237,8 +253,9 @@ def finish(ctx, task_dir: Path, wt: Path, *, skip_tests: bool = False, test_runn
     rcfg = ctx.repo_config(repo)
     base = rcfg.get("base", "main")
     branch = worktree.branch_name(task_dir)
+    durations: list[dict] = []
     if not skip_tests:
-        run_tests(rcfg.get("test_command"), wt, test_runner)
+        durations = parse_durations(run_tests(rcfg.get("test_command"), wt, test_runner))
 
     commit_msg, body = render(ctx, task_dir, cp)
     git(["add", "-A"], wt)
@@ -276,7 +293,8 @@ def finish(ctx, task_dir: Path, wt: Path, *, skip_tests: bool = False, test_runn
         url = next((ln.strip() for ln in out.splitlines() if "/pull/" in ln), out.strip())
 
     worker_label = cp.get("worker_label") or cp.get("worker") or "worker"
-    L.update_checkpoint(ctx, task_dir, claim_id, pr_url=url, finished_utc=timeutil.iso(), needs_human=None)
+    L.update_checkpoint(ctx, task_dir, claim_id, pr_url=url, finished_utc=timeutil.iso(), needs_human=None,
+                       **({"test_durations": durations} if durations else {}))
     L.complete(ctx, task_dir, "pr-opened", claim_id=claim_id, pr_url=url, worker=worker_label,
                commit=worktree.head(wt))
     _try_backend(ctx, ctx.backend.set_status, _ref(task_dir), "awaiting-review")
