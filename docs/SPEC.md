@@ -1811,6 +1811,21 @@ their `.swarm/local.yaml`; worktrees are separate per clone.
 | Branch protection "set" but merges still allowed | The repo is private on GitHub Free (Ch.5.5). |
 
 
+## C.12 Take a machine out of rotation
+
+Three levers, from the Board (`?` explains them):
+
+- **Pause** (`p`): the machine claims nothing new and keeps heartbeating the
+  claims it holds. The record is in `control/`, so every machine sees it.
+  `r` resumes. In the worker prompt, "Not now, and pause this machine" does this.
+- **Share 0** (`t`, then 0, confirmed): claims nothing new and *releases* what
+  it holds. A claim with no worker goes at once; a running one checkpoints and
+  goes a lease later. It survives a daemon restart, since the share lives in the
+  ledger. `t` with a larger number undoes it.
+- **Stop** (`s`): the daemon shuts down; claims lapse when their leases expire.
+
+Pause for stepping away; share 0 to hand the work to other machines.
+
 # Appendix D. Reference
 
 ## D.1 Commands (`./bin/swarm.py`)

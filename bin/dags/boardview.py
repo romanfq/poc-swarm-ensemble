@@ -140,7 +140,12 @@ def machine_line(snap: snapshot.Snapshot, daemon_pid: int | None, info: dict | N
     if st.get("stopped") or not daemon_pid:
         state = "stopped" if st.get("stopped") else "daemon not running"
     else:
-        state = "paused" if st.get("paused") else "running"
+        if st.get("paused"):
+            state = "paused — claiming nothing (r resumes)"
+        elif snap.share == 0:
+            state = "share 0 — out of rotation (t sets a share)"
+        else:
+            state = "running"
         up = daemon.uptime_text(info or {})
         if up:
             state += f" ({up})"

@@ -453,3 +453,15 @@ def test_plan_sync_errors_are_notified_once_until_they_clear(world, monkeypatch)
     monkeypatch.setattr(plan, "sync", lambda ctx: (_ for _ in ()).throw(RuntimeError("tracker down")))
     s.cycle()
     assert [t for k, t in world.notes if k == "error"] == ["plan sync failed: tracker down"] * 2
+
+
+def test_share_zero_claims_nothing_and_releases_what_is_held(world):
+    _plan(world, ("T1", {}), ("T2", {}), ("T3", {}))
+    a = world.machine("mac-a")
+    world.scheduler(a, share=2).cycle()                        # T1, T2 claimed
+    work.choose_worker(a, rv.index(a.root)["T1"], "vscode", launch=world.launch, platform="darwin")
+    L.control(a, "throttle", quota_share=0)
+    rep = world.scheduler(a, share=2).cycle()
+    assert rep.claimed == [] and rep.room == 0
+    assert rep.released == ["T2"] and rep.pausing == ["T1"]    # T2 had no worker; T1 checkpoints first
+    assert world.scheduler(a, share=2).cycle().claimed == []
