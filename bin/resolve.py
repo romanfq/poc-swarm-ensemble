@@ -216,6 +216,15 @@ def read_outcome(task_dir) -> Outcome:
     return out
 
 
+def last_submitted_commit(task_dir) -> str | None:
+    """The commit named by the newest `pr-opened` record, i.e. what the PR already holds."""
+    commit = None
+    for _, d in _sorted_records(Path(task_dir) / "completions"):
+        if d.get("kind") == "pr-opened" and d.get("commit"):
+            commit = str(d["commit"])
+    return commit
+
+
 def is_done(task_dir) -> bool:
     return read_outcome(task_dir).kind == "done"
 
