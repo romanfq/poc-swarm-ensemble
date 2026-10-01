@@ -3,6 +3,7 @@ on:
   pull_request:
   push:
     branches: [main]
+    paths-ignore: ['tasks/**', 'control/**', 'quota/**', 'priority/**']
 
 jobs:
   tests:

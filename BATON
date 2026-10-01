@@ -70,3 +70,9 @@ history:
     live that self-approval needs either an admin bypass or a bot-authored PR - settled on
     the latter (D2b/D26 in docs/HANDOVER.md). Both swarms stopped. Rewrote
     docs/HANDOVER.md from scratch.
+  - 2026-10-01 cowork: no hand-off — the baton was never handed back, so claude-code
+    still holds it. Designed the MatchWire-ledger-vs-ruleset fix at Roman's request:
+    ~/Documents/DAGS/design-matchwire-ledger-vs-ruleset.md. Option A (a separate
+    romanfq/dags-matchwire coordination repo) is the decision; B (a ledger branch) and
+    C (a ruleset bypass) are recorded with why not. docs/HANDOVER.md "Next" rewritten
+    around it. Nothing on GitHub, no code written, nothing in dags-meta touched.
