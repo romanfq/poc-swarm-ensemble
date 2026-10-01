@@ -183,6 +183,22 @@ def test_done_after_changes_requested_updates_the_same_pr(claimed):
     assert rv.task_state(d, timeutil.now(), 900) == "awaiting-review"
 
 
+def test_done_after_changes_requested_with_no_new_commit_refuses(claimed):
+    world, a, d, wt = claimed
+    _ready_to_finish(world, a, d, wt)
+    ok = lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, "", "")  # noqa: E731
+    url = work.finish(a, d, wt, test_runner=ok)
+    L.complete(a, d, "reopened", pr_url=url, review_id="R1")
+    world.scheduler(a, worker="claude", run_plan_sync=False).cycle()
+    before = sorted(p.name for p in (d / "completions").iterdir())
+    comments = len(world.prs.get(url)["comments"])
+    with pytest.raises(work.WorkError, match="nothing new since the PR was opened"):
+        work.finish(a, d, wt, test_runner=ok)
+    assert sorted(p.name for p in (d / "completions").iterdir()) == before
+    assert len(world.prs.get(url)["comments"]) == comments
+    assert rv.last_submitted_commit(d) == worktree.head(wt)
+
+
 def test_loss_before_push_stops_done(claimed):
     world, a, d, wt = claimed
     _ready_to_finish(world, a, d, wt)

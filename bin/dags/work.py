@@ -250,6 +250,10 @@ def finish(ctx, task_dir: Path, wt: Path, *, skip_tests: bool = False, test_runn
         git(cmd, wt, input=commit_msg)
     if worktree.commits_ahead(wt, base) == 0:
         raise WorkError(f"{label}: no changes to submit on {branch}")
+    submitted = resolve.last_submitted_commit(task_dir)
+    if submitted and worktree.head(wt) == submitted:
+        raise WorkError(f"{label}: nothing new since the PR was opened ({submitted[:7]}); "
+                        "address the feedback first")
 
     L.require_mine(ctx, task_dir, claim_id)              # last check before the irreversible steps
     git(["push", "-q", "-u", "origin", f"HEAD:refs/heads/{branch}"], wt)
