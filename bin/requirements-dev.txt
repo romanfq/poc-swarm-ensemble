@@ -1,2 +1,3 @@
 -r requirements.txt
 pytest>=8
+pytest-xdist>=3.5  # parallel test runs (-n auto); dev only

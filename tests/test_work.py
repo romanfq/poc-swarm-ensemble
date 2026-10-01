@@ -208,3 +208,15 @@ def test_loss_before_push_stops_done(claimed):
         work.finish(a, d, wt, skip_tests=True)
     assert world.prs.prs == {}
     assert "swarm/T1" not in sh(["git", "branch", "-a"], world.code_remote)
+
+
+def test_parse_durations_sums_phases_and_keeps_the_slowest():
+    out = ("slowest 20 durations\n"
+           "12.50s call     tests/test_a.py::test_one\n"
+           "2.00s setup    tests/test_a.py::test_one\n"
+           "5.00s call     tests/test_b.py::test_two\n"
+           "0.10s teardown tests/test_b.py::test_two\n"
+           "210 passed in 20.00s\n")
+    assert work.parse_durations(out, limit=1) == [{"test": "tests/test_a.py::test_one", "seconds": 14.5}]
+    assert [d["test"] for d in work.parse_durations(out)] == ["tests/test_a.py::test_one", "tests/test_b.py::test_two"]
+    assert work.parse_durations("") == []
