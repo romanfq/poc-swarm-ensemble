@@ -1834,7 +1834,7 @@ Global options go **before** the command: `--root PATH`, `--identity NAME`,
 | `quota set N [--reason]` / `quota show` | Global N |
 | `epic takeover E` / `epic release E` | Soft epic priority |
 | `identity show` / `identity set NAME [--force]` | Show or rename this clone's machine identity |
-| `task list [--all]` / `task show T` | Inspect tasks |
+| `task list [--all] [--json]` / `task show T` | Inspect tasks (`--json`: one object per row, same fields as `task show`) |
 | `task worker T a\|b\|c` | Choose a worker |
 | `task freeze T --reason` / `task unfreeze T` / `task reassign T WINNER --reason` | Arbitration |
 | `task approve-plan T [--reject] [--note]` | Plan review |

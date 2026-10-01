@@ -207,9 +207,6 @@ def test_daemon_log_panel(setup):
 
     def text():
         return log_text(app.query_one("#daemon-log"))
-def test_feed_links_open_on_click(setup):
-    world, a, app, opened = setup
-    url = "https://github.com/OWNER/app/pull/9"
 
     async def go():
         async with app.run_test(size=(160, 50)) as pilot:

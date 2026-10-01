@@ -353,7 +353,7 @@ class BoardApp(App):
         flagged = boardview.poller_flags(ctx.swarm_dir)
         pid = daemon.running_pid(ctx)
         info = daemon.info(ctx) if pid else {}
-        self.call_from_thread(self.apply, snap, new_feed, notes, flagged, pid, info, logged)
+        self.call_from_thread(self.apply, snap, new_feed, notes, flagged, pid, logged, info)
 
     def _fill(self, tid: str, rows: list[tuple[str, tuple]]) -> None:
         table = self.query_one(f"#{tid}", DataTable)
@@ -372,7 +372,7 @@ class BoardApp(App):
                         pass
                     break
 
-    def apply(self, snap, new_feed, notes, flagged, pid, info=None, logged=(0, ())) -> None:
+    def apply(self, snap, new_feed, notes, flagged, pid, logged, info=None) -> None:
         self.snap = snap
         self.query_one("#machine", Static).update(boardview.machine_line(snap, pid, info))
         q = boardview.quota(snap)
@@ -390,7 +390,6 @@ class BoardApp(App):
         generation, entries = logged
         if generation == self.daemon_log.generation:     # else the panel was reloaded meanwhile
             self.write_daemon_log(entries)
-
         self.maybe_prompt_worker()
 
     # -- the daemon's log (GH-10) --------------------------------------------------------

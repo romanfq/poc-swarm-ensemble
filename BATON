@@ -5,9 +5,13 @@
 #
 # holders: cowork (Claude in the Cowork app) | claude-code (Claude Code CLI on the Mac) | roman
 holder: claude-code
-since: 2026-10-01
-reason: Román asked Claude Code to take the baton to work on GH-21 (swarm/GH-21:
-  run the seed CLI test on macOS and fix what it turns up).
+since: 2026-09-19
+reason: GH-18 merged; both swarms are now stopped. CI + branch protection (a GitHub
+  ruleset, not classic protection) are live on main. GH-13 (MatchWire) still needs
+  parking before that swarm restarts, and the MatchWire ledger's direct push will
+  conflict with the new ruleset - neither is resolved yet. docs/HANDOVER.md, "Next"
+  (rewritten from scratch today - it had grown to 725 lines of dated sections and
+  gone stale in places).
 history:
   - 2026-09-16 cowork: resumed via the same Cowork task (desktop or mobile), Mac kept awake
     (`caffeinate -is`) with the desktop app open.
@@ -51,4 +55,24 @@ history:
   - 2026-09-19 claude-code: filed #17-#21, updated #7, ran tools/label-issues.sh
     (dry run then --apply) from dags-meta, labelled #17 by hand, and verified one
     claimable task. No swarm started; nothing in dags-meta edited.
-  - 2026-10-01 claude-code: took the baton at Román's request for GH-21 on swarm/GH-21.
+  - 2026-09-19 cowork: scaffolded dags-meta, triaged the issue list, checked the gate
+    (only #18 claimable). Baton to claude-code for the first dogfood task.
+  - 2026-09-19 cowork: no hand-off — the baton stays with claude-code. At Román's
+    request, queued two items in docs/HANDOVER.md, "Next": add
+    .github/workflows/tests.yml (a build; `pull_request` tests the merge result, which
+    is what 9c69647 lacked), and file the issue that `done` never reads a PR's checks.
+    Items 15 and 16 are still unfiled. Nothing on GitHub, no code written.
+  - 2026-09-19 claude-code: filed #29-#35 (checks never read, pause survives restart,
+    shared test runs [closed - CI + xdist removed the pressure], plan-review answers,
+    worker test runs, commit subject), all added to #7. Added .github/workflows/tests.yml
+    (PR #32) and fixed its one ruff finding (PR #37, authored by the bot so Roman could
+    review it without a bypass). Set up branch protection as a GitHub ruleset; worked out
+    live that self-approval needs either an admin bypass or a bot-authored PR - settled on
+    the latter (D2b/D26 in docs/HANDOVER.md). Both swarms stopped. Rewrote
+    docs/HANDOVER.md from scratch.
+  - 2026-10-01 cowork: no hand-off — the baton was never handed back, so claude-code
+    still holds it. Designed the MatchWire-ledger-vs-ruleset fix at Roman's request:
+    ~/Documents/DAGS/design-matchwire-ledger-vs-ruleset.md. Option A (a separate
+    romanfq/dags-matchwire coordination repo) is the decision; B (a ledger branch) and
+    C (a ruleset bypass) are recorded with why not. docs/HANDOVER.md "Next" rewritten
+    around it. Nothing on GitHub, no code written, nothing in dags-meta touched.
