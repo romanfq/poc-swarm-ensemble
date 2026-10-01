@@ -25,7 +25,7 @@ This is easy to get backwards, so it goes at the top.
 | Code repo(s) | `romanfq/matchwire-backend`, `romanfq/matchwire-frontend` | `romanfq/poc-swarm-ensemble`, a **second** checkout at `~/Documents/DAGS/code/poc-swarm-ensemble` (so it never shares worktrees with this clone — the collision `#13` describes) |
 | What it works on | the MatchWire app (plan §4 POC) | DAGS' own `next-version` backlog, issues `#1`–`#37`+ in this repo |
 | Machines | `macbookpro-68b8` (this clone), `teammate-b` | `dags-a` (`dags-meta`) |
-| Right now | both machines **stopped** | **stopped** too, holding 2 unreleased claims (`GH-16` in-progress, `GH-21` claimed, no worker chosen) — check live: `cd ~/Documents/DAGS/swarm/dags-meta && ./bin/swarm.py status` |
+| Right now | **running** from `~/Documents/DAGS/swarm/dags-matchwire` (see Next 1) | **stopped** too, holding 2 unreleased claims (`GH-16` in-progress, `GH-21` claimed, no worker chosen) — check live: `cd ~/Documents/DAGS/swarm/dags-meta && ./bin/swarm.py status` |
 
 The meta swarm exists because Román is dogfooding DAGS on itself: its plan is
 this repo's own issue tracker, and its workers open PRs against this repo's
@@ -179,13 +179,8 @@ frontend `~/Documents/DAGS/matchwire/fe/matchwire-frontend`.
   each toggle briefly disabled *every* rule, not just review) and `#37` (the
   ruleset; closed and reopened authored by the bot instead of touching the
   ruleset at all — cleaner, keep using this one).
-- **Still unresolved, not yet acted on:** the MatchWire daemon's `gitsync.push()`
-  (`bin/dags/gitsync.py:136`) pushes ledger commits **directly** to `main`,
-  no PR. That will fail the moment either MatchWire machine restarts, because
-  this ruleset now covers `main` and direct pushes aren't exempted. Both
-  machines are stopped, so nothing is broken *yet*. Fixing it means either
-  moving the MatchWire ledger to an unprotected branch/repo, or excluding
-  direct pushes for the ledger somehow — not designed yet.
+- **Resolved 2026-10-01 (D27):** the MatchWire ledger moved to `romanfq/dags-matchwire`, so
+  `gitsync.push()` no longer meets this ruleset.
 
 ## Build status
 
@@ -227,49 +222,27 @@ in-progress, worker vscode; `GH-21` claimed, no worker chosen) — they'll
 lapse on their own or need `task release`. Check `./bin/swarm.py status`
 from `dags-meta` before restarting.
 
-## Next (holder: claude-code)
+## Next (holder: roman)
 
-1. **Implement the MatchWire ledger move — this is the one thing blocking both
-   swarms from restarting.** Cowork designed it on 2026-10-01; the full plan,
-   with the exact commands, is
-   `~/Documents/DAGS/design-matchwire-ledger-vs-ruleset.md`. Read it before
-   starting. **Option A is the decision:** the MatchWire swarm gets its own
-   coordination repo, `romanfq/dags-matchwire` (private), in the shape `dags-meta`
-   already proves. Record it as D27 here.
+1. **The MatchWire ledger move is done (D27, PR #43, 2026-10-01).** The ledger
+   is `romanfq/dags-matchwire`, cloned at `~/Documents/DAGS/swarm/dags-matchwire`
+   (machine identity `macbookpro-a1be`). Verified live: ledger commits land
+   there and no Actions run fires on this repo. The MatchWire swarm is **running**
+   from that clone (claimed `GH-5`). Lessons: the design's "no test reads the
+   repo-root `backend.yaml`" was wrong (`test_seed.py` did; now reads
+   `templates/backend.yaml.example`), and the old clone's `.swarm/identity`
+   (`macbookpro-68b8`) was not carried over. `GH-4` shows `done` in the ledger.
+   `dags-meta` is still stopped with `GH-16`/`GH-21` claimed.
 
-   Two facts from the code the design rests on, so you do not re-derive them:
-   `Coord.push()` pushes `HEAD:{self.branch()}` and hardcodes nothing
-   (`bin/dags/gitsync.py:136`, `:140`, `:143`), and worktrees are cut from the
-   *code* repo's checkout at `rcfg.get("base", "main")`
-   (`work.py:57`, `:238`, `worktree.py:42`), never from the coordination clone —
-   so moving the ledger cannot contaminate a worker's branch or PR.
+2. **Follow-ups filed:** `#41` (spec permits a protected coordination repo;
+   `status` should warn) and `#42` (`swarm.py log` reading the ledger), both in `#7`.
 
-   Order matters: pre-flight (both machines stopped, nothing unpushed, capture
-   `swarm.py task list --json` as a baseline) → build the new repo → **prove the
-   migration by diffing `task list --json` before and against after; a non-empty
-   diff means stop and report** → (`GH-13` is already parked on the tracker; `dags-meta`'s two stale claims live in
-   its own ledger, not this one) → only then the PR that removes
-   `tasks/`, `control/`, `quota/`, `priority/`, `backend.yaml` and `humans.yaml`
-   from this repo → `paths-ignore` in the workflow → restart one machine.
-
-   **Ask Román before `gh repo create` and before the removal PR.** The removal PR
-   is bot-authored per D2b. Checked already: no test reads the repo-root
-   `backend.yaml`/`humans.yaml` — `tests/conftest.py` writes its own (`:122`,
-   `:123`) — but `test_gitsync.py:34` uses `backend.yaml` as a known-unchanged
-   file and will need another one.
-
-2. **File the two follow-ups** from the design's last section: the spec permits
-   this mistake (and `swarm.py status` could warn when the coordination repo's
-   `main` is protected), and 89% of `main`'s commits since 1 September were ledger
-   noise, which argues for a `swarm.py log` that reads the ledger not git.
-
-3. **Filing more `next-version` issues:** same recipe as `#1`–`#37` —
+3. **Filing more `next-version` issues:** same recipe as `#1`–`#42` —
    `gh issue create --repo romanfq/poc-swarm-ensemble --label next-version
    --title ... --body-file ...`, add a checklist line to `#7`. Check for
    autolink collisions (bare `#<n>` links into *this* repo; backtick a swarm
    short key like `` `GH-4` `` when it could be misread that way) before
    filing.
 
-4. **Hand back:** update this section and `BATON`'s `history:`, commit
-   locally, push (both daemons are stopped, so nothing pushes this for you).
-
+4. **Upgrading a swarm** from here: `tools/upgrade-from-source.sh` in
+   `dags-matchwire` (or `dags-meta`), then stop and start each machine.

@@ -4,14 +4,10 @@
 # (plus the "Next" checklist in docs/HANDOVER.md).
 #
 # holders: cowork (Claude in the Cowork app) | claude-code (Claude Code CLI on the Mac) | roman
-holder: claude-code
-since: 2026-09-19
-reason: GH-18 merged; both swarms are now stopped. CI + branch protection (a GitHub
-  ruleset, not classic protection) are live on main. GH-13 (MatchWire) still needs
-  parking before that swarm restarts, and the MatchWire ledger's direct push will
-  conflict with the new ruleset - neither is resolved yet. docs/HANDOVER.md, "Next"
-  (rewritten from scratch today - it had grown to 725 lines of dated sections and
-  gone stale in places).
+holder: roman
+since: 2026-10-01
+reason: the MatchWire ledger move is done (D27, PR #43); the MatchWire swarm is running
+  from ~/Documents/DAGS/swarm/dags-matchwire. Nothing queued - see docs/HANDOVER.md, "Next".
 history:
   - 2026-09-16 cowork: resumed via the same Cowork task (desktop or mobile), Mac kept awake
     (`caffeinate -is`) with the desktop app open.
@@ -76,3 +72,8 @@ history:
     romanfq/dags-matchwire coordination repo) is the decision; B (a ledger branch) and
     C (a ruleset bypass) are recorded with why not. docs/HANDOVER.md "Next" rewritten
     around it. Nothing on GitHub, no code written, nothing in dags-meta touched.
+  - 2026-10-01 claude-code: moved the MatchWire ledger to romanfq/dags-matchwire (created
+    on Roman's yes, migration diff of task list --json empty), recorded D27, filed #41/#42
+    into #7, PR #43 (bot-authored, merged; first CI run failed on test_seed, fixed). The
+    swarm was started by Roman from the new clone and verified: ledger pushes land there,
+    no Actions run here.
