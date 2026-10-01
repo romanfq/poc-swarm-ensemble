@@ -150,7 +150,7 @@ class InputScreen(ModalScreen[str | None]):
 
 class ChoiceScreen(ModalScreen[str | None]):
     """A question with a few options; letters a, b, c… pick directly (Ch.10.7)."""
-    BINDINGS = [Binding("escape", "cancel", "Later"),
+    BINDINGS = [Binding("escape", "cancel", "Not now"),
                 *[Binding(k, f"pick('{k}')", show=False) for k in "abcdef"]]
 
     def __init__(self, question: str, options: list[tuple[str, str]], letters: list[str] | None = None):
@@ -178,7 +178,38 @@ class ChoiceScreen(ModalScreen[str | None]):
         if self.letters and letter in self.letters:
             self.dismiss(self.options[self.letters.index(letter)][0])
 
+    def on_click(self, event) -> None:
+        if event.widget is self:                      # a click outside the dialog
+            self.dismiss(None)
+
     def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+HELP_TEXT = """Taking this machine out of rotation
+
+  p  pause     Claims nothing new; keeps heartbeating what it holds.
+               Every machine sees it. r resumes.
+  t  share 0   Claims nothing new AND releases what it holds (running work
+               checkpoints, then goes a lease later). Survives a daemon
+               restart (the share lives in the ledger). t sets a share again.
+  s  stop      The daemon shuts down. Claims lapse when their leases expire.
+
+Pause keeps your claims alive; share 0 and stop let them go.
+
+In the worker prompt: Esc, a click outside, or "Not now" leaves the task
+claimed and unassigned (press w to choose later)."""
+
+
+class HelpScreen(ModalScreen[None]):
+    BINDINGS = [Binding("escape", "close", "Close"), Binding("question_mark", "close", show=False),
+                Binding("q", "close", show=False)]
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="dialog"):
+            yield Label(HELP_TEXT, markup=False)
+
+    def action_close(self) -> None:
         self.dismiss(None)
 
 
@@ -246,6 +277,7 @@ class BoardApp(App):
         Binding("n", "set_quota", "Global N"),
         Binding("l", "log_level", "Log level"),
         Binding("ctrl+r", "refresh", "Refresh", show=False),
+        Binding("question_mark", "help", "Help"),
         Binding("q", "quit", "Quit"),
     ]
 
@@ -468,6 +500,9 @@ class BoardApp(App):
     def action_refresh(self) -> None:
         self.refresh_data()
 
+    def action_help(self) -> None:
+        self.push_screen(HelpScreen())
+
     def action_pause(self) -> None:
         if self.busy():
             return
@@ -485,6 +520,15 @@ class BoardApp(App):
             n = as_int(value)
             if value is not None and n is None:
                 self.notify(f"not a number: {value}", severity="error")
+            elif n == 0:
+                def sure(ok):
+                    if ok:
+                        self.run_job("share 0 — out of rotation", actions.throttle, self.ctx, 0)
+                self.push_screen(ConfirmScreen(
+                    f"Share 0 takes {self.ctx.identity} out of rotation: it claims nothing new and "
+                    "releases the claims it holds (ones with no worker at once; running ones "
+                    "checkpoint and go a lease later). It stays that way after a restart. "
+                    "Set a share with t to undo. To keep your claims, pause (p) instead."), sure)
             elif n is not None:
                 self.run_job(f"quota share set to {n}", actions.throttle, self.ctx, n)
         current = "" if not self.snap or self.snap.share is None else str(self.snap.share)
@@ -703,13 +747,22 @@ class BoardApp(App):
         pairs = [(letter, name) for letter, name in workers.LETTERS.items() if name in allowed]
         options = [(name, workers.WORKERS[name].label) for _, name in pairs]
         letters = [letter for letter, _ in pairs]
+        for letter, oid, label in zip("defg", ("not-now", "not-now-pause"),
+                                      ("Not now", "Not now, and pause this machine"), strict=False):
+            letters.append(letter)
+            options.append((oid, label))
         question = f"I have claimed {view.short} for completion, who is my worker?"
         self.say(question)
         self.prompt_open = True
 
         def done(choice):
             self.prompt_open = False
-            if not choice:
+            if choice in (None, "not-now", "not-now-pause"):
+                if choice == "not-now-pause":
+                    self.run_job("paused", actions.pause, self.ctx)
+                    self.say(f"Not now — this machine is paused (r resumes). {view.short} stays claimed "
+                             f"and unassigned; press w when you want to choose.")
+                    return
                 self.say(f"No worker chosen for {view.short} yet — press w to choose later.")
                 return
             label = workers.WORKERS[choice].label

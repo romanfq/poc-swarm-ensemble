@@ -292,3 +292,57 @@ def test_table_cells_open_their_links(setup):
             assert opened[2] == actions.ticket_url(a, a.task_dir_for(key))
     run(go())
     assert opened[1] == actions.ticket_url(a, d)
+
+
+def test_not_now_leaves_the_task_unassigned(setup):
+    world, a, app, _ = setup
+
+    async def go():
+        async with app.run_test(size=(160, 50)) as pilot:
+            await until(pilot, lambda: isinstance(app.screen, board.ChoiceScreen))
+            assert "Not now" in [str(o.prompt) for o in app.screen.query_one("#choices").options][3]
+            await pilot.press("d")
+            await until(pilot, lambda: not isinstance(app.screen, board.ChoiceScreen))
+            assert any("press w when you want to choose" in t or "press w to choose later" in t
+                       for t in app.said)
+            assert not world.launched
+            assert not any(d["action"] == "pause" for d in records(a.root, "control"))
+    run(go())
+
+
+def test_not_now_and_pause_pauses_the_machine(setup):
+    world, a, app, _ = setup
+
+    async def go():
+        async with app.run_test(size=(160, 50)) as pilot:
+            await until(pilot, lambda: isinstance(app.screen, board.ChoiceScreen))
+            await pilot.press("e")
+            await until(pilot, lambda: any(d["action"] == "pause" for d in records(a.root, "control")))
+            assert not world.launched
+    run(go())
+
+
+def test_share_zero_asks_for_confirmation(setup):
+    world, a, app, _ = setup
+
+    async def go():
+        async with app.run_test(size=(160, 50)) as pilot:
+            await until(pilot, lambda: isinstance(app.screen, board.ChoiceScreen))
+            await pilot.press("escape")
+            await pilot.press("t")
+            await until(pilot, lambda: isinstance(app.screen, board.InputScreen))
+            app.screen.query_one("#answer").value = ""
+            await pilot.press("0", "enter")
+            await until(pilot, lambda: isinstance(app.screen, board.ConfirmScreen))
+            assert "out of rotation" in app.screen.message
+            await pilot.press("n")
+            await pilot.pause(0.3)
+            assert not any(d.get("quota_share") == 0 for d in records(a.root, "control"))
+            await pilot.press("t")
+            await until(pilot, lambda: isinstance(app.screen, board.InputScreen))
+            app.screen.query_one("#answer").value = ""
+            await pilot.press("0", "enter")
+            await until(pilot, lambda: isinstance(app.screen, board.ConfirmScreen))
+            await pilot.press("y")
+            await until(pilot, lambda: any(d.get("quota_share") == 0 for d in records(a.root, "control")))
+    run(go())

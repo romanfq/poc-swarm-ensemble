@@ -157,3 +157,15 @@ def test_link_kind():
     assert boardview.link_kind("review", "title") == "pr"
     assert boardview.link_kind("review", None) == "pr"
     assert boardview.link_kind("claims", "title") == "ticket"
+
+
+def test_machine_line_says_when_out_of_rotation(world):
+    from dags import snapshot
+    a = world.machine("mac-a")
+    snap = snapshot.take(a)
+    assert "running" in boardview.machine_line(snap, 1)
+    snap.machines["mac-a"] = {"paused": True}
+    assert "paused — claiming nothing (r resumes)" in boardview.machine_line(snap, 1)
+    snap.machines["mac-a"] = {}
+    snap.share = 0
+    assert "share 0 — out of rotation (t sets a share)" in boardview.machine_line(snap, 1)
