@@ -2,7 +2,7 @@
 from datetime import timedelta
 
 import resolve as rv
-from dags import boardview, snapshot, work
+from dags import boardview, snapshot, work, worktree
 from dags import ledger as L
 
 
@@ -169,3 +169,23 @@ def test_machine_line_says_when_out_of_rotation(world):
     snap.machines["mac-a"] = {}
     snap.share = 0
     assert "share 0 — out of rotation (t sets a share)" in boardview.machine_line(snap, 1)
+
+
+def test_test_question_rows(world):
+    world.backend.add("T1", title="Poll", labels=["repo:OWNER/app", "swarm:autonomy:human-must-review"])
+    a = world.machine("mac-a")
+    world.scheduler(a, worker="claude").cycle()
+    d = rv.index(a.root)["T1"]
+    wt = worktree.worktree_path(a, d)
+    assert boardview.test_rows(snapshot.take(a)) == []
+    (wt / "poller.py").write_text("x = 1\n")
+    L.update_checkpoint(a, d, work.my_claim(a, d), test_durations=[{"test": "tests/test_x.py::t", "seconds": 5.0}])
+    work.propose_tests(a, d, wt)
+    snap = snapshot.take(a)
+    [(key, row)] = boardview.test_rows(snap)
+    assert key == "T1" and row[:3] == ("T1", "mac-a", "full") and row[4] == "≥5s"
+    assert "[full]" in boardview.test_question_text(snap.by_key("T1").test_scope["proposal"])
+    jane = world.machine("jane-mac", human="jane")
+    work.answer_tests(jane, rv.index(jane.root)["T1"], "full")
+    a.coord.pull()
+    assert boardview.test_rows(snapshot.take(a)) == []

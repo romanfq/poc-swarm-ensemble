@@ -50,6 +50,9 @@ def status_rows(ctx, identity_new: bool = False, synced: bool = True, share: int
     pending = snap.plans_pending()
     if pending:
         rows.append(("plans", "awaiting review: " + ", ".join(t.short for t in pending), "warn"))
+    asking = snap.tests_pending()
+    if asking:
+        rows.append(("tests", "which tests may run: " + ", ".join(t.short for t in asking), "warn"))
     if snap.awaiting_review:
         rows.append(("review", ", ".join(f"{t.short} {t.pr_url}" for t in snap.awaiting_review), "warn"))
     if pid:

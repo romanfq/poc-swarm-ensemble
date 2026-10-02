@@ -20,7 +20,7 @@ import yaml
 RECORD_DIRS = ("tasks", "control", "priority", "quota")
 
 TASK_SUBDIRS = ("claims", "withdrawals", "arbitration", "heartbeats", "completions", "meta", "plan-reviews",
-                "events")
+                "events", "test-scope")
 
 
 def slug(text: str) -> str:

@@ -188,6 +188,44 @@ def review_plan(ctx: Context, task_dir: Path, plan_sha: str, decision: str, note
     _tx(ctx, f"{human} {decision} plan for {task_dir.name}", build)
 
 
+# -- test scope (GH-50) — a worker's question and a human's answer, append-only ------------
+
+def propose_tests(ctx: Context, task_dir: Path, claim_id: str, proposal: dict) -> str:
+    """Record the worker's question: the proposal, with the recommendation. Returns its id."""
+    out = {}
+
+    def build():
+        if not still_mine(ctx, task_dir, claim_id):
+            raise LostClaim(f"{claim_id} no longer owns {task_dir.name}")
+        clock = resolve.next_clock(ctx.root)
+        pid = R.claim_id(ctx.identity, clock)
+        out["id"] = pid
+        return [R.write_new(task_dir / "test-scope" / R.event_name(ctx.identity, "question", clock),
+                            _stamp(ctx, clock, kind="question", proposal_id=pid, claim_id=claim_id,
+                                   proposal=proposal))]
+
+    _tx(ctx, f"test scope question for {task_dir.name}", build)
+    return out["id"]
+
+
+def answer_tests(ctx: Context, task_dir: Path, proposal_id: str, scope: str, targeted_enough: bool = False,
+                 note: str = "", self_accepted: bool = False) -> None:
+    """A human's answer (``targeted_enough``: ``done`` may run just this scope), or, for an
+    auto-pr task, the worker accepting its own recommendation (``self_accepted``)."""
+    human = None if self_accepted else ctx.require_human()
+
+    def build():
+        clock = resolve.next_clock(ctx.root)
+        name = (R.event_name(ctx.identity, "answer", clock) if self_accepted
+                else R.arbitration_name(human, clock))
+        return [R.write_new(task_dir / "test-scope" / name,
+                            _stamp(ctx, clock, kind="answer", proposal_id=proposal_id, scope=scope,
+                                   targeted_enough=bool(targeted_enough) and not self_accepted,
+                                   human=human, self_accepted=self_accepted, note=note))]
+
+    _tx(ctx, f"{human or 'worker'} answered the test scope for {task_dir.name}: {scope}", build)
+
+
 # -- human levers (Ch.6.6, 10.2) ----------------------------------------------------------
 
 def arbitrate(ctx: Context, task_dir: Path, winner: str | None, reason: str,

@@ -232,3 +232,20 @@ def test_backend_adopt(machine):
     assert r.exit_code != 0 and "already in the plan" in r.output
     b.add("U2", title="Closed", closed=True)
     assert "reopen it first" in invoke("backend", "adopt", "U2").output
+
+
+def test_answer_tests_records_the_humans_answer(machine):
+    import resolve as rv
+    from dags import ledger as L
+    invoke("plan", "sync")
+    d = rv.index(machine.root)["T1"]
+    claim_id = L.claim(machine, d)
+    r = runner.invoke(cli.app, ["task", "answer-tests", "T1", "--scope", "full"])
+    assert r.exit_code == 1 and "no test question" in r.output              # nothing asked yet
+    L.propose_tests(machine, d, claim_id, {"recommendation": "targeted", "options": {}})
+    r = runner.invoke(cli.app, ["task", "answer-tests", "T1", "--scope", "full", "--targeted-is-enough"])
+    assert r.exit_code == 1 and "smaller than full" in r.output
+    assert invoke("task", "answer-tests", "T1", "--scope", "targeted", "--targeted-is-enough",
+                  "--note", "docs only").exit_code == 0
+    st = rv.test_scope_status(d, machine.human_names)
+    assert st["status"] == "answered" and st["answer"]["targeted_enough"] and st["answer"]["note"] == "docs only"

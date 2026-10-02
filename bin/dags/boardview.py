@@ -17,6 +17,7 @@ CLAIM_COLUMNS = ("task", "title", "machine", "human", "clock", "age", "worker", 
 REVIEW_COLUMNS = ("task", "title", "PR", "review", "checks")
 ARBITRATION_COLUMNS = ("task", "claimants", "why")
 PLAN_COLUMNS = ("task", "title", "machine", "plan")
+TEST_COLUMNS = ("task", "machine", "recommended", "reason", "time")
 
 # what a click (or Enter) on a table cell opens: the column's own link, else the table's default
 LINK_COLUMNS = {"task": "ticket", "PR": "pr"}
@@ -116,6 +117,31 @@ def arbitration_rows(snap: snapshot.Snapshot, flagged: list[str]) -> list[tuple[
 def plan_rows(snap: snapshot.Snapshot) -> list[tuple[str, tuple]]:
     return [(t.key, (t.short, t.title, t.owner_machine or "-", t.plan_status or "-"))
             for t in snap.plans_pending()]
+
+
+def test_estimate_text(proposal: dict, scope: str) -> str:
+    """Time for a scope from the slowest tests recorded in the checkpoint (a floor)."""
+    secs = ((proposal.get("options") or {}).get(scope) or {}).get("seconds")
+    return "?" if secs is None else f"≥{age_text(secs)}"
+
+
+def test_rows(snap: snapshot.Snapshot) -> list[tuple[str, tuple]]:
+    """Open "which tests may the worker run?" questions (GH-50)."""
+    rows = []
+    for t in snap.tests_pending():
+        p = t.test_scope["proposal"]
+        rec = p.get("recommendation", "full")
+        rows.append((t.key, (t.short, t.owner_machine or "-", rec, p.get("reason", ""),
+                             test_estimate_text(p, rec))))
+    return rows
+
+
+def test_question_text(proposal: dict) -> str:
+    """What the answer dialog shows: the options, the recommendation and each option's time."""
+    from dags import testscope
+    lines = [testscope.render_text(proposal), "", "Estimated time (slowest recorded tests): "
+             + ", ".join(f"{s} {test_estimate_text(proposal, s)}" for s in testscope.SCOPES)]
+    return "\n".join(lines)
 
 
 @dataclass

@@ -28,7 +28,7 @@ from textual.binding import Binding  # noqa: E402
 from textual.coordinate import Coordinate  # noqa: E402
 from textual.containers import Horizontal, Vertical, VerticalScroll  # noqa: E402
 from textual.screen import ModalScreen  # noqa: E402
-from textual.widgets import (Button, DataTable, Footer, Header, Input, Label, Markdown,  # noqa: E402
+from textual.widgets import (Button, Checkbox, DataTable, Footer, Header, Input, Label, Markdown,  # noqa: E402
                              OptionList, ProgressBar, RichLog, Static)
 from textual.widgets.option_list import Option  # noqa: E402
 
@@ -243,6 +243,40 @@ class PlanScreen(ModalScreen[str | None]):
         self.dismiss(None)
 
 
+class ScopeQuestionScreen(ModalScreen[tuple[str, bool] | None]):
+    """A worker asks which tests it may run (GH-50). The answer is (scope, targeted_is_enough)."""
+    BINDINGS = [Binding("escape", "cancel", "Cancel")]
+
+    def __init__(self, task: str, text: str, recommended: str):
+        super().__init__()
+        self.task_key = task
+        self.text = text
+        self.recommended = recommended
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="dialog"):
+            yield Label(f"Which tests may {self.task_key}'s worker run?", markup=False)
+            with VerticalScroll(id="plan"):
+                yield Static(self.text, markup=False)
+            yield Checkbox("Targeted is enough: done won't run the full suite", id="enough")
+            with Horizontal(id="buttons"):
+                for scope, label in (("none", "None"), ("targeted", "Targeted"),
+                                     ("neighbours", "+ neighbours"), ("full", "Full")):
+                    yield Button(label + (" (recommended)" if scope == self.recommended else ""), id=scope,
+                                 variant="success" if scope == self.recommended else "default")
+                yield Button("Cancel", id="cancel")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "cancel":
+            self.dismiss(None)
+            return
+        enough = self.query_one("#enough", Checkbox).value and event.button.id != "full"
+        self.dismiss((str(event.button.id), enough))
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
 # ---------------------------------------------------------------------------
 # the Board
 # ---------------------------------------------------------------------------
@@ -271,6 +305,7 @@ class BoardApp(App):
         Binding("a", "reassign", "Reassign"),
         Binding("e", "takeover", "Take over epic"),
         Binding("v", "review_plan", "Review plan"),
+        Binding("x", "answer_tests", "Answer tests"),
         Binding("m", "merge", "Approve & merge"),
         Binding("o", "open_ticket", "Ticket"),
         Binding("O,shift+o", "open_pr", "PR"),
@@ -319,6 +354,8 @@ class BoardApp(App):
                 yield LinkTable(id="arbitration", cursor_type="row", zebra_stripes=True)
                 yield Static("Plans awaiting review", classes="panel-title")
                 yield LinkTable(id="plans", cursor_type="row", zebra_stripes=True)
+                yield Static("Test questions", classes="panel-title")
+                yield LinkTable(id="tests", cursor_type="row", zebra_stripes=True)
             with Vertical(id="right"):
                 yield Static("Activity", classes="panel-title")
                 yield RichLog(id="feed", wrap=True, markup=False, highlight=False, max_lines=500)
@@ -329,7 +366,8 @@ class BoardApp(App):
     def on_mount(self) -> None:
         self.sub_title = f"{self.ctx.identity} · operator {self.ctx.operator}"
         for tid, cols in (("claims", boardview.CLAIM_COLUMNS), ("review", boardview.REVIEW_COLUMNS),
-                          ("arbitration", boardview.ARBITRATION_COLUMNS), ("plans", boardview.PLAN_COLUMNS)):
+                          ("arbitration", boardview.ARBITRATION_COLUMNS), ("plans", boardview.PLAN_COLUMNS),
+                          ("tests", boardview.TEST_COLUMNS)):
             self.query_one(f"#{tid}", DataTable).add_columns(*cols)
         log = self.query_one("#feed", RichLog)
         for line in boardview.initial_feed(self.ctx.root, self.seen):
@@ -414,6 +452,7 @@ class BoardApp(App):
         self._fill("review", boardview.review_rows(snap, self.pr_status))
         self._fill("arbitration", boardview.arbitration_rows(snap, flagged))
         self._fill("plans", boardview.plan_rows(snap))
+        self._fill("tests", boardview.test_rows(snap))
         log = self.query_one("#feed", RichLog)
         for line in new_feed:
             log.write(linkify(line))
@@ -461,7 +500,7 @@ class BoardApp(App):
         except Exception:  # noqa: BLE001
             return None
 
-    def selected_task(self, prefer: tuple[str, ...] = ("claims", "review", "arbitration", "plans")) -> str | None:
+    def selected_task(self, prefer: tuple[str, ...] = ("claims", "review", "arbitration", "plans", "tests")) -> str | None:
         focused = self.focused
         if isinstance(focused, DataTable):
             key = self.selected_key(focused)
@@ -715,6 +754,30 @@ class BoardApp(App):
                                 self.ctx, view.dir, decision)
         links = [("Ticket", actions.ticket_url(self.ctx, view.dir)), ("PR", view.pr_url)]
         self.push_screen(PlanScreen(view.short, plan_md, [(n, u) for n, u in links if u]), done)
+
+    def action_answer_tests(self) -> None:
+        if self.busy():
+            return
+        key = self.selected_task(("tests", "claims"))
+        if not key or not self.snap:
+            return
+        view = self.snap.by_key(key)
+        if view is None:
+            self.notify(f"{key} is gone — refreshing", severity="warning")
+            self.refresh_data()
+            return
+        if not view.test_scope or view.test_scope["status"] != "pending":
+            self.notify(f"{view.short} has no open test question", severity="warning")
+            return
+        proposal = view.test_scope["proposal"]
+
+        def done(answer):
+            if answer:
+                scope, enough = answer
+                self.run_job(f"tests for {view.short}: {scope}", worklib.answer_tests,
+                             self.ctx, view.dir, scope, enough)
+        self.push_screen(ScopeQuestionScreen(view.short, boardview.test_question_text(proposal),
+                                         proposal.get("recommendation", "full")), done)
 
     # -- worker choice (Ch.7.3, Ch.10.7) ------------------------------------------------------------
     def maybe_prompt_worker(self) -> None:

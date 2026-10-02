@@ -610,6 +610,17 @@ def task_approve_plan(key: str, reject: bool = typer.Option(False, "--reject"),
     console.print(f"plan for {key} {'sent back' if reject else 'approved'}")
 
 
+@task_app.command("answer-tests")
+@guarded
+def task_answer_tests(key: str, scope: str = typer.Option(..., "--scope", help="none, targeted, neighbours or full"),
+                      targeted_is_enough: bool = typer.Option(False, "--targeted-is-enough",
+                                                              help="`done` may run just this scope, not the full suite."),
+                      note: str = typer.Option("", "--note")):
+    """Answer a worker's question about which tests to run (GH-50)."""
+    work.answer_tests(ctx(), task_dir(key), scope, targeted_is_enough, note)
+    console.print(f"test scope for {key}: {scope}" + (" (enough for done)" if targeted_is_enough else ""))
+
+
 @task_app.command("merge")
 @guarded
 def task_merge(key: str, force: bool = typer.Option(False, "--force", help="Merge even with failing checks.")):
@@ -677,6 +688,33 @@ def task_submit_plan(key: str, file: Path = typer.Option(..., "--file", exists=T
 @guarded
 def task_block(key: str, question: str):
     work.block(ctx(), task_dir(key), question)
+
+
+@task_app.command("propose-tests")
+@guarded
+def task_propose_tests(key: str, worktree_path: Path = typer.Option(..., "--worktree", exists=True, file_okay=False),
+                       accept: bool = typer.Option(False, "--accept", help="auto-pr only: take the recommendation.")):
+    """Map the diff to tests, record the question and print the options (swarm-task test --propose)."""
+    from dags import testscope
+    d = task_dir(key)
+    status = work.propose_tests(ctx(), d, worktree_path)
+    typer.echo(testscope.render_text(status["proposal"]))
+    if accept:
+        typer.echo(f"\nAccepted the recommendation: {work.accept_tests(ctx(), d)}")
+    elif status["status"] == "answered":
+        typer.echo(f"\nAnswered: {status['answer']['scope']}")
+    else:
+        typer.echo(f"\nAsk {resolve.label(d)}'s human to answer on the Swarm Board or with "
+                   f"`swarm.py task answer-tests {resolve.label(d)} --scope ...`, then run `swarm-task test`.")
+
+
+@task_app.command("test-run")
+@guarded
+def task_test_run(key: str, worktree_path: Path = typer.Option(..., "--worktree", exists=True, file_okay=False)):
+    """Run only the answered test scope (swarm-task test)."""
+    scope, output = work.run_scoped_tests(ctx(), task_dir(key), worktree_path)
+    typer.echo(output[-3000:] if output else "")
+    typer.echo(f"tests passed (scope: {scope})" if output or scope != "none" else "no tests to run (scope: none)")
 
 
 @task_app.command("done")
