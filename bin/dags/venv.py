@@ -93,6 +93,40 @@ def plan_action(root: Path, dev: bool) -> str:
     return "ok"
 
 
+def find_reusable(root: Path, dev: bool = True, source: Path | str | None = None) -> Path | None:
+    """The coordination repo's venv interpreter, if its stamp matches what ``root`` wants.
+
+    The venv holds absolute paths, so it is used in place (never copied). ``source`` is the
+    coordination repo; default ``DAGS_VENV_FROM``, else ``coordination_root`` from the
+    worktree's ``.swarm-task/context.json``. None means: build one.
+    """
+    root = Path(root)
+    try:
+        if source is None:
+            source = os.environ.get("DAGS_VENV_FROM")
+        if not source:
+            ctx = json.loads((root / ".swarm-task" / "context.json").read_text())
+            source = ctx.get("coordination_root")
+        if not source:
+            return None
+        source = Path(source)
+        if source.resolve() == root.resolve():
+            return None
+        have = read_stamp(source)
+        py = venv_python(source)
+        if not have or not py.exists():
+            return None
+        want = wanted_stamp(root, dev)
+        for key in ("platform", "machine", "python", "requirements"):
+            if have.get(key) != want[key]:
+                return None
+        if dev and not have.get("dev"):
+            return None
+        return py
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
 def _run(cmd, quiet: bool) -> None:
     r = subprocess.run(cmd, capture_output=quiet, text=True)
     if r.returncode != 0:
