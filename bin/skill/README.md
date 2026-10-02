@@ -29,6 +29,10 @@ change and how you'll test it. Then submit it:
   or taken from you. Don't build a watcher of your own. If it times out (exit 3),
   run it again.
 
+Nothing reaches the reviewer until `.swarm-task/swarm-task plan --submit` runs.
+If the Board notices a draft plan in the worktree, it can submit and review it
+for you.
+
 Don't write any code before the plan is approved.
 
 ## 2. Implement: `.swarm-task/swarm-task implement`

@@ -77,10 +77,16 @@ def claim_rows(snap: snapshot.Snapshot) -> list[tuple[str, tuple]]:
         w = t.winner
         failed = dispatch_failed_text(t)
         worker = t.worker or ("not started" if failed else "awaiting worker")
+        plan_hint = None
+        if t.plan_status == "not submitted":
+            plan_hint = "plan not submitted"
+        elif t.plan_status == "changed since submitted":
+            plan_hint = "plan changed since submitted"
         rows.append((t.key, (t.short, t.title, w.machine, w.human or "?", str(w.clock),
                              age_text(t.claim_age_s(snap.now)), worker,
                              t.state + (" · needs human" if t.needs_human else "")
                              + (" · pausing (quota)" if t.pausing else "")
+                             + (f" · {plan_hint}" if plan_hint else "")
                              + (f" · {failed}" if failed else ""))))
     return rows
 
