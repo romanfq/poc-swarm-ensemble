@@ -8,9 +8,11 @@ from pathlib import Path
 from workers.base import ClaimedTask, MacWorker, applescript_string
 
 PROMPT = ("You are the worker for DAGS task {short} ({title}). Read .swarm-task/README.md and "
-          "follow it exactly: run `.swarm-task/swarm-task plan`, wait for the review gate, then "
+          "follow it exactly: run `.swarm-task/swarm-task plan`, wait for the review gate with "
+          "`.swarm-task/swarm-task wait --for approved` (never a watcher of your own), then "
           "`.swarm-task/swarm-task implement`, and finish with `.swarm-task/swarm-task done`. "
-          "If you need a human decision, run `.swarm-task/swarm-task block \"<question>\"` and stop. "
+          "If you need a human decision, run `.swarm-task/swarm-task block \"<question>\"` and then "
+          "`.swarm-task/swarm-task wait --for answer`. Act on any `[swarm]` message a command prints. "
           "Never run `gh pr merge`.")
 
 

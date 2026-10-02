@@ -56,6 +56,8 @@ def _describe_event(task: str, who: str, machine: str, data: dict) -> str | None
         within = f" within {minutes} minutes" if minutes else ""
         return (f"The quota was lowered: {task} was asked to record its progress and stop{within} "
                 f"({machine})")
+    if k == "human-answered":
+        return f"{who} answered {task}'s question{_quote(data.get('answer'))}"
     if k == "pause-lifted":
         return f"The quota was raised again: {task} can carry on ({machine})"
     return None

@@ -306,6 +306,7 @@ class BoardApp(App):
         Binding("e", "takeover", "Take over epic"),
         Binding("v", "review_plan", "Review plan"),
         Binding("x", "answer_tests", "Answer tests"),
+        Binding("y", "answer_question", "Answer worker"),
         Binding("m", "merge", "Approve & merge"),
         Binding("o", "open_ticket", "Ticket"),
         Binding("O,shift+o", "open_pr", "PR"),
@@ -778,6 +779,23 @@ class BoardApp(App):
                              self.ctx, view.dir, scope, enough)
         self.push_screen(ScopeQuestionScreen(view.short, boardview.test_question_text(proposal),
                                          proposal.get("recommendation", "full")), done)
+
+    def action_answer_question(self) -> None:
+        """Answer a worker's `block` question (GH-2)."""
+        if self.busy():
+            return
+        key = self.selected_task(("tests", "claims"))
+        view = self.snap.by_key(key) if key and self.snap else None
+        if view is None:
+            return
+        if not view.needs_human:
+            self.notify(f"{view.short} has no open question", severity="warning")
+            return
+
+        def done(value):
+            if value:
+                self.run_job(f"answered {view.short}", worklib.answer_question, self.ctx, view.dir, value)
+        self.push_screen(InputScreen(f"{view.short} asks: {view.needs_human}", "your answer"), done)
 
     # -- worker choice (Ch.7.3, Ch.10.7) ------------------------------------------------------------
     def maybe_prompt_worker(self) -> None:

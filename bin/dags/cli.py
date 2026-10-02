@@ -621,6 +621,14 @@ def task_answer_tests(key: str, scope: str = typer.Option(..., "--scope", help="
     console.print(f"test scope for {key}: {scope}" + (" (enough for done)" if targeted_is_enough else ""))
 
 
+@task_app.command("answer")
+@guarded
+def task_answer(key: str, answer: str):
+    """Answer a worker's `block` question; `swarm-task wait` and `implement` print it (GH-2)."""
+    work.answer_question(ctx(), task_dir(key), answer)
+    console.print(f"answered {key}")
+
+
 @task_app.command("merge")
 @guarded
 def task_merge(key: str, force: bool = typer.Option(False, "--force", help="Merge even with failing checks.")):
@@ -662,6 +670,13 @@ def task_still_working(key: str):
 def task_context(key: str):
     """Checkpoint, plan status and PR feedback as JSON (swarm-task implement)."""
     typer.echo(json.dumps(work.implement_gate(ctx(), task_dir(key)), default=str, indent=2))
+
+
+@task_app.command("events")
+@guarded
+def task_events(key: str, claim: str = typer.Option(..., "--claim")):
+    """What happened to the worker's task, as JSON (swarm-task wait, and the head of every command)."""
+    typer.echo(json.dumps(work.worker_events(ctx(), task_dir(key), claim), default=str))
 
 
 @task_app.command("note")

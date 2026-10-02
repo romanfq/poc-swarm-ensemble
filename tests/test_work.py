@@ -341,3 +341,72 @@ def test_targeted_is_enough_only_counts_for_the_diff_it_was_about(claimed):
     assert work._done_scope(a, d, wt) == (None, None)
     with pytest.raises(work.WorkError, match="smaller than full"):
         work.answer_tests(jane, jd, "full", targeted_enough=True)
+
+
+# -- GH-2: the worker is told what happened to its task -----------------------------------
+
+def _events(a, d, claim=None):
+    claim = claim or rv.resolve(d, timeutil.now(), 900).winner.id
+    return work.worker_events(a, d, claim)
+
+
+def _kinds(info):
+    return [e["kind"] for e in info["events"]]
+
+
+def test_events_report_the_review_and_the_reviewers_note(claimed):
+    world, a, d, wt = claimed
+    assert _kinds(_events(a, d)) == []
+    work.submit_plan(a, d, "# Plan\npoll every 60s")
+    assert _kinds(_events(a, d)) == [] and _events(a, d)["plan_status"] == "pending-review"
+    jane = world.machine("jane-mac", human="jane")
+    work.approve_plan(jane, rv.index(jane.root)["T1"], "changes-requested", "use the push feed")
+    info = _events(a, d)
+    assert _kinds(info) == ["plan-changes-requested"]
+    assert "jane sent the plan back" in info["events"][0]["text"] and "use the push feed" in info["events"][0]["text"]
+    assert info["events"][0]["stop"]
+    work.submit_plan(a, d, "# Plan v2")
+    assert _kinds(_events(a, d)) == []                  # the old review doesn't carry over
+    _approve(world, a, d)
+    info = _events(a, d)
+    assert _kinds(info) == ["plan-approved"] and info["plan_status"] == "approved" and not info["events"][0]["stop"]
+
+
+def test_a_human_answers_a_blocked_worker(claimed):
+    world, a, d, wt = claimed
+    work.block(a, d, "store cancelled matches?")
+    assert _events(a, d)["open_question"] == "store cancelled matches?"
+    jane = world.machine("jane-mac", human="jane")
+    jd = rv.index(jane.root)["T1"]
+    with pytest.raises(work.WorkError):
+        work.answer_question(jane, jd, "  ")
+    work.answer_question(jane, jd, "yes, with a status flag")
+    a.coord.pull()
+    info = _events(a, d)
+    assert info["open_question"] is None
+    assert _kinds(info) == ["answered"] and "yes, with a status flag" in info["events"][0]["text"]
+    with pytest.raises(work.WorkError):
+        work.answer_question(jane, jd, "again")         # nothing left to answer
+    from dags import snapshot
+    assert snapshot.take(a).by_key("T1").needs_human is None
+    work.block(a, d, "store cancelled matches?")        # the same question asked again is open again
+    assert _events(a, d)["open_question"] == "store cancelled matches?"
+
+
+def test_events_report_pause_machine_pause_and_a_lost_claim(claimed):
+    world, a, d, wt = claimed
+    claim = rv.resolve(d, timeutil.now(), 900).winner.id
+    L.update_checkpoint(a, d, claim, pause_requested={"claim_id": claim, "at": timeutil.iso(), "reason": "quota"})
+    info = _events(a, d)
+    assert _kinds(info) == ["pause-requested"] and info["events"][0]["sticky"] and info["events"][0]["stop"]
+    L.update_checkpoint(a, d, claim, pause_requested=None)
+    from dags import actions
+    actions.pause(a)
+    assert _kinds(_events(a, d)) == ["machine-paused"]
+    actions.resume(a)
+    jane = world.machine("jane-mac", human="jane")
+    actions.freeze(jane, rv.index(jane.root)["T1"], "wrong approach")
+    a.coord.pull()
+    info = _events(a, d, claim)
+    assert _kinds(info) == ["claim-lost"]
+    assert "jane froze the task: wrong approach" in info["events"][0]["text"]
