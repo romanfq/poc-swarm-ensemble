@@ -75,3 +75,45 @@ def test_pr_for_branch_prefers_open(fake_gh):
     assert gh.pr_for_branch("o/r", "swarm/x")["number"] == 2
     fake_gh.handler = lambda a, e, i: "[]"
     assert gh.pr_for_branch("o/r", "swarm/x") is None
+
+
+class _Clock:
+    def __init__(self):
+        self.t = 0.0
+
+    def sleep(self, s):
+        self.t += s
+
+    def now(self):
+        return self.t
+
+
+def _waiter(monkeypatch, views, **kw):
+    clock = _Clock()
+    seq = iter(views)
+    monkeypatch.setattr(gh, "pr_view", lambda repo, pr, fields=None, token=None: next(seq))
+    return gh.wait_for_checks("o/r", 1, 60, 10, sleep=clock.sleep, clock=clock.now, **kw), clock
+
+
+def test_wait_for_checks_settles_green_and_red(monkeypatch):
+    run = {"status": "IN_PROGRESS"}
+    (summary, _), clock = _waiter(monkeypatch, [{"statusCheckRollup": [run]},
+                                                 {"statusCheckRollup": [{"conclusion": "SUCCESS"}]}])
+    assert summary == "passing" and clock.t == 10
+    red = {"name": "tests", "conclusion": "FAILURE"}
+    (summary, view), _ = _waiter(monkeypatch, [{"statusCheckRollup": [red]}])
+    assert summary == "failing" and gh.failing_checks(view) == ["tests"]
+
+
+def test_wait_for_checks_times_out_pending(monkeypatch):
+    (summary, _), clock = _waiter(monkeypatch, [{"statusCheckRollup": [{"status": "QUEUED"}]}] * 10)
+    assert summary == "pending" and clock.t == 60
+
+
+def test_wait_for_checks_empty_rollup_gets_a_grace_period(monkeypatch):
+    views = [{"statusCheckRollup": []}, {"statusCheckRollup": []},
+             {"statusCheckRollup": [{"conclusion": "SUCCESS"}]}]
+    (summary, _), _ = _waiter(monkeypatch, views)
+    assert summary == "passing"
+    (summary, _), clock = _waiter(monkeypatch, [{"statusCheckRollup": []}] * 10)
+    assert summary == "no checks" and clock.t == 30

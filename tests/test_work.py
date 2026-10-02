@@ -9,6 +9,8 @@ from conftest import sh
 from dags import ledger as L
 from dags import timeutil, work, worktree
 
+OK = lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, "", "")  # noqa: E731
+
 
 @pytest.fixture
 def claimed(world):
@@ -410,3 +412,42 @@ def test_events_report_pause_machine_pause_and_a_lost_claim(claimed):
     info = _events(a, d, claim)
     assert _kinds(info) == ["claim-lost"]
     assert "jane froze the task: wrong approach" in info["events"][0]["text"]
+
+
+def _wait_with(a, monkeypatch, checks):
+    """`done` waits for these checks (a fake clock, so no real sleeping)."""
+    monkeypatch.setattr(a, "repo_config", lambda repo: {"base": "main", "test_command": "true", "checks_timeout": 60})
+    from dags import gh
+    real = gh.pr_view
+
+    def view(repo, pr, fields=gh.PR_FIELDS, token=None):
+        v = real(repo, pr, fields, token=token)
+        if "statusCheckRollup" in v:
+            v["statusCheckRollup"] = checks
+        return v
+    monkeypatch.setattr(gh, "pr_view", view)
+    t = [0.0]
+    return {"wait_sleep": lambda s: t.__setitem__(0, t[0] + s), "wait_clock": lambda: t[0]}
+
+
+def test_done_keeps_the_task_when_checks_fail(claimed, monkeypatch):
+    world, a, d, wt = claimed
+    _ready_to_finish(world, a, d, wt)
+    kw = _wait_with(a, monkeypatch, [{"name": "tests", "conclusion": "FAILURE"}])
+    with pytest.raises(work.WorkError, match="checks failed.*tests"):
+        work.finish(a, d, wt, test_runner=OK, **kw)
+    a.coord.pull()
+    assert rv.task_state(d, timeutil.now(), 900) == "in-progress"
+    assert rv.read_outcome(d).kind is None
+    assert "tests" in L.read_checkpoint(d)["ci_failure"]
+
+
+def test_done_finishes_when_checks_pass_are_pending_or_absent(claimed, monkeypatch):
+    world, a, d, wt = claimed
+    _ready_to_finish(world, a, d, wt)
+    said = []
+    kw = _wait_with(a, monkeypatch, [])
+    url = work.finish(a, d, wt, test_runner=OK, say=said.append, **kw)
+    assert url and any("no checks configured" in s for s in said)
+    a.coord.pull()
+    assert rv.task_state(d, timeutil.now(), 900) == "awaiting-review"

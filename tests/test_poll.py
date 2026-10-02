@@ -257,3 +257,16 @@ def test_poller_sweeps_worktrees_of_tasks_finished_elsewhere(pr_open):
     assert wt.exists()
     Poller(a, notify=world.notify, use_gh=False).cycle()
     assert not wt.exists()
+
+
+def test_red_checks_after_release_alert_once_per_episode(pr_open):
+    world, a, d, wt, url, poller = pr_open
+    poller.cycle()
+    pr = world.prs.get(url)
+    pr["statusCheckRollup"] = [{"conclusion": "FAILURE"}]
+    assert len(texts(poller.cycle(), "checks-failing")) == 1
+    assert texts(poller.cycle(), "checks-failing") == []
+    pr["statusCheckRollup"] = [{"conclusion": "SUCCESS"}]
+    assert texts(poller.cycle(), "checks-failing") == []
+    pr["statusCheckRollup"] = [{"conclusion": "FAILURE"}]
+    assert len(texts(poller.cycle(), "checks-failing")) == 1

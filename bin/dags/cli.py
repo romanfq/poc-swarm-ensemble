@@ -737,7 +737,7 @@ def task_test_run(key: str, worktree_path: Path = typer.Option(..., "--worktree"
 def task_done(key: str, worktree_path: Path = typer.Option(..., "--worktree", exists=True, file_okay=False),
               skip_tests: bool = typer.Option(False, "--skip-tests", hidden=True)):
     """The output contract: test, commit, push, open the PR (Ch.7.3)."""
-    url = work.finish(ctx(), task_dir(key), worktree_path, skip_tests=skip_tests)
+    url = work.finish(ctx(), task_dir(key), worktree_path, skip_tests=skip_tests, say=typer.echo)
     typer.echo(url)
 
 

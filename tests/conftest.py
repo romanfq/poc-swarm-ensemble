@@ -90,6 +90,7 @@ repos:
   OWNER/app:
     base: main
     test_command: "true"
+    checks_timeout: 0        # `done` does not wait for checks unless a test asks (GH-29)
 default_repo: OWNER/app
 swarm:
   default_quota: 3

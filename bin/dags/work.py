@@ -347,7 +347,31 @@ def run_tests(command: str | None, wt: Path, runner=subprocess.run) -> str:
     return out
 
 
-def finish(ctx, task_dir: Path, wt: Path, *, skip_tests: bool = False, test_runner=subprocess.run) -> str:
+def _await_checks(ctx, task_dir, claim_id, rcfg, url, token, say, sleep, clock) -> None:
+    """Wait briefly for the PR's checks (GH-29). Red: keep the task, record why, raise.
+    Pending after the timeout, or no checks at all: carry on and say so."""
+    timeout = float(rcfg.get("checks_timeout", 300))
+    found = gh.repo_from_pr_url(url)
+    if timeout <= 0 or not found:
+        return
+    say(f"waiting up to {int(timeout)}s for the checks on {url} ...")
+    try:
+        summary, view = gh.wait_for_checks(*found, timeout, token=token, sleep=sleep, clock=clock)
+    except (gh.GhError, FileNotFoundError, ValueError) as e:
+        say(f"could not read the checks ({e}); finishing without them")
+        return
+    if summary == "failing":
+        names = ", ".join(gh.failing_checks(view)) or "unknown"
+        msg = f"checks failed on {url}: {names}"
+        L.update_checkpoint(ctx, task_dir, claim_id, ci_failure=msg, append={"open_questions": [msg]})
+        raise WorkError(f"{msg}. The task stays in progress: fix it, then run `done` again.")
+    say({"passing": "checks passed",
+         "pending": "checks are still running after the wait; finishing without a verdict",
+         "no checks": "no checks configured on this PR; finishing as usual"}[summary])
+
+
+def finish(ctx, task_dir: Path, wt: Path, *, skip_tests: bool = False, test_runner=subprocess.run,
+           say=lambda text: None, wait_sleep=None, wait_clock=None) -> str:
     from dags.gitsync import git
     wt = Path(wt)
     ctx.coord.pull()
@@ -418,8 +442,9 @@ def finish(ctx, task_dir: Path, wt: Path, *, skip_tests: bool = False, test_runn
             Path(body_file).unlink(missing_ok=True)
         url = next((ln.strip() for ln in out.splitlines() if "/pull/" in ln), out.strip())
 
+    _await_checks(ctx, task_dir, claim_id, rcfg, url, token, say, wait_sleep, wait_clock)
     worker_label = cp.get("worker_label") or cp.get("worker") or "worker"
-    L.update_checkpoint(ctx, task_dir, claim_id, pr_url=url, finished_utc=timeutil.iso(), needs_human=None,
+    L.update_checkpoint(ctx, task_dir, claim_id, pr_url=url, ci_failure=None, finished_utc=timeutil.iso(), needs_human=None,
                        **({"test_durations": durations} if durations else {}))
     L.complete(ctx, task_dir, "pr-opened", claim_id=claim_id, pr_url=url, worker=worker_label,
                commit=worktree.head(wt))
