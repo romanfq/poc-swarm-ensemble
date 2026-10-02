@@ -687,10 +687,14 @@ class BoardApp(App):
             self.notify(f"{view.short} has no PR awaiting review", severity="warning")
             return
 
+        text, over_red = boardview.merge_prompt(
+            view.pr_url, view.short, (self.pr_status.get(view.key) or {}).get("checks"))
+
         def done(ok):
             if ok:
-                self.run_job(f"merged {view.pr_url}", actions.merge, self.ctx, view.dir)
-        self.push_screen(ConfirmScreen(f"Approve and squash-merge {view.pr_url} ({view.short})?"), done)
+                self.run_job(f"merged {view.pr_url}", actions.merge, self.ctx, view.dir,
+                             allow_failing_checks=over_red)
+        self.push_screen(ConfirmScreen(text), done)
 
     # -- links (GH-5) ------------------------------------------------------------------------------
     def action_open_link(self, url: str) -> None:

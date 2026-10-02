@@ -212,3 +212,12 @@ def test_test_question_rows(world):
     work.answer_tests(jane, rv.index(jane.root)["T1"], "full")
     a.coord.pull()
     assert boardview.test_rows(snapshot.take(a)) == []
+
+
+def test_merge_prompt_warns_about_red_and_pending_checks():
+    url = "https://github.com/o/r/pull/9"
+    text, over_red = boardview.merge_prompt(url, "T1", "failing")
+    assert "FAILING" in text and over_red
+    text, over_red = boardview.merge_prompt(url, "T1", "pending")
+    assert "still running" in text and not over_red
+    assert boardview.merge_prompt(url, "T1", "passing") == (f"Approve and squash-merge {url} (T1)?", False)

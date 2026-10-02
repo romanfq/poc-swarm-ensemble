@@ -334,3 +334,13 @@ class DaemonLogTail:
             if self.path.stat().st_size < self.offset:
                 self.offset, self.partial = 0, ""        # rotated/truncated
             return self.generation, [e for e in self._parse(self._chunk(self.offset)) if self.keep(e)]
+
+
+def merge_prompt(pr_url: str | None, short: str, checks: str | None) -> tuple[str, bool]:
+    """The merge confirmation text, and whether confirming means merging over red checks (GH-29)."""
+    base = f"Approve and squash-merge {pr_url} ({short})?"
+    if checks == "failing":
+        return f"CHECKS ARE FAILING on {pr_url}. Merge {short} anyway?", True
+    if checks == "pending":
+        return f"{base} Its checks are still running.", False
+    return base, False

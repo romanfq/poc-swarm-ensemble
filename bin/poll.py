@@ -74,6 +74,7 @@ class Poller:
         data.setdefault("reviews_seen", {})       # key -> [review ids acted on]
         data.setdefault("overlaps", [])
         data.setdefault("announced", [])
+        data.setdefault("checks_red", [])         # task keys whose PR checks are failing (alerted once)
         data.setdefault("first_run", True)
         return data
 
@@ -186,6 +187,13 @@ class Poller:
             rep.pr_status[t.key] = {"state": pr.get("state"), "review": pr.get("reviewDecision"),
                                     "checks": gh.checks_summary(pr), "url": t.pr_url}
             state = pr.get("state")
+            red = self.state["checks_red"]
+            if state == "OPEN" and rep.pr_status[t.key]["checks"] == "failing":
+                if t.key not in red:
+                    red.append(t.key)
+                    rep.add("checks-failing", f"Checks are failing on {t.short}: {t.pr_url}")
+            elif t.key in red:
+                red.remove(t.key)
             if state == "MERGED":
                 actions.record_merged(self.ctx, t.dir, t.pr_url, merged_by=None)
                 rep.add("merged", f"{t.short} was merged — done; dependants can start")

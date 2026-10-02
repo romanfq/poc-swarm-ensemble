@@ -120,8 +120,8 @@ def version() -> str | None:
 PR_FIELDS = "number,url,state,isDraft,reviewDecision,mergedAt,closedAt,headRefName,statusCheckRollup,reviews,comments,title"
 
 
-def pr_view(repo: str, pr: str | int, fields: str = PR_FIELDS) -> dict:
-    return gh_json(["pr", "view", str(pr), "--repo", repo, "--json", fields]) or {}
+def pr_view(repo: str, pr: str | int, fields: str = PR_FIELDS, token: str | None = None) -> dict:
+    return gh_json(["pr", "view", str(pr), "--repo", repo, "--json", fields], token=token) or {}
 
 
 def pr_for_branch(repo: str, branch: str) -> dict | None:
@@ -148,6 +148,35 @@ def checks_summary(pr: dict) -> str:
     if all(s in ("SUCCESS", "NEUTRAL", "SKIPPED") for s in states):
         return "passing"
     return "pending"
+
+
+def failing_checks(pr: dict) -> list[str]:
+    """Names of the checks that failed, for messages."""
+    return [c.get("name") or c.get("context") or "?" for c in pr.get("statusCheckRollup") or []
+            if (c.get("conclusion") or c.get("state") or "").upper() in ("FAILURE", "ERROR", "CANCELLED", "TIMED_OUT")]
+
+
+def wait_for_checks(repo: str, pr: str | int, timeout: float, interval: float = 10, *, grace: float = 30,
+                    token: str | None = None, sleep=None, clock=None) -> tuple[str, dict]:
+    """Poll a PR's checks until they settle or ``timeout`` seconds pass. Returns
+    (``checks_summary`` value, last PR view): passing | failing | pending (timed out) |
+    no checks. An empty rollup is only "no checks" after ``grace`` seconds, because
+    GitHub registers checks a moment after the PR opens."""
+    import time
+    sleep = sleep or time.sleep
+    clock = clock or time.monotonic
+    start = clock()
+    while True:
+        view = pr_view(repo, pr, "statusCheckRollup", token=token)
+        summary = checks_summary(view)
+        elapsed = clock() - start
+        if summary in ("passing", "failing"):
+            return summary, view
+        if summary == "no checks" and elapsed >= min(grace, timeout):
+            return summary, view
+        if elapsed >= timeout:
+            return summary, view
+        sleep(min(interval, max(timeout - elapsed, 0)))
 
 
 def repo_from_pr_url(url: str) -> tuple[str, str] | None:
