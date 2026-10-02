@@ -26,6 +26,10 @@ change and how you'll test it. Then submit it:
   Swarm Board (or with `swarm.py task approve-plan`).
   `.swarm-task/swarm-task status` tells you when it's approved.
 
+Nothing reaches the reviewer until `.swarm-task/swarm-task plan --submit` runs.
+If the Board notices a draft plan in the worktree, it can submit and review it
+for you.
+
 Don't write any code before the plan is approved.
 
 ## 2. Implement: `.swarm-task/swarm-task implement`

@@ -33,7 +33,7 @@ from textual.widgets import (Button, Checkbox, DataTable, Footer, Header, Input,
 from textual.widgets.option_list import Option  # noqa: E402
 
 import workers  # noqa: E402
-from dags import actions, boardview, daemon, feed, gh, snapshot  # noqa: E402
+from dags import actions, boardview, daemon, feed, gh, snapshot, worktree  # noqa: E402
 from dags import work as worklib  # noqa: E402
 from dags.config import Context  # noqa: E402
 
@@ -217,12 +217,14 @@ class PlanScreen(ModalScreen[str | None]):
     """Review gate for human-must-review plans (plan §2.8)."""
     BINDINGS = [Binding("escape", "cancel", "Cancel")]
 
-    def __init__(self, task: str, plan_md: str, links: list[tuple[str, str]] | None = None):
+    def __init__(self, task: str, plan_md: str, links: list[tuple[str, str]] | None = None,
+                 submit_mode: bool = False):
         super().__init__()
         # not self.task: Textual's MessagePump already owns that name.
         self.task_key = task
         self.plan_md = plan_md
         self.links = links or []
+        self.submit_mode = submit_mode
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
@@ -232,8 +234,13 @@ class PlanScreen(ModalScreen[str | None]):
             with VerticalScroll(id="plan"):
                 yield Markdown(self.plan_md or "_empty plan_")
             with Horizontal(id="buttons"):
-                yield Button("Approve", id="approved", variant="success")
-                yield Button("Request changes", id="changes-requested", variant="warning")
+                if self.submit_mode:
+                    yield Button("Submit & approve", id="submit-approved", variant="success")
+                    yield Button("Submit & request changes", id="submit-changes-requested", variant="warning")
+                    yield Button("Submit only", id="submit-only")
+                else:
+                    yield Button("Approve", id="approved", variant="success")
+                    yield Button("Request changes", id="changes-requested", variant="warning")
                 yield Button("Cancel", id="cancel")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -743,17 +750,47 @@ class BoardApp(App):
             self.notify(f"{key} is gone — refreshing", severity="warning")
             self.refresh_data()
             return
-        plan_md = view.checkpoint.get("plan_md")
+        plan_path = self.ctx.worktrees_dir / worktree.task_slug(view.dir) / ".swarm-task" / "plan.md"
+        draft_md = plan_path.read_text(encoding="utf-8", errors="replace") if plan_path.exists() else None
+        submit_mode = view.plan_status in ("not submitted", "changed since submitted")
+        plan_md = draft_md if submit_mode else view.checkpoint.get("plan_md")
         if not plan_md:
             self.notify(f"{view.short} has no plan yet", severity="warning")
             return
 
         def done(decision):
-            if decision:
-                self.run_job(f"plan for {view.short}: {decision}", worklib.approve_plan,
-                                self.ctx, view.dir, decision)
+            if not decision:
+                return
+            if decision == "submit-changes-requested":
+                def note_done(note):
+                    if note is None:
+                        return
+                    def submit_then_request():
+                        worklib.submit_plan(self.ctx, view.dir, plan_md)
+                        worklib.approve_plan(self.ctx, view.dir, "changes-requested", note)
+                        return f"plan for {view.short}: submitted and changes requested"
+                    self.run_job(f"plan for {view.short}: submitted and changes requested",
+                                submit_then_request)
+                self.push_screen(InputScreen(f"Why should {view.short} change the plan?"), note_done)
+                return
+            if decision == "submit-approved":
+                def submit_then_approve():
+                    worklib.submit_plan(self.ctx, view.dir, plan_md)
+                    worklib.approve_plan(self.ctx, view.dir, "approved")
+                    return f"plan for {view.short}: submitted and approved"
+                self.run_job(f"plan for {view.short}: submitted and approved", submit_then_approve)
+                return
+            if decision == "submit-only":
+                def submit_only():
+                    worklib.submit_plan(self.ctx, view.dir, plan_md)
+                    return f"plan for {view.short}: submitted"
+                self.run_job(f"plan for {view.short}: submitted", submit_only)
+                return
+            self.run_job(f"plan for {view.short}: {decision}", worklib.approve_plan,
+                         self.ctx, view.dir, decision)
         links = [("Ticket", actions.ticket_url(self.ctx, view.dir)), ("PR", view.pr_url)]
-        self.push_screen(PlanScreen(view.short, plan_md, [(n, u) for n, u in links if u]), done)
+        self.push_screen(PlanScreen(view.short, plan_md, [(n, u) for n, u in links if u],
+                                    submit_mode=submit_mode), done)
 
     def action_answer_tests(self) -> None:
         if self.busy():

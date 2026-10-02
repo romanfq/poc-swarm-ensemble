@@ -5,13 +5,14 @@ Shared by the status panel (Ch.5.4), the poller (Ch.9.4) and the Swarm Board
 """
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
 import resolve
 from dags import records as R
-from dags import timeutil
+from dags import timeutil, worktree
 
 
 @dataclass
@@ -71,10 +72,38 @@ class TaskView:
     def needs_human(self) -> str | None:
         return self.checkpoint.get("needs_human") or None
 
+    @property
+    def plan_file(self) -> Path | None:
+        wt = Path(self.dir).parent.parent / ".worktrees" / worktree.task_slug(self.dir)
+        p = wt / ".swarm-task" / "plan.md"
+        return p if p.exists() else None
+
     def claim_age_s(self, now: datetime) -> float | None:
         if not self.res.winner:
             return None
         return timeutil.age_seconds(self.res.winner.wall, now)
+
+
+def plan_file_status(root: Path, task_dir: Path, checkpoint: dict) -> str | None:
+    """Local plan draft in the worktree, if it still needs submission or review."""
+    p = root / ".worktrees" / worktree.task_slug(task_dir) / ".swarm-task" / "plan.md"
+    if not p.exists():
+        return None
+    text = p.read_text(encoding="utf-8", errors="replace")
+    stripped = text.strip()
+    if not stripped:
+        return None
+    if "<!-- Replace the guidance below" in stripped:
+        return None
+    if all(token in stripped for token in (
+            "# Plan", "## Understanding", "## Approach", "## Tests", "## Risks / open questions")):
+        return None
+    sha = hashlib.sha256(stripped.encode()).hexdigest()[:12]
+    if not checkpoint.get("plan_sha"):
+        return "not submitted"
+    if sha != checkpoint.get("plan_sha"):
+        return "changed since submitted"
+    return None
 
 
 @dataclass
@@ -123,7 +152,8 @@ class Snapshot:
                 and t.winner in t.res.valid]
 
     def plans_pending(self) -> list[TaskView]:
-        return [t for t in self.live_claims if t.plan_status == "pending-review"]
+        return [t for t in self.live_claims if t.plan_status in (
+            "pending-review", "not submitted", "changed since submitted")]
 
     def tests_pending(self) -> list[TaskView]:
         return [t for t in self.live_claims if t.test_scope and t.test_scope["status"] == "pending"]
@@ -150,12 +180,17 @@ def take(ctx, now: datetime | None = None, share: int | None = None) -> Snapshot
         res = resolve.resolve(d, now, lease, humans)
         state = resolve.task_state(d, now, lease, humans, res)
         ready = (not meta.get("is_epic")) and resolve.ledger_ready(root, d, now, lease, humans, idx)
+        checkpoint = R.load_yaml(d / "checkpoint.yaml")
+        plan_status = resolve.plan_status(d, humans)
+        draft = plan_file_status(root, d, checkpoint)
+        if draft is not None:
+            plan_status = draft
         snap.tasks.append(TaskView(
             key=key, short=str(meta.get("short") or key), dir=d, title=str(meta.get("title") or ""),
             epic=meta.get("epic"), repo=meta.get("repo"), autonomy=str(meta.get("autonomy") or ""),
-            state=state, ready=ready, res=res, checkpoint=R.load_yaml(d / "checkpoint.yaml"),
+            state=state, ready=ready, res=res, checkpoint=checkpoint,
             retries=resolve.retry_count(d, now, lease), meta=meta,
-            plan_status=resolve.plan_status(d, humans), test_scope=resolve.test_scope_status(d, humans)))
+            plan_status=plan_status, test_scope=resolve.test_scope_status(d, humans)))
     snap.quota_n = resolve.global_quota(root, ctx.settings.default_quota, humans)
     active = [t for t in snap.live_claims if t.winner in t.res.valid]
     snap.quota_used = len(active)

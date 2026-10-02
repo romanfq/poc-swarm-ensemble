@@ -178,6 +178,30 @@ def test_review_plan_and_merge(setup, monkeypatch):
     assert merged == [("OWNER/app", str(pr["number"]))]
 
 
+def test_submit_unsubmitted_plan_from_board(setup):
+    world, a, app, _ = setup
+    d = rv.index(a.root)["T1"]
+    work.choose_worker(a, d, "claude", launch=world.launch, platform="darwin")
+    wt = __import__("dags.worktree", fromlist=["worktree_path"]).worktree_path(a, d)
+    (wt / ".swarm-task").mkdir(parents=True, exist_ok=True)
+    (wt / ".swarm-task" / "plan.md").write_text("# Draft\nDo it.\n")
+
+    async def go():
+        async with app.run_test(size=(160, 50)) as pilot:
+            app.selected_task = lambda *args, **kwargs: "T1"
+            await until(pilot, lambda: app.snap and app.snap.by_key("T1").plan_status == "not submitted")
+            await pilot.press("v")
+            await until(pilot, lambda: isinstance(app.screen, board.PlanScreen))
+            await pilot.click("#submit-approved")
+            await until(pilot, lambda: rv.plan_status(d, a.human_names) == "approved")
+            from dags import ledger as L
+            cp = L.read_checkpoint(d)
+            assert cp["plan_md"].startswith("# Draft")
+            assert cp["plan_sha"]
+            assert any(r.get("decision") == "approved" for _, r in __import__("dags.records", fromlist=["read_dir"]).read_dir(d / "plan-reviews"))
+    run(go())
+
+
 def test_non_humans_get_an_error_not_a_crash(setup):
     world, a, app, _ = setup
     (a.swarm_dir / "local.yaml").write_text((a.swarm_dir / "local.yaml").read_text()

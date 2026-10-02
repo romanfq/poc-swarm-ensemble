@@ -75,6 +75,29 @@ def test_review_rows_use_live_pr_status(world):
     assert rows[0][1][3:] == ("changes requested", "passing")
 
 
+def test_plan_rows_detect_unsubmitted_and_changed_plans(world):
+    world.backend.add("T1", title="Poll", labels=["repo:OWNER/app", "type:task"])
+    a = world.machine("mac-a")
+    world.scheduler(a, share=1).cycle()
+    d = rv.index(a.root)["T1"]
+    work.choose_worker(a, d, "vscode", launch=world.launch, platform="darwin")
+    wt = worktree.worktree_path(a, d)
+    (wt / ".swarm-task").mkdir(parents=True, exist_ok=True)
+    (wt / ".swarm-task" / "plan.md").write_text("# Draft\nKeep it short.\n")
+    snap = snapshot.take(a)
+    assert boardview.plan_rows(snap) == [("T1", ("T1", "Poll", "mac-a", "not submitted"))]
+    assert "not submitted" in boardview.claim_rows(snap)[0][1][7]
+
+    (wt / ".swarm-task" / "plan.md").write_text("<!-- Replace the guidance below. Keep it short. -->\n")
+    snap = snapshot.take(a)
+    assert boardview.plan_rows(snap) == []
+
+    work.submit_plan(a, d, "# Submitted\nFirst version.\n")
+    (wt / ".swarm-task" / "plan.md").write_text("# Submitted\nSecond version.\n")
+    snap = snapshot.take(a)
+    assert boardview.plan_rows(snap) == [("T1", ("T1", "Poll", "mac-a", "changed since submitted"))]
+
+
 def test_poller_flags_and_log_tail(tmp_path):
     assert boardview.poller_flags(tmp_path) == []
     (tmp_path / "poller-state.json").write_text('{"needs_arbitration": ["T9"]}')
