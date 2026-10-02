@@ -51,3 +51,18 @@ Other requirements:
   - one manual smoke run against a real site before calling it done.
 - **Labels:** `swarm.py backend init` should print the labels to create. Jira
   creates labels on first use, so this is only a checklist.
+
+## Nudging a worker session (GH-2)
+
+**Status:** not built. `swarm-task wait` and the `[swarm]` news printed by every
+`swarm-task` command (GH-2) are the supported way for a worker to learn what
+happened to its task.
+
+Not done, on purpose:
+
+- **Typing into the worker's terminal with `osascript`.** It can land in the middle
+  of a prompt or a running tool call, and needs Accessibility permission.
+- **Relaunching the worker when a waiting task is approved.** It would start a second
+  session beside the first if the original is still open.
+
+Revisit if workers keep ignoring `wait`.

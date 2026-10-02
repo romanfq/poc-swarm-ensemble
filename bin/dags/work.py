@@ -173,6 +173,33 @@ def block(ctx, task_dir: Path, question: str) -> None:
     _try_backend(ctx, ctx.backend.post_comment, _ref(task_dir), f"DAGS: worker needs a human decision:\n\n{question}")
 
 
+def answer_question(ctx, task_dir: Path, answer: str) -> None:
+    """A human answers the worker's `block` question (Board or `swarm.py task answer`). An
+    append-only event, so any machine may write it; the checkpoint stays the worker's."""
+    human = ctx.require_human()
+    if not answer.strip():
+        raise WorkError("an answer can't be empty")
+    ctx.coord.pull()
+    question = resolve.open_question(task_dir)
+    if not question:
+        raise WorkError(f"{resolve.label(task_dir)} has no open question")
+    cp = L.read_checkpoint(task_dir)
+    L.record_event(ctx, task_dir, "human-answered", claim_id=cp.get("claim_id"), human=human,
+                   question=question, answer=answer.strip())
+    _try_backend(ctx, ctx.backend.post_comment, _ref(task_dir), f"DAGS: {human} answered: {answer.strip()}")
+
+
+def worker_events(ctx, task_dir: Path, claim_id: str) -> dict:
+    """What `swarm-task` prints first, and what `swarm-task wait` blocks on (GH-2). Reads the
+    ledger after a pull; never raises on a lost claim, that is one of the events."""
+    ctx.coord.pull()
+    events = resolve.worker_events(
+        task_dir, claim_id, ctx.identity, timeutil.now(), ctx.settings.lease_s, ctx.human_names,
+        control=L.machine_control(ctx.root, ctx.identity), idle_limit_s=ctx.settings.human_idle_s)
+    return {"events": events, "plan_status": resolve.plan_status(task_dir, ctx.human_names),
+            "open_question": resolve.open_question(task_dir)}
+
+
 def still_working(ctx, task_dir: Path) -> None:
     claim_id = my_claim(ctx, task_dir)
     L.update_checkpoint(ctx, task_dir, claim_id, human_confirmed_utc=timeutil.iso(),

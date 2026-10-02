@@ -69,7 +69,7 @@ class TaskView:
 
     @property
     def needs_human(self) -> str | None:
-        return self.checkpoint.get("needs_human") or None
+        return resolve.open_question(self.dir)
 
     def claim_age_s(self, now: datetime) -> float | None:
         if not self.res.winner:

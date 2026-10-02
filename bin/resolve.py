@@ -581,3 +581,116 @@ def test_scope_status(task_dir, humans: set[str] | None = None) -> dict | None:
         answer = d
     return {"status": "answered" if answer else "pending", "proposal_id": pid,
             "proposal": question.get("proposal") or {}, "answer": answer}
+
+
+# ---------------------------------------------------------------------------
+# What happened to a worker's task (GH-2)
+# ---------------------------------------------------------------------------
+
+# Events that describe a state the worker must act on while it lasts: always shown.
+STICKY_EVENTS = {"claim-lost", "pause-requested", "machine-paused", "machine-stopped"}
+# Events that make `swarm-task wait` stop and hand control back to the worker.
+STOP_EVENTS = STICKY_EVENTS | {"plan-changes-requested"}
+
+
+def open_question(task_dir) -> str | None:
+    """The worker's ``needs_human`` question, unless a human answered it since."""
+    cp = R.load_yaml(Path(task_dir) / "checkpoint.yaml")
+    question = cp.get("needs_human")
+    if not question:
+        return None
+    asked = max([R.clock_of(d) for _, d in _sorted_records(Path(task_dir) / "events")
+                 if d.get("kind") == "needs-human" and d.get("question") == question] or [0])
+    for _, d in _sorted_records(Path(task_dir) / "events"):
+        if d.get("kind") == "human-answered" and d.get("question") == question and R.clock_of(d) >= asked:
+            return None
+    return str(question)
+
+
+def _lost_text(res: Resolution, claim_id: str, withdrawn: dict[str, dict]) -> str:
+    w = withdrawn.get(claim_id)
+    if res.arbitration is not None and (res.winner is None or res.winner.id != claim_id):
+        who = res.arbitration.get("human") or "a human"
+        what = "froze the task" if res.winner is None else f"gave it to {res.winner.machine}"
+        return f"{who} {what}: {res.arbitration.get('reason') or 'no reason given'}"
+    if w:
+        reason = str(w.get("reason") or "withdrawn")
+        if reason == "lost-race":
+            return "another machine's claim won the race for this task"
+        if reason == "quota":
+            return "the claim was released because the quota was lowered"
+        return f"the claim was withdrawn ({reason})"
+    return "the claim's lease expired, or another machine owns the task now"
+
+
+def worker_events(task_dir, claim_id: str, machine: str, now: datetime, lease_s: float,
+                  humans: set[str] | None = None, control: dict | None = None,
+                  idle_limit_s: float | None = None) -> list[dict]:
+    """What the worker should know about its task, as ``{"id", "kind", "text", "sticky", "stop"}``
+    (``stop``: ``swarm-task wait`` hands control back to the worker).
+    Sticky events describe a state that holds until it is lifted; the rest are one-off
+    news, deduplicated by ``id`` on the worker's side. The worker session never learns any
+    of this by itself, so ``swarm-task`` prints these before every command and ``wait``
+    blocks on them."""
+    task_dir = Path(task_dir)
+    out: list[dict] = []
+
+    def add(kind: str, ident: str, text: str) -> None:
+        out.append({"id": f"{kind}:{ident}", "kind": kind, "text": text,
+                    "sticky": kind in STICKY_EVENTS, "stop": kind in STOP_EVENTS})
+
+    res = resolve(task_dir, now, lease_s, humans)
+    if res.winner is None or res.winner.id != claim_id or res.winner not in res.valid:
+        add("claim-lost", claim_id, "You no longer own this task: "
+            + _lost_text(res, claim_id, read_withdrawals(task_dir))
+            + ". Stop working on it; don't run `done`. Your branch stays as it is.")
+        return out
+    cp = R.load_yaml(task_dir / "checkpoint.yaml")
+    req = cp.get("pause_requested")
+    if req and req.get("claim_id") == claim_id:
+        add("pause-requested", str(req.get("at")), f"The swarm asked this task to PAUSE ({req.get('reason')}). "
+            "Record your progress with `swarm-task note --tried ... --remaining ...` and stop; it resumes "
+            "from the checkpoint when a slot frees. It is released one lease after the request.")
+    if control and control.get("stopped"):
+        add("machine-stopped", str(R.clock_of(control.get("last") or {})),
+            f"Machine {machine} was stopped. Record your progress with `swarm-task note` and stop.")
+    elif control and control.get("paused"):
+        add("machine-paused", str(R.clock_of(control.get("last") or {})),
+            f"Machine {machine} was paused: no new work starts and your claim lapses one lease after "
+            "your last note. Record your progress with `swarm-task note` and stop, or ask a human to resume it.")
+    sha = cp.get("plan_sha")
+    if sha:
+        for path, d in _sorted_records(task_dir / "plan-reviews"):
+            if d.get("plan_sha") != sha or (humans is not None and d.get("human") not in humans):
+                continue
+            note = f" Reviewer's note: {d['note']}" if d.get("note") else ""
+            who = d.get("human") or "a human"
+            if d.get("decision") == "changes-requested":
+                add("plan-changes-requested", path.name,
+                    f"{who} sent the plan back.{note} Edit .swarm-task/plan.md and run "
+                    "`swarm-task plan --submit` again; don't implement.")
+            elif d.get("decision") == "approved":
+                add("plan-approved", path.name, f"{who} approved the plan.{note} Next: `swarm-task implement`.")
+        if cp.get("plan_self_approved") == sha:
+            add("plan-approved", sha, "The plan is approved (auto-pr). Next: `swarm-task implement`.")
+        # only the latest decision counts
+        decided = [e for e in out if e["kind"].startswith("plan-")]
+        for e in decided[:-1]:
+            out.remove(e)
+    for path, d in _sorted_records(task_dir / "events"):
+        if d.get("kind") == "human-answered" and d.get("claim_id") == claim_id:
+            add("answered", path.name, f"{d.get('human') or 'A human'} answered your question "
+                f"\"{d.get('question')}\": {d.get('answer')}")
+    outcome = res.outcome
+    if outcome.kind == "reopened" and outcome.record:
+        add("pr-feedback", str(R.clock_of(outcome.record)),
+            "Review feedback on your pull request reopened this task. Run `swarm-task implement` for it.")
+    if idle_limit_s:
+        stamps = [res.winner.wall] + ([cp.get("wall_utc"), cp.get("human_confirmed_utc"), cp.get("dispatched_utc")]
+                                      if cp.get("claim_id") == claim_id else [])
+        ages = [a for a in (timeutil.age_seconds(s, now) for s in stamps if s) if a is not None]
+        if ages and min(ages) > idle_limit_s:
+            add("idle", str(int(min(ages) // 3600)),
+                f"No progress recorded for {int(min(ages) // 3600)}h; the swarm will ask whether you are still "
+                "working. Record what you did with `swarm-task note --summary ...`.")
+    return out

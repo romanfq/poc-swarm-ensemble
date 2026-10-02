@@ -10,6 +10,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -46,6 +47,57 @@ def task_context() -> dict:
     return json.loads(r.stdout)
 
 
+SEEN = HERE / "seen.json"
+
+
+def _seen() -> set:
+    try:
+        return set(json.loads(SEEN.read_text()))
+    except (OSError, ValueError):
+        return set()
+
+
+def _remember(ids) -> None:
+    try:
+        SEEN.write_text(json.dumps(sorted(_seen() | set(ids))))
+    except OSError:
+        pass
+
+
+def fetch_events() -> dict:
+    """What happened to this task since the worker last looked (GH-2): the ledger after a pull."""
+    r = swarm("events", CTX["short"], "--claim", CTX.get("claim_id") or "", capture=True, check=False)
+    if r.returncode != 0:
+        raise RuntimeError((r.stderr or r.stdout or "swarm.py task events failed").strip().splitlines()[-1])
+    return json.loads(r.stdout)
+
+
+def news(info: dict) -> list:
+    """Events to show: states that hold (pause, claim lost) every time, one-off news once."""
+    seen = _seen()
+    return [e for e in info.get("events", []) if e.get("sticky") or e["id"] not in seen]
+
+
+def show(events, out=sys.stdout) -> None:
+    for e in events:
+        print(f"[swarm] {e['text']}", file=out)
+    _remember(e["id"] for e in events if not e.get("sticky"))
+
+
+def pending(needs_claim=False) -> list:
+    """Print pending events before a command runs. Never blocks the command if the ledger can't
+    be read; a lost claim stops the commands that write (``needs_claim``)."""
+    try:
+        fresh = news(fetch_events())
+    except Exception as e:  # noqa: BLE001
+        print(f"[swarm] couldn't check for news ({e})", file=sys.stderr)
+        return []
+    show(fresh)
+    if needs_claim and any(e["kind"] == "claim-lost" for e in fresh):
+        sys.exit("swarm-task: stopping, this task is no longer yours")
+    return fresh
+
+
 def bullet(items):
     items = [i for i in (items or []) if str(i).strip()]
     return "\n".join(f"- {i}" for i in items) if items else "- (none)"
@@ -79,6 +131,7 @@ Open questions:
 
 
 def cmd_plan(args):
+    pending()
     plan = HERE / "plan.md"
     if args.submit:
         if not plan.exists():
@@ -117,6 +170,7 @@ def pause_note(cp):
 
 
 def cmd_status(args):
+    pending()
     info = task_context()
     cp = info.get("checkpoint") or {}
     if pause_note(cp):
@@ -130,6 +184,7 @@ def cmd_status(args):
 
 
 def cmd_implement(args):
+    pending()
     info = task_context()
     if pause_note(info.get("checkpoint") or {}):
         sys.exit("swarm-task: " + pause_note(info["checkpoint"]))
@@ -155,7 +210,47 @@ def cmd_implement(args):
     print("\nRecord progress with `swarm-task note ...`; finish with `swarm-task done`.")
 
 
+def cmd_wait(args):
+    """Block until something happens to the task. Exit 0: what you waited for happened;
+    2: stop and read the message (plan sent back, pause, claim lost); 3: timed out."""
+    deadline = time.monotonic() + args.timeout if args.timeout else None
+    while True:
+        try:
+            info = fetch_events()
+        except Exception as e:  # noqa: BLE001
+            print(f"[swarm] couldn't read the ledger ({e}); trying again", file=sys.stderr)
+            info = None
+        if info:
+            fresh = news(info)
+            stop = [e for e in fresh if e.get("stop")]
+            if stop:
+                show(fresh)
+                return 2
+            want = args.wait_for
+            if want == "approved" and info.get("plan_status") == "approved":
+                show(fresh)
+                if not any(e["kind"] == "plan-approved" for e in fresh):
+                    print("[swarm] The plan is approved. Next: `swarm-task implement`.")
+                return 0
+            if want == "answer":
+                if any(e["kind"] == "answered" for e in fresh):
+                    show(fresh)
+                    return 0
+                if not info.get("open_question"):
+                    show(fresh)
+                    print("[swarm] There is no open question.")
+                    return 0
+            if want == "any" and [e for e in fresh if e["kind"] != "idle"]:
+                show(fresh)
+                return 0
+        if deadline is not None and time.monotonic() >= deadline:
+            print(f"[swarm] nothing yet after {args.timeout}s; run `swarm-task wait` again to keep waiting.")
+            return 3
+        time.sleep(args.interval)
+
+
 def cmd_note(args):
+    pending(needs_claim=True)
     extra = []
     if args.summary is not None:
         extra += ["--summary", args.summary]
@@ -174,11 +269,13 @@ def cmd_note(args):
 
 
 def cmd_block(args):
+    pending(needs_claim=True)
     swarm("block", CTX["short"], args.question)
-    print("Recorded. A human has been asked; stop here until they answer.")
+    print("Recorded. A human has been asked. Run `swarm-task wait --for answer` and carry on when it returns.")
 
 
 def cmd_test(args):
+    pending(needs_claim=True)
     if args.propose:
         r = swarm("propose-tests", CTX["short"], "--worktree", str(WORKTREE),
                   *(["--accept"] if args.accept else []), capture=True)
@@ -191,6 +288,7 @@ def cmd_test(args):
 
 
 def cmd_done(args):
+    pending(needs_claim=True)
     extra = ["--skip-tests"] if args.skip_tests else []
     r = swarm("done", CTX["short"], "--worktree", str(WORKTREE), *extra, capture=True)
     url = r.stdout.strip().splitlines()[-1] if r.stdout.strip() else ""
@@ -207,6 +305,11 @@ def main(argv=None):
     sp.set_defaults(fn=cmd_plan)
     sub.add_parser("status", help="plan/review status").set_defaults(fn=cmd_status)
     sub.add_parser("implement", help="print the approved plan, checkpoint and feedback").set_defaults(fn=cmd_implement)
+    sw = sub.add_parser("wait", help="block until the plan is approved, a human answers, or the task changes")
+    sw.add_argument("--for", dest="wait_for", choices=("approved", "answer", "any"), default="any")
+    sw.add_argument("--timeout", type=float, default=1500, help="seconds; 0 waits forever (default 1500)")
+    sw.add_argument("--interval", type=float, default=30, help="seconds between checks (default 30)")
+    sw.set_defaults(fn=cmd_wait)
     sn = sub.add_parser("note", help="record progress in checkpoint.yaml")
     sn.add_argument("--summary")
     sn.add_argument("--tried", nargs="*")
@@ -225,7 +328,7 @@ def main(argv=None):
     sd.add_argument("--skip-tests", action="store_true", help=argparse.SUPPRESS)
     sd.set_defaults(fn=cmd_done)
     args = p.parse_args(argv)
-    args.fn(args)
+    sys.exit(args.fn(args) or 0)
 
 
 if __name__ == "__main__":

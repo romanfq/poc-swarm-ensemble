@@ -23,8 +23,11 @@ change and how you'll test it. Then submit it:
 
 - **auto-pr** tasks: you may approve your own plan, so you can go straight on.
 - **human-must-review** tasks: wait until a human approves the plan on the
-  Swarm Board (or with `swarm.py task approve-plan`).
-  `.swarm-task/swarm-task status` tells you when it's approved.
+  Swarm Board (or with `swarm.py task approve-plan`). Then run
+  `.swarm-task/swarm-task wait --for approved`. It blocks cheaply and returns when
+  the plan is approved, sent back (with the reviewer's note), or the task is paused
+  or taken from you. Don't build a watcher of your own. If it times out (exit 3),
+  run it again.
 
 Don't write any code before the plan is approved.
 
@@ -38,9 +41,14 @@ as you go, so anyone can resume if you stop:
     .swarm-task/swarm-task note --tried "cached the feed client" --remaining "parse scores" "tests"
     .swarm-task/swarm-task note --summary "Adds a 60s poller for the sports feed" --risk "rate limits"
 
-If you need a decision from a human, ask and then **stop**. Don't guess:
+If you need a decision from a human, ask and then **wait** for the answer. Don't guess:
 
     .swarm-task/swarm-task block "Should cancelled matches be stored?"
+    .swarm-task/swarm-task wait --for answer
+
+Every `swarm-task` command starts by printing news about your task (`[swarm] ...`):
+a human's answer, a plan sent back, a pause request, or a lost claim. If it says the
+task is no longer yours, or asks you to pause, record your progress with `note` and stop.
 
 ## 3. Finish: `.swarm-task/swarm-task done`
 
