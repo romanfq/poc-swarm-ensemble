@@ -24,7 +24,7 @@ except ImportError:  # pragma: no cover - typer < 0.17
 
 import resolve
 from backends.base import AUTONOMY_TIERS, SWARM_STATUSES, TaskRef
-from dags import actions, daemon, gh, panel, plan, prereqs, repos, snapshot, timeutil, work
+from dags import actions, daemon, feed, gh, panel, plan, prereqs, repos, snapshot, timeutil, work
 from dags import ledger as L
 from dags.config import ConfigError, Context
 from dags.gitsync import GitError
@@ -249,6 +249,34 @@ def status(as_json: bool = typer.Option(False, "--json")):
         typer.echo(json.dumps([{"label": a, "value": b, "style": s} for a, b, s in rows], indent=2))
     else:
         console.print(panel.render(rows))
+
+
+@app.command()
+@guarded
+def log(task: Optional[str] = typer.Option(None, "--task", help="Only this task (key or short name)."),
+        machine: Optional[str] = typer.Option(None, "--machine", help="Only this machine."),
+        limit: int = typer.Option(50, "--limit", help="Show the latest N events (0 = all)."),
+        heartbeats: bool = typer.Option(False, "--heartbeats", help="Add one line per task and machine "
+                                        "for its last heartbeat."),
+        as_json: bool = typer.Option(False, "--json")):
+    """The ledger's history in plain English, oldest first. Reads records, not git log."""
+    c = ctx()
+    try:
+        c.coord.pull()
+    except GitError:
+        err.print("[yellow]note:[/] couldn't sync; showing the local ledger")
+    events = feed.all_events(c.root)
+    if heartbeats:
+        events = sorted(events + feed.heartbeat_summary(c.root), key=lambda e: (e.clock, e.path))
+    events = feed.select(events, task=task, machine=machine)
+    if limit > 0:
+        events = events[-limit:]
+    if as_json:
+        typer.echo(json.dumps([{"clock": e.clock, "wall": e.wall, "machine": e.machine, "task": e.task,
+                                "kind": e.kind, "text": e.text} for e in events], indent=2))
+        return
+    for e in events:
+        console.print(Text(f"{(e.wall or '')[:19]:19}  {e.text}"))
 
 
 @app.command()

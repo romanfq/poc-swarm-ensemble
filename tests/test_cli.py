@@ -249,3 +249,18 @@ def test_answer_tests_records_the_humans_answer(machine):
                   "--note", "docs only").exit_code == 0
     st = rv.test_scope_status(d, machine.human_names)
     assert st["status"] == "answered" and st["answer"]["targeted_enough"] and st["answer"]["note"] == "docs only"
+
+
+def test_log_reads_the_ledger_and_filters(machine):
+    invoke("plan", "sync")
+    from dags import ledger as L
+    import resolve as rv
+    L.claim(machine, rv.index(machine.root)["T1"])
+    out = invoke("log").output
+    assert "claimed T1 (mac-a)" in out
+    rows = json.loads(invoke("log", "--json").stdout)
+    assert rows and rows[-1]["task"] == "T1" and rows[-1]["machine"] == "mac-a"
+    assert json.loads(invoke("log", "--json", "--task", "nope").stdout) == []
+    assert json.loads(invoke("log", "--json", "--machine", "mac-z").stdout) == []
+    assert len(json.loads(invoke("log", "--json", "--limit", "1").stdout)) == 1
+    assert "is working on" not in invoke("log").output

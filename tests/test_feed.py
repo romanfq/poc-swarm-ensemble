@@ -145,3 +145,19 @@ def test_feed_describes_test_scope_records(ledger):
     assert any("asks which tests" in t and "recommends full" in t for t in texts)
     assert any("answered the test scope" in t and "targeted (enough for done)" in t for t in texts)
     assert q and a
+
+
+def test_select_by_task_and_machine_and_heartbeats_collapse(ledger):
+    from conftest import at
+    a, b = ledger.task("T1"), ledger.task("T2")
+    ledger.claim(a, "mac-a", 2)
+    ledger.claim(b, "mac-b", 3)
+    for minute in (1, 2, 3):
+        ledger.heartbeat(a, "mac-a", 2, minute)
+    events = feed.all_events(ledger.root)
+    assert [e.task for e in feed.select(events, task="T1")] == ["T1"]
+    assert [e.machine for e in feed.select(events, machine="mac-b")] == ["mac-b"]
+    assert feed.select(events, task="t2", machine="mac-a") == []
+    beats = feed.heartbeat_summary(ledger.root)
+    assert len(beats) == 1 and beats[0].task == "T1" and beats[0].machine == "mac-a"
+    assert at(3).isoformat() in beats[0].text
