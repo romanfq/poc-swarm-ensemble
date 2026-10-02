@@ -30,6 +30,7 @@ class TaskView:
     retries: int
     meta: dict
     plan_status: str | None = None     # None | pending-review | changes-requested | approved
+    test_scope: dict | None = None     # resolve.test_scope_status: None | pending | answered (GH-50)
 
     @property
     def winner(self):
@@ -124,6 +125,9 @@ class Snapshot:
     def plans_pending(self) -> list[TaskView]:
         return [t for t in self.live_claims if t.plan_status == "pending-review"]
 
+    def tests_pending(self) -> list[TaskView]:
+        return [t for t in self.live_claims if t.test_scope and t.test_scope["status"] == "pending"]
+
 
 def machine_states(root: Path) -> dict[str, dict]:
     from dags.ledger import machine_control
@@ -151,7 +155,7 @@ def take(ctx, now: datetime | None = None, share: int | None = None) -> Snapshot
             epic=meta.get("epic"), repo=meta.get("repo"), autonomy=str(meta.get("autonomy") or ""),
             state=state, ready=ready, res=res, checkpoint=R.load_yaml(d / "checkpoint.yaml"),
             retries=resolve.retry_count(d, now, lease), meta=meta,
-            plan_status=resolve.plan_status(d, humans)))
+            plan_status=resolve.plan_status(d, humans), test_scope=resolve.test_scope_status(d, humans)))
     snap.quota_n = resolve.global_quota(root, ctx.settings.default_quota, humans)
     active = [t for t in snap.live_claims if t.winner in t.res.valid]
     snap.quota_used = len(active)

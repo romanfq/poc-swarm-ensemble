@@ -8,7 +8,7 @@ from pathlib import Path
 import resolve
 from dags import records as R
 
-FEED_DIRS = ("claims", "withdrawals", "arbitration", "completions", "plan-reviews", "events")
+FEED_DIRS = ("claims", "withdrawals", "arbitration", "completions", "plan-reviews", "events", "test-scope")
 
 
 @dataclass(frozen=True)
@@ -136,6 +136,16 @@ def _describe(root: Path, path: Path, data: dict) -> Event | None:
         else:
             text = f"{who} sent the plan for {task} back{_quote(data.get('note'))}"
         return Event(clock, rel, text, f"plan-review:{data.get('decision')}")
+    if kind == "test-scope":
+        if data.get("kind") == "question":
+            text = (f"{machine}'s worker asks which tests to run for {task}: recommends "
+                    f"{(data.get('proposal') or {}).get('recommendation')}")
+        elif data.get("self_accepted"):
+            text = f"{machine}'s worker accepted its own test scope for {task}: {data.get('scope')}"
+        else:
+            enough = " (enough for done)" if data.get("targeted_enough") else ""
+            text = f"{who} answered the test scope for {task}: {data.get('scope')}{enough}{_quote(data.get('note'))}"
+        return Event(clock, rel, text, f"test-scope:{data.get('kind')}")
     if kind == "events":
         text = _describe_event(task, who, machine, data)
         return Event(clock, rel, text, f"event:{data.get('kind')}") if text else None

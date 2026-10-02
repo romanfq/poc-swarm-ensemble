@@ -212,3 +212,30 @@ def test_corrupt_record_does_not_crash(ledger):
     (t / "claims" / "broken-3.yaml").write_text("{{{ not yaml")
     ledger.claim(t, "mac-a", 4)
     assert rv.resolve(t, at(0), LEASE).winner.id == "mac-a-4"
+
+
+def test_test_scope_status(ledger):
+    d = ledger.task("T1", autonomy="human-must-review")
+    assert rv.test_scope_status(d) is None
+    R.write_new(d / "test-scope" / "q1.yaml", {"kind": "question", "proposal_id": "m-1", "logical_clock": 1,
+                                               "proposal": {"recommendation": "targeted"}})
+    assert rv.test_scope_status(d)["status"] == "pending"
+    # a worker can't answer for a human, and an unknown name doesn't count
+    R.write_new(d / "test-scope" / "a1.yaml", {"kind": "answer", "proposal_id": "m-1", "logical_clock": 2,
+                                               "scope": "targeted", "self_accepted": True})
+    R.write_new(d / "test-scope" / "a2.yaml", {"kind": "answer", "proposal_id": "m-1", "logical_clock": 3,
+                                               "scope": "targeted", "human": "mallory"})
+    assert rv.test_scope_status(d, {"roman"})["status"] == "pending"
+    R.write_new(d / "test-scope" / "a3.yaml", {"kind": "answer", "proposal_id": "m-0", "logical_clock": 4,
+                                               "scope": "full", "human": "roman"})      # an older question
+    assert rv.test_scope_status(d, {"roman"})["status"] == "pending"
+    R.write_new(d / "test-scope" / "a4.yaml", {"kind": "answer", "proposal_id": "m-1", "logical_clock": 5,
+                                               "scope": "neighbours", "human": "roman"})
+    st = rv.test_scope_status(d, {"roman"})
+    assert st["status"] == "answered" and st["answer"]["scope"] == "neighbours"
+    # on an auto-pr task the worker's own acceptance counts
+    auto = ledger.task("T2", autonomy="auto-pr")
+    R.write_new(auto / "test-scope" / "q1.yaml", {"kind": "question", "proposal_id": "m-1", "logical_clock": 1})
+    R.write_new(auto / "test-scope" / "a1.yaml", {"kind": "answer", "proposal_id": "m-1", "logical_clock": 2,
+                                                  "scope": "targeted", "self_accepted": True})
+    assert rv.test_scope_status(auto, {"roman"})["status"] == "answered"

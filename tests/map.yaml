@@ -1,0 +1,21 @@
+# Which tests cover which files (GH-50). `swarm-task test --propose` reads this first; a
+# `bin/` module that isn't listed falls back to the tests that import it. A file nothing
+# maps (and that isn't docs) makes the recommendation the full suite.
+# glob -> test files
+map:
+  bin/resolve.py: [tests/test_resolve.py]
+  bin/dags/records.py: [tests/test_resolve.py, tests/test_gitsync.py]
+  bin/dags/timeutil.py: [tests/test_resolve.py]
+  bin/dags/__init__.py: [tests/test_resolve.py]
+  bin/dags/ledger.py: [tests/test_work.py, tests/test_resolve.py]
+  bin/dags/work.py: [tests/test_work.py]
+  bin/dags/plan.py: [tests/test_plan_sync.py]
+  bin/dags/snapshot.py: [tests/test_boardview.py]
+  bin/dags/worktree.py: [tests/test_work.py, tests/test_skill.py]
+  bin/dags/gh.py: [tests/test_gh.py]
+  bin/dags/testscope.py: [tests/test_testscope.py]
+  bin/backends/base.py: [tests/test_backend_contract.py]
+  bin/skill/swarm-task: [tests/test_skill.py]
+  bin/board.py: [tests/test_board.py]
+  templates/*: [tests/test_work.py]
+  tests/map.yaml: [tests/test_testscope.py]

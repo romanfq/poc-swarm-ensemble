@@ -71,6 +71,11 @@ def test_plan_implement_done_via_the_skill(world, tmp_path, monkeypatch):
     out = skill("implement")
     assert "Add poller.py" in out and "- cron" in out
     (wt / "poller.py").write_text("print(1)\n")
+    refused = subprocess.run([str(wt / ".swarm-task" / "swarm-task"), "test"], cwd=wt, capture_output=True, text=True)
+    assert refused.returncode != 0 and "ask the human" in refused.stderr
+    proposal = skill("test", "--propose", "--accept")
+    assert "[full]" in proposal and "Accepted the recommendation: full" in proposal
+    assert "tests passed (scope: full)" in skill("test")
     assert "https://github.com/OWNER/app/pull/7" in skill("done")
     a.coord.pull()
     assert rv.task_state(d, timeutil.now(), 900) == "awaiting-review"

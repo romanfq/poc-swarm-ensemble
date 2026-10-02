@@ -18,7 +18,7 @@ import workers
 from backends.base import TaskRef
 from dags import gh, repos, worktree
 from dags import ledger as L
-from dags import timeutil
+from dags import testscope, timeutil
 
 log = logging.getLogger("dags.work")
 
@@ -186,6 +186,93 @@ def release(ctx, task_dir: Path, reason: str = "released") -> None:
 
 
 # ---------------------------------------------------------------------------
+# test scope (GH-50): ask the human before the worker runs tests
+# ---------------------------------------------------------------------------
+
+def _base(ctx, task_dir: Path) -> str:
+    return ctx.repo_config(str(resolve.read_meta(task_dir)["repo"])).get("base", "main")
+
+
+def propose_tests(ctx, task_dir: Path, wt: Path) -> dict:
+    """Map the worker's diff to tests and record the question. Asking again for the same
+    set of changed files returns the open question instead of a new one."""
+    claim_id = my_claim(ctx, task_dir)
+    cp = L.read_checkpoint(task_dir)
+    try:
+        changed = testscope.changed_files(Path(wt), _base(ctx, task_dir))
+    except RuntimeError as e:
+        raise WorkError(f"can't read the diff against the base branch: {e}") from e
+    status = resolve.test_scope_status(task_dir, ctx.human_names)
+    if status and status["proposal"].get("diff_sha") == testscope.diff_sha(changed):
+        return status
+    proposal = testscope.propose(changed, Path(wt), cp.get("test_durations"))
+    L.propose_tests(ctx, task_dir, claim_id, proposal)
+    return resolve.test_scope_status(task_dir, ctx.human_names)
+
+
+def answer_tests(ctx, task_dir: Path, scope: str, targeted_enough: bool = False, note_text: str = "") -> None:
+    """A human answers the open question (Board or `swarm task answer-tests`)."""
+    if scope not in testscope.SCOPES:
+        raise WorkError(f"scope must be one of {', '.join(testscope.SCOPES)}")
+    if targeted_enough and scope == "full":
+        raise WorkError("'targeted is enough' only makes sense for a scope smaller than full")
+    status = resolve.test_scope_status(task_dir, ctx.human_names)
+    if not status:
+        raise WorkError(f"{resolve.label(task_dir)} has no test question yet")
+    L.answer_tests(ctx, task_dir, status["proposal_id"], scope, targeted_enough, note_text)
+
+
+def accept_tests(ctx, task_dir: Path) -> str:
+    """auto-pr only: the worker takes its own recommendation, as it may with a plan. Never
+    lets ``done`` skip the full suite; only a human answer does."""
+    my_claim(ctx, task_dir)
+    if resolve.read_meta(task_dir).get("autonomy") != "auto-pr":
+        raise WorkError(f"{resolve.label(task_dir)} is not auto-pr: a human has to answer the test question")
+    status = resolve.test_scope_status(task_dir, ctx.human_names)
+    if not status:
+        raise WorkError("ask first: swarm-task test --propose")
+    scope = status["proposal"]["recommendation"]
+    L.answer_tests(ctx, task_dir, status["proposal_id"], scope, self_accepted=True)
+    return scope
+
+
+def run_scoped_tests(ctx, task_dir: Path, wt: Path, runner=subprocess.run) -> tuple[str, str]:
+    """`swarm-task test`: run only the answered scope. Refuses before an answer. Returns
+    (scope, output)."""
+    my_claim(ctx, task_dir)
+    status = resolve.test_scope_status(task_dir, ctx.human_names)
+    if not status:
+        raise WorkError("ask the human first: swarm-task test --propose")
+    if status["status"] != "answered":
+        raise WorkError("the test question hasn't been answered yet "
+                        "(answer on the Swarm Board or with `swarm.py task answer-tests`)")
+    scope = status["answer"]["scope"]
+    files = testscope.scope_files(status["proposal"], scope)
+    rcfg = ctx.repo_config(str(resolve.read_meta(task_dir)["repo"]))
+    command = testscope.command_for(rcfg.get("test_command"), files, rcfg.get("test_scope_command"))
+    if command is None:
+        return scope, ""
+    return scope, run_tests(command, Path(wt), runner)
+
+
+def _done_scope(ctx, task_dir: Path, wt: Path) -> tuple[str | None, dict | None]:
+    """The scope ``done`` may run instead of the full suite, with the answer behind it. Only a
+    human's recorded "targeted is enough" counts, and only while the changed files are still the
+    ones the answer was about."""
+    status = resolve.test_scope_status(task_dir, ctx.human_names)
+    answer = status and status["answer"]
+    if not answer or not answer.get("targeted_enough") or answer.get("self_accepted"):
+        return None, None
+    try:
+        current = testscope.diff_sha(testscope.changed_files(Path(wt), _base(ctx, task_dir)))
+    except RuntimeError:
+        return None, None
+    if current != status["proposal"].get("diff_sha") or answer.get("scope") == "full":
+        return None, None
+    return answer["scope"], answer
+
+
+# ---------------------------------------------------------------------------
 # done — the output contract (Ch.7.3, Ch.4.1, Ch.9.1)
 # ---------------------------------------------------------------------------
 
@@ -254,10 +341,22 @@ def finish(ctx, task_dir: Path, wt: Path, *, skip_tests: bool = False, test_runn
     base = rcfg.get("base", "main")
     branch = worktree.branch_name(task_dir)
     durations: list[dict] = []
+    scoped_note = ""
     if not skip_tests:
-        durations = parse_durations(run_tests(rcfg.get("test_command"), wt, test_runner))
+        scope, answer = _done_scope(ctx, task_dir, wt)
+        if scope:
+            files = testscope.scope_files(resolve.test_scope_status(task_dir, ctx.human_names)["proposal"], scope)
+            command = testscope.command_for(rcfg.get("test_command"), files, rcfg.get("test_scope_command"))
+            if command:
+                run_tests(command, wt, test_runner)             # partial run: no durations to record
+            ran = f"{len(files)} test file(s)" if files else "no tests"
+            scoped_note = (f"\n## Tests\nThe full suite did not run: {answer.get('human')} approved the "
+                           f"'{scope}' scope ({ran}) as enough.\n")
+        else:
+            durations = parse_durations(run_tests(rcfg.get("test_command"), wt, test_runner))
 
     commit_msg, body = render(ctx, task_dir, cp)
+    body += scoped_note
     git(["add", "-A"], wt)
     if git(["diff", "--cached", "--quiet"], wt, check=False).returncode != 0:
         cmd = ["commit", "-q", "-F", "-"]

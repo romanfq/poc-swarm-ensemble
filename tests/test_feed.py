@@ -133,3 +133,15 @@ def test_notifier_uses_the_given_time(tmp_path):
     first, second = (tmp_path / "notifications.log").read_text().splitlines()
     assert first == "2026-09-19T21:41:39+00:00 [feed] hello"
     assert second.endswith("[info] now")
+
+
+def test_feed_describes_test_scope_records(ledger):
+    d = ledger.task("T1")
+    q = R.write_new(d / "test-scope" / "m-question-1.yaml", {
+        "kind": "question", "machine": "mac-a", "logical_clock": 1, "proposal": {"recommendation": "full"}})
+    a = R.write_new(d / "test-scope" / "human-roman-2.yaml", {
+        "kind": "answer", "human": "roman", "logical_clock": 2, "scope": "targeted", "targeted_enough": True})
+    texts = [e.text for e in feed.all_events(ledger.root)]
+    assert any("asks which tests" in t and "recommends full" in t for t in texts)
+    assert any("answered the test scope" in t and "targeted (enough for done)" in t for t in texts)
+    assert q and a

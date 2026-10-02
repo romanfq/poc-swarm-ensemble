@@ -550,3 +550,34 @@ def plan_status(task_dir, humans: set[str] | None = None) -> str | None:
             continue
         status = d.get("decision") or status
     return status
+
+
+# ---------------------------------------------------------------------------
+# Test scope question (GH-50)
+# ---------------------------------------------------------------------------
+
+def test_scope_status(task_dir, humans: set[str] | None = None) -> dict | None:
+    """None (never asked) or ``{"status": "pending" | "answered", "proposal_id", "proposal",
+    "answer"}`` for the latest question. An answer counts when it names that question and comes
+    from a known human, or, on an auto-pr task, is the worker accepting its own recommendation."""
+    records = _sorted_records(Path(task_dir) / "test-scope")
+    question = None
+    for _, d in records:
+        if d.get("kind") == "question":
+            question = d
+    if question is None:
+        return None
+    pid = question.get("proposal_id")
+    auto = read_meta(task_dir).get("autonomy") == "auto-pr"
+    answer = None
+    for _, d in records:
+        if d.get("kind") != "answer" or d.get("proposal_id") != pid:
+            continue
+        if d.get("self_accepted"):
+            if not auto:
+                continue
+        elif humans is not None and d.get("human") not in humans:
+            continue
+        answer = d
+    return {"status": "answered" if answer else "pending", "proposal_id": pid,
+            "proposal": question.get("proposal") or {}, "answer": answer}

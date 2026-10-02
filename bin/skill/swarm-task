@@ -178,6 +178,18 @@ def cmd_block(args):
     print("Recorded. A human has been asked; stop here until they answer.")
 
 
+def cmd_test(args):
+    if args.propose:
+        r = swarm("propose-tests", CTX["short"], "--worktree", str(WORKTREE),
+                  *(["--accept"] if args.accept else []), capture=True)
+        print(r.stdout.rstrip())
+        return
+    if args.accept:
+        sys.exit("swarm-task test: --accept goes with --propose")
+    r = swarm("test-run", CTX["short"], "--worktree", str(WORKTREE), capture=True)
+    print(r.stdout.rstrip())
+
+
 def cmd_done(args):
     extra = ["--skip-tests"] if args.skip_tests else []
     r = swarm("done", CTX["short"], "--worktree", str(WORKTREE), *extra, capture=True)
@@ -205,6 +217,10 @@ def main(argv=None):
     sb = sub.add_parser("block", help="ask a human and stop")
     sb.add_argument("question")
     sb.set_defaults(fn=cmd_block)
+    st = sub.add_parser("test", help="ask the human which tests to run, then run only that scope")
+    st.add_argument("--propose", action="store_true", help="recommend a scope from your diff and ask")
+    st.add_argument("--accept", action="store_true", help="auto-pr tasks only: take the recommendation")
+    st.set_defaults(fn=cmd_test)
     sd = sub.add_parser("done", help="test, commit, push, open the PR")
     sd.add_argument("--skip-tests", action="store_true", help=argparse.SUPPRESS)
     sd.set_defaults(fn=cmd_done)

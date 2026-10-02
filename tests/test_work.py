@@ -220,3 +220,124 @@ def test_parse_durations_sums_phases_and_keeps_the_slowest():
     assert work.parse_durations(out, limit=1) == [{"test": "tests/test_a.py::test_one", "seconds": 14.5}]
     assert [d["test"] for d in work.parse_durations(out)] == ["tests/test_a.py::test_one", "tests/test_b.py::test_two"]
     assert work.parse_durations("") == []
+
+
+# -- test scope (GH-50): ask the human before the worker runs tests ----------------------
+
+def _ask(a, d, wt):
+    (wt / "docs").mkdir(exist_ok=True)
+    (wt / "docs" / "note.md").write_text("hi\n")
+    return work.propose_tests(a, d, wt)
+
+
+def _jane(world):
+    jane = world.machine("jane-mac", human="jane")
+    return jane, rv.index(jane.root)["T1"]
+
+
+def test_tests_refuse_before_an_answer(claimed):
+    world, a, d, wt = claimed
+    with pytest.raises(work.WorkError, match="ask the human"):
+        work.run_scoped_tests(a, d, wt)
+    status = _ask(a, d, wt)
+    assert status["status"] == "pending" and status["proposal"]["recommendation"] == "none"
+    assert work.propose_tests(a, d, wt)["proposal_id"] == status["proposal_id"]      # same diff: same question
+    with pytest.raises(work.WorkError, match="hasn't been answered"):
+        work.run_scoped_tests(a, d, wt)
+    jane, jd = _jane(world)
+    work.answer_tests(jane, jd, "none")
+    a.coord.pull()
+    ran = []
+    scope, out = work.run_scoped_tests(a, d, wt, runner=lambda *x, **k: ran.append(x))
+    assert scope == "none" and ran == []
+
+
+def test_the_worker_cannot_answer_for_a_human_on_human_must_review(claimed):
+    world, a, d, wt = claimed
+    _ask(a, d, wt)
+    with pytest.raises(work.WorkError, match="not auto-pr"):
+        work.accept_tests(a, d)
+    from dags.config import ConfigError
+    mallory = world.machine("mal-mac", human="mallory")
+    with pytest.raises(ConfigError):
+        work.answer_tests(mallory, rv.index(mallory.root)["T1"], "full")
+
+
+def test_only_the_answered_scope_runs(claimed):
+    world, a, d, wt = claimed
+    (wt / "poller.py").write_text("print(1)\n")
+    _ask(a, d, wt)
+    jane, jd = _jane(world)
+    work.answer_tests(jane, jd, "full")
+    a.coord.pull()
+    ran = []
+    scope, _ = work.run_scoped_tests(a, d, wt, runner=lambda cmd, **k: ran.append(cmd) or
+                                     subprocess.CompletedProcess(cmd, 0, "ok", ""))
+    assert scope == "full" and ran == ["true"]
+
+
+def test_auto_pr_may_accept_its_own_recommendation(world):
+    world.backend.add("T9", title="x", labels=["repo:OWNER/app", "swarm:autonomy:auto-pr"])
+    a = world.machine("mac-a")
+    world.scheduler(a, worker="claude").cycle()
+    d = rv.index(a.root)["T9"]
+    wt = worktree.worktree_path(a, d)
+    with pytest.raises(work.WorkError, match="ask first"):
+        work.accept_tests(a, d)
+    _ask(a, d, wt)
+    assert work.accept_tests(a, d) == "none"
+    assert rv.test_scope_status(d, a.human_names)["status"] == "answered"
+    # ...but a self-accepted answer never lets done skip the full suite
+    assert work._done_scope(a, d, wt) == (None, None)
+
+
+def test_a_new_diff_asks_again(claimed):
+    world, a, d, wt = claimed
+    first = _ask(a, d, wt)
+    jane, jd = _jane(world)
+    work.answer_tests(jane, jd, "none")
+    a.coord.pull()
+    (wt / "poller.py").write_text("print(1)\n")
+    second = work.propose_tests(a, d, wt)
+    assert second["proposal_id"] != first["proposal_id"] and second["status"] == "pending"
+    assert second["proposal"]["recommendation"] == "full"        # poller.py maps to nothing
+
+
+def test_done_runs_the_full_suite_unless_a_human_said_targeted_is_enough(claimed):
+    world, a, d, wt = claimed
+    _ready_to_finish(world, a, d, wt)
+    ran = []
+    runner = lambda cmd, **kw: ran.append(cmd) or subprocess.CompletedProcess(cmd, 0, "", "")  # noqa: E731
+    _ask(a, d, wt)                                                # asked, never answered
+    work.finish(a, d, wt, test_runner=runner)
+    assert ran == ["true"] and not any("full suite did not run" in c for c in world.backend.comments(TaskRef("T1")))
+
+
+def test_done_runs_the_answered_scope_and_says_so_in_the_pr(claimed):
+    world, a, d, wt = claimed
+    _ready_to_finish(world, a, d, wt)
+    (wt / "docs").mkdir(exist_ok=True)
+    (wt / "docs" / "note.md").write_text("hi\n")
+    status = work.propose_tests(a, d, wt)
+    jane, jd = _jane(world)
+    L.answer_tests(jane, jd, status["proposal_id"], "none", targeted_enough=True)
+    a.coord.pull()
+    ran = []
+    work.finish(a, d, wt, test_runner=lambda cmd, **kw: ran.append(cmd) or
+                subprocess.CompletedProcess(cmd, 0, "", ""))
+    assert ran == []                                              # scope none: nothing to run
+    assert "The full suite did not run: jane approved the 'none' scope" in world.backend.comments(TaskRef("T1"))[-1]
+    assert "test_durations" not in L.read_checkpoint(d)
+
+
+def test_targeted_is_enough_only_counts_for_the_diff_it_was_about(claimed):
+    world, a, d, wt = claimed
+    _ask(a, d, wt)
+    jane, jd = _jane(world)
+    work.answer_tests(jane, jd, "none", targeted_enough=True)
+    a.coord.pull()
+    assert work._done_scope(a, d, wt)[0] == "none"
+    (wt / "poller.py").write_text("print(1)\n")                   # the changed files moved on
+    assert work._done_scope(a, d, wt) == (None, None)
+    with pytest.raises(work.WorkError, match="smaller than full"):
+        work.answer_tests(jane, jd, "full", targeted_enough=True)

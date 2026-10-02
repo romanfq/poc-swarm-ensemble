@@ -1881,6 +1881,7 @@ implement | note [--summary] [--tried …] [--remaining …] [--question …]
 | `fake.path` | YAML file backing the fake tracker | `fake-backend.yaml` |
 | `repos.<OWNER/NAME>.base` | Base branch for worktrees and PRs | `main` |
 | `repos.<OWNER/NAME>.test_command` | Run by `done` before the PR | none |
+| `repos.<OWNER/NAME>.test_scope_command` | Base command for a scoped test run: the test files are appended. Needed when `test_command` adds its own paths (as `./bin/dev-setup.sh` does), else a scoped run runs everything | `test_command` |
 | `default_repo` | Repo for tasks without a `repo:` label | none |
 | `plan_scope` | `labelled`: only issues with a `swarm:`/`type:` label (and their epics) are in the plan; `all`: every issue (D26) | `labelled` |
 | `epic_repos.<epic key or short>` | Per-epic default repo | none |
@@ -1980,3 +1981,23 @@ humans:
 | `.swarm/git.lock` | Serialises git operations between processes |
 | `.swarm/repos/OWNER/NAME` | Code repos cloned by DAGS |
 | `.worktrees/<TASK>/` | Task worktrees; `.swarm-task/` inside while a worker is active. Removed once the task is done or rejected |
+
+## Worker test runs: ask first (GH-50)
+
+A worker doesn't run tests on its own. `swarm-task test --propose` maps its diff to tests and
+records a question in the task's `test-scope/` directory: three options (`targeted`,
+`neighbours` = targeted plus tests of modules that import the changed ones, one hop, and
+`full`), a recommendation, a one-line reason per test file and the time from `test_durations`
+(a floor: only the slowest tests are recorded). `tests/map.yaml` (glob to test files) is read
+first; a `bin/` module with no entry falls back to the tests that import it (a static scan, so
+dynamic imports are missed). A file nothing maps, or a change to `tests/conftest.py` or
+`tests/fakes.py`, recommends `full`; a docs-only diff recommends no tests.
+
+A human answers on the Board (`x`) or with `swarm.py task answer-tests KEY --scope ...`. Until
+then `swarm-task test` refuses; afterwards it runs only the answered scope. On an `auto-pr`
+task the worker may accept its own recommendation (`swarm-task test --propose --accept`).
+
+`done` still runs the full `test_command`, unless a human's answer was recorded with
+`--targeted-is-enough` and the changed files are still the ones it was about. Then `done` runs
+the answered scope instead and the PR description says the full suite did not run. A worker's
+own acceptance never does this.
