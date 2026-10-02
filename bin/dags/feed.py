@@ -19,6 +19,8 @@ class Event:
     kind: str
     wall: str | None = None     # the record's wall_utc, for notification timestamps
     machine: str | None = None
+    task: str | None = None     # the task's key, for filtering (None for control/priority/quota)
+    task_label: str | None = None
 
 
 def _name(human) -> str:
@@ -68,7 +70,14 @@ def describe(root: Path, path: Path, data: dict) -> Event | None:
     if ev is None:
         return None
     wall = data.get("wall_utc")
-    return replace(ev, wall=str(wall) if wall else None, machine=data.get("machine"))
+    task = label = None
+    parts = path.relative_to(root).parts
+    if parts[0] == "tasks" and len(parts) >= 5:
+        task_dir = path.parent.parent
+        task = str(R.load_yaml(task_dir / "meta.yaml").get("key") or task_dir.name)
+        label = resolve.label(task_dir)
+    return replace(ev, wall=str(wall) if wall else None, machine=data.get("machine"), task=task,
+                   task_label=label)
 
 
 def _describe(root: Path, path: Path, data: dict) -> Event | None:
@@ -176,3 +185,34 @@ def new_events(root: Path, seen: set[str]) -> list[Event]:
     fresh = [e for e in all_events(root) if e.path not in seen]
     seen.update(e.path for e in fresh)
     return fresh
+
+
+def heartbeat_summary(root: Path) -> list[Event]:
+    """One line per task and machine: when it was last heard from. Heartbeats are rewritten in
+    place, so only the latest survives; this is the collapsed form of them."""
+    root = Path(root)
+    out = []
+    for d in resolve.task_dirs(root):
+        for path, data in R.read_dir(d / "heartbeats"):
+            machine = str(data.get("machine") or path.stem)
+            label = resolve.label(d)
+            wall = data.get("wall_utc")
+            seen = f" (last at {wall})" if wall else ""
+            out.append(Event(R.clock_of(data), path.relative_to(root).as_posix(),
+                             f"{machine} is working on {label}{seen}", "heartbeat",
+                             wall=str(wall) if wall else None, machine=machine,
+                             task=str(R.load_yaml(d / "meta.yaml").get("key") or d.name),
+                             task_label=label))
+    return sorted(out, key=lambda e: (e.clock, e.path))
+
+
+def select(events: list[Event], task: str | None = None, machine: str | None = None,
+           kind: str | None = None) -> list[Event]:
+    """Filter by task (key or short label, case-insensitive), machine and kind prefix."""
+    def keep(e: Event) -> bool:
+        if task and task.lower() not in ((e.task or "").lower(), (e.task_label or "").lower()):
+            return False
+        if machine and e.machine != machine:
+            return False
+        return not kind or e.kind.startswith(kind)
+    return [e for e in events if keep(e)]
