@@ -25,7 +25,7 @@ This is easy to get backwards, so it goes at the top.
 | Code repo(s) | `romanfq/matchwire-backend`, `romanfq/matchwire-frontend` | `romanfq/poc-swarm-ensemble`, a **second** checkout at `~/Documents/DAGS/code/poc-swarm-ensemble` (so it never shares worktrees with this clone — the collision `#13` describes) |
 | What it works on | the MatchWire app (plan §4 POC) | DAGS' own `next-version` backlog, issues `#1`–`#37`+ in this repo |
 | Machines | `macbookpro-68b8` (this clone), `teammate-b` | `dags-a` (`dags-meta`) |
-| Right now | both machines **stopped** | **stopped** too, holding 2 unreleased claims (`GH-16` in-progress, `GH-21` claimed, no worker chosen) — check live: `cd ~/Documents/DAGS/swarm/dags-meta && ./bin/swarm.py status` |
+| Right now | **running** from `~/Documents/DAGS/swarm/dags-matchwire` (see Next 1) | **stopped** too, holding 2 unreleased claims (`GH-16` in-progress, `GH-21` claimed, no worker chosen) — check live: `cd ~/Documents/DAGS/swarm/dags-meta && ./bin/swarm.py status` |
 
 The meta swarm exists because Román is dogfooding DAGS on itself: its plan is
 this repo's own issue tracker, and its workers open PRs against this repo's
@@ -179,13 +179,8 @@ frontend `~/Documents/DAGS/matchwire/fe/matchwire-frontend`.
   each toggle briefly disabled *every* rule, not just review) and `#37` (the
   ruleset; closed and reopened authored by the bot instead of touching the
   ruleset at all — cleaner, keep using this one).
-- **Still unresolved, not yet acted on:** the MatchWire daemon's `gitsync.push()`
-  (`bin/dags/gitsync.py:136`) pushes ledger commits **directly** to `main`,
-  no PR. That will fail the moment either MatchWire machine restarts, because
-  this ruleset now covers `main` and direct pushes aren't exempted. Both
-  machines are stopped, so nothing is broken *yet*. Fixing it means either
-  moving the MatchWire ledger to an unprotected branch/repo, or excluding
-  direct pushes for the ledger somehow — not designed yet.
+- **Resolved 2026-10-01 (D27):** the MatchWire ledger moved to `romanfq/dags-matchwire`, so
+  `gitsync.push()` no longer meets this ruleset.
 
 ## Build status
 
@@ -227,49 +222,88 @@ in-progress, worker vscode; `GH-21` claimed, no worker chosen) — they'll
 lapse on their own or need `task release`. Check `./bin/swarm.py status`
 from `dags-meta` before restarting.
 
-## Next (holder: claude-code)
+## Next (holder: cowork)
 
-1. **Implement the MatchWire ledger move — this is the one thing blocking both
-   swarms from restarting.** Cowork designed it on 2026-10-01; the full plan,
-   with the exact commands, is
-   `~/Documents/DAGS/design-matchwire-ledger-vs-ruleset.md`. Read it before
-   starting. **Option A is the decision:** the MatchWire swarm gets its own
-   coordination repo, `romanfq/dags-matchwire` (private), in the shape `dags-meta`
-   already proves. Record it as D27 here.
+**2026-10-03, claude-code to cowork.** The next-version graph is reorganised and
+`#58` is the only task set ready. Done: closed-blocker links dropped from `#1`,
+`#4`, `#6`, `#8`, `#13`; `#13` stays blocked by `#1` and is now also blocked by
+`#64` (worktree location); `#61` is blocked by `#30` (shared root cause, `#30`
+first); `#63` left blocked and unlinked; `#45` and `#56` labelled (repo,
+`human-must-review`, `type:task`). **Do next:** when `#58` merges and push-to-main
+CI is green, set `swarm:status:ready` on `#30`, `#33`, `#35`, `#41`, `#45`, `#56`,
+`#59`, `#60` (one merge at a time, `--quota-share 2`); `#61` after `#30`. Do not
+set `#1` or `#8` ready (`human-must-scope`); `#4` and `#6` are unblocked but still
+labelled blocked, so decide with Roman. Verify with
+`./bin/swarm.py backend ready --ledger` from `dags-meta`.
 
-   Two facts from the code the design rests on, so you do not re-derive them:
-   `Coord.push()` pushes `HEAD:{self.branch()}` and hardcodes nothing
-   (`bin/dags/gitsync.py:136`, `:140`, `:143`), and worktrees are cut from the
-   *code* repo's checkout at `rcfg.get("base", "main")`
-   (`work.py:57`, `:238`, `worktree.py:42`), never from the coordination clone —
-   so moving the ledger cannot contaminate a worker's branch or PR.
+The steps below are the 2026-10-01 housekeeping list. I did not work through
+steps 0-5 in this session, so their status is unknown; check before acting.
 
-   Order matters: pre-flight (both machines stopped, nothing unpushed, capture
-   `swarm.py task list --json` as a baseline) → build the new repo → **prove the
-   migration by diffing `task list --json` before and against after; a non-empty
-   diff means stop and report** → (`GH-13` is already parked on the tracker; `dags-meta`'s two stale claims live in
-   its own ledger, not this one) → only then the PR that removes
-   `tasks/`, `control/`, `quota/`, `priority/`, `backend.yaml` and `humans.yaml`
-   from this repo → `paths-ignore` in the workflow → restart one machine.
 
-   **Ask Román before `gh repo create` and before the removal PR.** The removal PR
-   is bot-authored per D2b. Checked already: no test reads the repo-root
-   `backend.yaml`/`humans.yaml` — `tests/conftest.py` writes its own (`:122`,
-   `:123`) — but `test_gitsync.py:34` uses `backend.yaml` as a known-unchanged
-   file and will need another one.
+Cowork queued this on 2026-10-01 and takes the baton back afterwards — Román is
+handing it to you for the GitHub and ledger work only. **Do not start any
+`next-version` fix.** Ask Román before each GitHub step, as usual.
 
-2. **File the two follow-ups** from the design's last section: the spec permits
-   this mistake (and `swarm.py status` could warn when the coordination repo's
-   `main` is protected), and 89% of `main`'s commits since 1 September were ledger
-   noise, which argues for a `swarm.py log` that reads the ledger not git.
+**Step 0 is first: close `#16` before anything else here.** Román has already
+decided it; it needs no further discussion, only his yes on the `gh` call.
 
-3. **Filing more `next-version` issues:** same recipe as `#1`–`#37` —
-   `gh issue create --repo romanfq/poc-swarm-ensemble --label next-version
-   --title ... --body-file ...`, add a checklist line to `#7`. Check for
-   autolink collisions (bare `#<n>` links into *this* repo; backtick a swarm
-   short key like `` `GH-4` `` when it could be misread that way) before
-   filing.
+0. **Close `#16` (branch namespacing) as superseded by D27.** Reason to put in
+   the closing comment: it namespaced the ledger by plan slug to stop MatchWire's
+   `GH-1`…`GH-21` colliding with the meta plan's in one `tasks/`, and separate
+   ledger repos removed that collision; it also never addressed `#12`, the
+   collision that actually bit (two *clones* failing `git worktree add
+   swarm/GH-4`). Note in `#12` that commit `b1d472d` on
+   `feature/dual-read-plan-namespace` (in `~/Documents/DAGS/code/poc-swarm-ensemble`,
+   183 lines, unmerged) is reference material — its `migrate_ledger.py` may be
+   reusable — but must not be merged as-is: no tests, and `plan.py`'s
+   `task_dir_for` wraps the `coordination_ref()` call in `except Exception` with a
+   *different path* as the fallback, which would scatter the ledger across both
+   layouts on a transient backend error. Untick `#16` on `#7`.
+   **Do not delete that branch.**
 
-4. **Hand back:** update this section and `BATON`'s `history:`, commit
-   locally, push (both daemons are stopped, so nothing pushes this for you).
+1. **Also propose closing `#17` (dogfooding)** — the meta swarm exists and has
+   shipped eight merged fixes. Ask Román before closing it; it is his call
+   whether the issue tracks the idea or the ongoing practice.
+
+2. **Release two bare claims.** `GH-21` in `dags-meta` and `GH-5` in
+   `dags-matchwire`: both are a claim plus heartbeats with **no `checkpoint.yaml`**
+   — claimed, never dispatched. `GH-5` was picked up during the post-move
+   verification run. Both swarms are stopped; release from each ledger repo.
+
+3. **Label the filed-but-invisible issues into the plan.** `#29`–`#35`, `#41` and
+   `#42` carry `next-version` but no `swarm:status` label, and since `#18` the plan
+   is opt-in (`DEFAULT_PLAN_SCOPE = "labelled"` in `bin/backends/base.py:23`), so
+   the swarm cannot see them at all. Resolve the exact numbers with
+   `gh issue list --repo romanfq/poc-swarm-ensemble --label next-version`.
+   Label them **`swarm:status:blocked`** for now plus their `repo:` and
+   `swarm:autonomy:` labels — Cowork will decide with Román which go into the next
+   wave. One of them ("`done` never reads the PR's checks") is a slice of `#6`;
+   leave it blocked too.
+
+4. **Upgrade `dags-meta`** — `tools/upgrade-from-source.sh`, commit, then stop and
+   start. Its `bin/` predates the recent merges and nothing upgrades itself.
+   Running its scripts is fine; do not edit files in it otherwise.
+
+5. **Reconcile the code clone** `~/Documents/DAGS/code/poc-swarm-ensemble`: its
+   `main` carries a local `[GH-18]` commit superseded by merged PR `#22`, and its
+   `origin/main` ref is weeks stale at `70aaebb`. Fetch and sort it out before any
+   new worktree is cut from it. Preserve `feature/dual-read-plan-namespace`.
+
+6. **Hand back to cowork** when 0–5 are done: update this section and `BATON`'s
+   `history:` with what happened and anything that surprised you, commit, push.
+
+### For context, not for you to act on
+
+The next wave Cowork will plan with Román is `#2` (workers are never told a human
+acted — the keystone; `GH-13` has waited for plan approval since 17 September),
+`#14` (a sleeping laptop counts as failure, which is why `GH-13` sits at
+`human-must-scope`) and `#13` (`done` accepts an empty round, which is why `GH-4`
+posted the same commit `c3d850f` twice). Those three are what stopped the
+MatchWire POC at task 2 of 18.
+
+One gap found while triaging, worth knowing before anyone tries to restart
+MatchWire: **there is no way to undo an autonomy downgrade.** `read_meta`
+(`bin/resolve.py:289`) lays every `meta/` revision over `meta.yaml`, so `GH-13`'s
+`human-must-scope` record beats the plan-synced tier, and the only CLI reset
+(`backend adopt --autonomy`) sets the GitHub label rather than the ledger.
 
