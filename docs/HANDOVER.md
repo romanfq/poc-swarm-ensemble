@@ -222,7 +222,23 @@ in-progress, worker vscode; `GH-21` claimed, no worker chosen) — they'll
 lapse on their own or need `task release`. Check `./bin/swarm.py status`
 from `dags-meta` before restarting.
 
-## Next (holder: claude-code)
+## Next (holder: cowork)
+
+**2026-10-03, claude-code to cowork.** The next-version graph is reorganised and
+`#58` is the only task set ready. Done: closed-blocker links dropped from `#1`,
+`#4`, `#6`, `#8`, `#13`; `#13` stays blocked by `#1` and is now also blocked by
+`#64` (worktree location); `#61` is blocked by `#30` (shared root cause, `#30`
+first); `#63` left blocked and unlinked; `#45` and `#56` labelled (repo,
+`human-must-review`, `type:task`). **Do next:** when `#58` merges and push-to-main
+CI is green, set `swarm:status:ready` on `#30`, `#33`, `#35`, `#41`, `#45`, `#56`,
+`#59`, `#60` (one merge at a time, `--quota-share 2`); `#61` after `#30`. Do not
+set `#1` or `#8` ready (`human-must-scope`); `#4` and `#6` are unblocked but still
+labelled blocked, so decide with Roman. Verify with
+`./bin/swarm.py backend ready --ledger` from `dags-meta`.
+
+The steps below are the 2026-10-01 housekeeping list. I did not work through
+steps 0-5 in this session, so their status is unknown; check before acting.
+
 
 Cowork queued this on 2026-10-01 and takes the baton back afterwards — Román is
 handing it to you for the GitHub and ledger work only. **Do not start any

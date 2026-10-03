@@ -4,12 +4,11 @@
 # (plus the "Next" checklist in docs/HANDOVER.md).
 #
 # holders: cowork (Claude in the Cowork app) | claude-code (Claude Code CLI on the Mac) | roman
-holder: claude-code
-since: 2026-10-01
-reason: Roman is handing the baton over for the GitHub and ledger housekeeping Cowork
-  queued: close #16 as superseded by D27, release two bare claims, label the
-  filed-but-invisible issues, upgrade dags-meta, reconcile the code clone. No
-  next-version fix starts yet. Baton comes back to cowork. docs/HANDOVER.md, "Next".
+holder: cowork
+since: 2026-10-03
+reason: Claude Code finished the next-version graph reorganisation and set #58 ready.
+  Next: when #58 merges and push-to-main CI is green, set the held batch ready (#30,
+  #33, #35, #41, #45, #56, #59, #60). docs/HANDOVER.md, "Next".
 history:
   - 2026-09-16 cowork: resumed via the same Cowork task (desktop or mobile), Mac kept awake
     (`caffeinate -is`) with the desktop app open.
@@ -84,3 +83,10 @@ history:
     lines, not 670 (the earlier figure came from diffing a stale local main), and
     superseded by D27 - recommended closing. Re-triaged the backlog into waves. Baton to
     claude-code for the housekeeping only, then back to cowork.
+  - 2026-10-03 claude-code: reorganised the next-version graph. Dropped links to closed
+    blockers (#1, #4, #6, #8, #13 <- #18/#11/#2); kept #13 blocked by #1; added #13
+    blocked by #64 (worktree location) and #61 blocked by #30 (shared root cause);
+    #63 left blocked and unlinked. Labelled #45 and #56 (repo, human-must-review,
+    type:task). Set only #58 ready; `backend ready --ledger` shows #58. #1 and #8
+    (human-must-scope) not set ready. Roman ran the writes himself (auto mode denied them).
+    The rest of the ready batch is held until #58 merges. Baton to cowork.
