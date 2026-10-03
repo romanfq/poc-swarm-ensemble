@@ -286,6 +286,60 @@ def test_heartbeat_detects_loss(world):
     assert lost == items_before
 
 
+def test_unanswered_worker_choice_expires_after_one_lease(world):
+    import dags.timeutil as tu
+    _plan(world, ("T1", {"labels": ["swarm:autonomy:human-must-scope"]}))
+    a = world.machine("mac-a")
+    world.scheduler(a).cycle()
+    d = rv.index(a.root)["T1"]
+    assert L.read_checkpoint(d).get("worker") is None
+    try:
+        tu.set_offset(16 * 60)
+        rep = world.scheduler(a, run_plan_sync=False).cycle()
+        assert rep.released == ["T1"]
+        w = list(rv.read_withdrawals(d).values())[-1]
+        assert w["reason"] == "no-worker-chosen"
+        assert rv.retry_count(d, tu.now(), 900) == 0
+        assert rv.parked(d) and not rv.ledger_ready(a.root, d, tu.now(), 900)
+        assert world.backend.get_task(TaskRef("T1")).status == "ready"
+        assert world.scheduler(a, run_plan_sync=False).cycle().claimed == []
+    finally:
+        tu.set_offset(0)
+
+
+def test_worker_chosen_in_time_keeps_the_claim(world):
+    import dags.timeutil as tu
+    _plan(world, ("T1", {"labels": ["swarm:autonomy:human-must-scope"]}))
+    a = world.machine("mac-a")
+    world.scheduler(a).cycle()
+    d = rv.index(a.root)["T1"]
+    work.choose_worker(a, d, "vscode", launch=world.launch, platform="darwin")
+    try:
+        tu.set_offset(16 * 60)
+        assert world.scheduler(a, run_plan_sync=False).cycle().released == []
+        assert not rv.read_withdrawals(d)
+    finally:
+        tu.set_offset(0)
+
+
+def test_unpark_lets_machines_claim_again(world):
+    import dags.timeutil as tu
+    from dags import actions
+    _plan(world, ("T1", {"labels": ["swarm:autonomy:human-must-scope"]}))
+    a = world.machine("mac-a")
+    world.scheduler(a).cycle()
+    d = rv.index(a.root)["T1"]
+    try:
+        tu.set_offset(16 * 60)
+        world.scheduler(a, run_plan_sync=False).cycle()
+        assert rv.parked(d)
+        actions.unpark(a, d)
+        assert not rv.parked(d)
+        assert world.scheduler(a, run_plan_sync=False).cycle().claimed == ["T1"]
+    finally:
+        tu.set_offset(0)
+
+
 def test_release_is_not_a_failure(world):
     _plan(world, ("T1", {}))
     a = world.machine("mac-a")

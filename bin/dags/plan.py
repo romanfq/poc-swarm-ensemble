@@ -40,13 +40,15 @@ class SyncReport:
     done_imported: list[str] = field(default_factory=list)
     replanned: list[str] = field(default_factory=list)
     downgraded: list[str] = field(default_factory=list)
+    escalated: list[str] = field(default_factory=list)   # at the strictest tier: flagged for a human
     status_fixed: list[str] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)       # open issues outside the plan
     errors: list[str] = field(default_factory=list)
 
     @property
     def changed(self) -> bool:
-        return bool(self.imported or self.revised or self.done_imported or self.replanned or self.downgraded)
+        return bool(self.imported or self.revised or self.done_imported or self.replanned or self.downgraded
+                    or self.escalated)
 
     def summary(self) -> str:
         parts = [f"{len(v)} {k.replace('_', ' ')}" for k, v in self.__dict__.items()
@@ -214,6 +216,7 @@ def sync(ctx, backend=None, push: bool = True) -> SyncReport:
     epic_repos = dict(ctx.backend_cfg.get("epic_repos") or {})
     settings = ctx.settings
     downgrades: list[tuple[TaskRef, str, int]] = []
+    escalations: list[tuple[TaskRef, int]] = []
 
     # autonomy downgrades touch the backend first; the ledger only records success
     now = timeutil.now()
@@ -225,7 +228,18 @@ def sync(ctx, backend=None, push: bool = True) -> SyncReport:
         meta = resolve.read_meta(d)
         done_downgrades = int(meta.get("downgrades") or 0)
         failures = resolve.retry_count(d, now, settings.lease_s)
-        if failures >= settings.max_retries * (done_downgrades + 1) and t.autonomy != downgrade(t.autonomy):
+        if failures < settings.max_retries * (done_downgrades + 1):
+            continue
+        if t.autonomy == downgrade(t.autonomy):
+            # strictest tier: there is nowhere to downgrade to, but a human must still see it
+            try:
+                backend.post_comment(t.ref, f"DAGS: {failures} failed attempts and autonomy is already "
+                                            f"{t.autonomy}; this task needs a human to look at it.")
+            except Exception as e:  # noqa: BLE001
+                report.errors.append(f"{key}: escalation comment failed: {e}")
+                continue
+            escalations.append((t.ref, done_downgrades + 1))
+        else:
             new = downgrade(t.autonomy)
             try:
                 backend.set_autonomy(t.ref, new)
@@ -244,6 +258,7 @@ def sync(ctx, backend=None, push: bool = True) -> SyncReport:
         clock = resolve.next_clock(ctx.root)
         index = resolve.index(ctx.root)
         down = {ref.key: (tier, n) for ref, tier, n in downgrades}
+        flagged = {ref.key: n for ref, n in escalations}
 
         for key, t in tasks.items():
             fields = meta_fields(backend, t, default_repo, epic_repos)
@@ -267,6 +282,9 @@ def sync(ctx, backend=None, push: bool = True) -> SyncReport:
                 if key in down:
                     changed["autonomy"], changed["downgrades"] = down[key]
                     report.downgraded.append(key)
+                if key in flagged:
+                    changed["downgrades"], changed["needs_human"] = flagged[key], True
+                    report.escalated.append(key)
                 if changed:
                     written.append(R.write_new(d / "meta" / R.meta_revision_name(ctx.identity, clock),
                                                _stamp(ctx, clock, **changed)))

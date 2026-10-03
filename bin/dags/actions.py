@@ -60,6 +60,14 @@ def unfreeze(ctx, task_dir: Path, reason: str = "unfrozen") -> None:
     L.arbitrate(ctx, task_dir, "none", reason, action="withdraw")
 
 
+def unpark(ctx, task_dir: Path, reason: str = "unparked") -> None:
+    """End the park after ``no-worker-chosen`` (GH-12): machines may claim the task again."""
+    human = require_known_human(ctx)
+    if not resolve.parked(task_dir):
+        raise ActionError(f"{resolve.label(task_dir)} is not parked")
+    L.record_event(ctx, task_dir, "unparked", reason=reason, human=human)
+
+
 def reassign(ctx, task_dir: Path, winner: str, reason: str) -> None:
     claims = {c.id: c for c in resolve.read_claims(task_dir)}
     if winner not in claims:

@@ -386,7 +386,22 @@ def ledger_ready(root, task_dir, now: datetime, lease_s: float, humans: set[str]
         return False
     if res.outcome.kind in TERMINAL_HOLD:
         return False
+    if parked(task_dir):
+        return False
     return deps_done(root, meta, idx)
+
+
+def parked(task_dir) -> bool:
+    """A claim was given back because nobody chose a worker (``no-worker-chosen``)
+    and no human has acted since: no machine re-claims the task (GH-12). A later
+    claim or an ``unparked`` event ends the park."""
+    task_dir = Path(task_dir)
+    last = max([R.clock_of(w) for w in read_withdrawals(task_dir).values()
+                if w.get("reason") == "no-worker-chosen"], default=0)
+    if not last or any(c.clock > last for c in read_claims(task_dir)):
+        return False
+    return not any(d.get("kind") == "unparked" and R.clock_of(d) > last
+                   for _, d in R.read_dir(task_dir / "events"))
 
 
 # ---------------------------------------------------------------------------
@@ -481,7 +496,8 @@ def order_candidates(candidates: Iterable[tuple[str, dict]], machine: str,
 # Failure accounting (Ch.8) and thrash detection (Ch.9.4)
 # ---------------------------------------------------------------------------
 
-NON_FAILURE_WITHDRAWALS = {"lost-race", "released", "arbitration", "quota", "dispatch-failed"}
+NON_FAILURE_WITHDRAWALS = {"lost-race", "released", "arbitration", "quota", "dispatch-failed",
+                        "no-worker-chosen"}
 
 
 def retry_count(task_dir, now: datetime, lease_s: float) -> int:

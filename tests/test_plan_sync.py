@@ -126,6 +126,22 @@ def test_repeated_failure_downgrades_autonomy_once(world):
     assert plan.sync(a).downgraded == []                 # no second downgrade for the same failures
 
 
+def test_repeated_failure_at_strictest_tier_flags_a_human_once(world):
+    backend, a, _ = world
+    plan.sync(a)
+    backend.set_autonomy(TaskRef("T1"), "human-must-scope")
+    d = rv.index(a.root)["T1"]
+    for _ in range(3):
+        cid = L.claim(a, d)
+        L.withdraw(a, d, cid, "worker-failed")
+    rep = plan.sync(a)
+    assert rep.escalated == ["T1"] and rep.downgraded == []
+    assert backend.get_task(TaskRef("T1")).autonomy == "human-must-scope"
+    assert "needs a human" in backend.comments(TaskRef("T1"))[-1]
+    assert rv.read_meta(d)["needs_human"] is True
+    assert plan.sync(a).escalated == []                  # once per batch of failures
+
+
 def test_lookup_by_short_or_dir(world):
     backend, a, _ = world
     plan.sync(a)

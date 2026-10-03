@@ -128,6 +128,7 @@ class Scheduler:
         share = ctl["quota_share"] if ctl["quota_share"] is not None else self.share
 
         self.tidy_own_claims(rep)
+        self.expire_unanswered(rep)
         self.enforce_quota(share, rep)
 
         if ctl["paused"]:
@@ -203,6 +204,39 @@ class Scheduler:
                             f"to {winner.id if winner else 'a freeze'}; stopped working on it", "lost")
             if winner is not None and winner.machine == self.me and winner in res.valid and state == "claimed":
                 self.after_win(d, winner.id, rep)
+
+    def expire_unanswered(self, rep: CycleReport) -> None:
+        """Short fuse (GH-12): a claim of ours still without a worker one lease
+        after its ``awaiting-worker`` record is withdrawn as ``no-worker-chosen``
+        (not a failure) and the task is parked, so a sleeping Mac or an absent
+        human doesn't turn into claim, prompt, expire, claim again. The record
+        is in the ledger, so a restart or a wake sees the same age."""
+        ctx = self.ctx
+        now = timeutil.now()
+        lease = ctx.settings.lease_s
+        for d in resolve.task_dirs(ctx.root):
+            withdrawn = resolve.read_withdrawals(d)
+            outcome = resolve.read_outcome(d)
+            cp = L.read_checkpoint(d)
+            for c in resolve.read_claims(d):
+                if c.machine != self.me or c.id in withdrawn or c.id in outcome.completed_claims:
+                    continue
+                if cp.get("claim_id") == c.id and cp.get("worker"):
+                    continue
+                asked = [e.get("wall_utc") for _, e in R.read_dir(d / "events")
+                         if e.get("kind") == "awaiting-worker" and e.get("claim_id") == c.id]
+                age = timeutil.age_seconds(min(asked), now) if asked else None
+                if age is None or age < lease:
+                    continue
+                label = resolve.label(d)
+                L.withdraw(ctx, d, c.id, "no-worker-chosen")
+                self._announced.discard(c.id)
+                self._status_cache.pop(str(resolve.read_meta(d)["key"]), None)
+                self._set_status(d, "ready")
+                rep.released.append(label)
+                self.notify(f"{label}: nobody chose a worker within {int(lease // 60)} minutes, so the "
+                            f"claim was given back. The task is parked; no machine will claim it "
+                            f"until a human acts.", "needs-worker")
 
     def enforce_quota(self, share: int, rep: CycleReport) -> None:
         """Quota lowered below what is running (Ch.8): a claim with no worker
