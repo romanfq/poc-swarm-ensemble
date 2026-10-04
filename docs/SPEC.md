@@ -141,6 +141,8 @@ merges them, and on what evidence, is Chapter 9.
 
 DAGS is three substrates and a protocol that connects them.
 
+![The three substrates, and the three places a human enters.](figures/fig1-substrates.pdf){width=159mm}
+
 | Substrate | What it holds | Who writes it |
 |---|---|---|
 | **The task graph** | What work exists, its shape and its permissions | Humans, through a tracker |
@@ -168,6 +170,8 @@ the machine that owns the claim prepares a worktree on a branch named for the
 task, and the worker changes code only there. Chapter 7.3.
 
 ## 2.2 What runs on a machine
+
+![One machine: a single daemon, three loops, one local clone.](figures/fig2-loops.pdf){width=159mm}
 
 One process, three loops, started by `swarm.py start` and detached as
 `swarm.py _daemon` (`bin/dags/daemon.py`):
@@ -428,6 +432,8 @@ can conflict, and §4.3 says what happens when they do.
 
 ## 4.3 One transaction, and how conflicts resolve
 
+![One ledger transaction, and the three layers of concurrency control.](figures/fig3-transaction.pdf){width=159mm}
+
 Every write is `Coord.transaction` (`bin/dags/gitsync.py`): take the lock, pull
 with rebase, run the function that writes the files, commit, push. The pull
 happens before the write so that any logical clock the write computes has seen
@@ -668,6 +674,8 @@ then this machine does not know it won.
 
 ## 6.3 Resolution
 
+![Claim resolution: a pure function every machine computes identically.](figures/fig4-resolution.pdf){width=159mm}
+
 `resolve.resolve(task_dir, now, lease_s, humans)` reads the claims, withdrawals,
 heartbeats, completions and arbitration for one task and returns the winner,
 with the reason. Its logic, in order:
@@ -700,6 +708,8 @@ not a projection of what is true now, and "who tried and lost" is useful when a
 task starts thrashing (§9.5).
 
 ## 6.5 Lease expiry, evaluated lazily
+
+![Liveness and expiry. Nothing sweeps; the reader computes it.](figures/fig5-lease.pdf){width=159mm}
 
 A claim is live while its machine keeps proving it. `is_expired` compares the
 claim's last heartbeat against `now` and the lease — fifteen minutes by default.
@@ -1119,6 +1129,8 @@ been confirmed (`#56`).
 
 # 10. The Swarm Board — a local command centre
 
+![The Swarm Board: panels, actions, and the one action that is not a ledger record.](figures/fig6-board.pdf){width=159mm}
+
 The Board is a terminal application over the same local clone everything else
 reads. It is not a dashboard onto a service; it is a view of files, which is why
 it works offline and why two Boards on two machines agree.
@@ -1190,6 +1202,8 @@ itself reviewed.
 \newpage
 
 # 11. Verification — tests, scope and continuous integration
+
+![Three places work is verified, and the only one that tests what will actually land.](figures/fig7-verification.pdf){width=159mm}
 
 This chapter did not exist in v1.1, because when v1.1 was written a worker ran
 the whole test suite and that was the whole story. It is now the part of the
@@ -1296,6 +1310,8 @@ merges.
 \newpage
 
 # 12. End-to-end flow
+
+![One task end to end, and the two gates an agent cannot pass.](figures/fig8-lifecycle.pdf){width=159mm}
 
 One task, from a human's idea to merged code, naming the chapter that governs
 each step.
