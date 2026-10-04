@@ -12,3 +12,5 @@ __pycache__/
 /control/
 /quota/
 /priority/
+# rendered spec PDF: a build artifact, rebuild with docs/build/build.sh
+/docs/build/*.pdf

@@ -1,2003 +1,1887 @@
 ---
 title: "DAGS — Distributed AGent Swarm"
-subtitle: "Human-governed execution on an issue backend and a GitHub coordination layer — Specification v1.1"
-date: "2026-09-16"
+subtitle: "Human-governed execution on an issue backend and a GitHub coordination layer — Specification v2.0"
+date: "2026-10-03"
 ---
 
 # About this version
 
-This is **version 1.1** of the DAGS whitepaper. It keeps the text of v1.0
-(the PDF in the DAGS project) and folds in the decisions made while building
-the proof of concept.
+This is **version 2.0** of the DAGS specification. It describes the system as a
+whole, in one voice, rather than as a set of changes to an earlier draft.
 
-- **Where v1.1 changes or adds to v1.0**, a marked note follows the paragraph it
-  affects:
+v1.0 was a design document written before anything was built. v1.1 kept v1.0's
+text and attached a marked note wherever the build had changed the design. That
+worked while the deltas were few. By the time there were twenty-seven of them the
+notes were harder to read than the thing they annotated, and the base text had
+started to describe a system that no longer existed — a Jira adapter that was
+never written, commands without the flags they had grown, a decisions table that
+stopped eleven decisions before the end.
 
-  > **v1.1 —** like this.
+So v2.0 is a rewrite. Three things follow from that:
 
-  Each note cites a decision (**D1**–**D25**). They are listed with their
-  rationale in **Appendix A**.
-- **Where v1.0's text and figures disagree**, the text wins. The figures of
-  v1.0 (1–5) are not reproduced here. Wherever a figure differs from this
-  text or its v1.1 notes, the text and notes win.
-- **New to v1.1:** Appendix B is a primer for someone new to the tool,
-  Appendix C holds how-tos for common tasks, and Appendix D is a reference for
-  commands, files and settings.
+- **It describes the target state, not a snapshot.** Where a behaviour is
+  specified but not yet built, the chapter says so and cites the issue that will
+  build it. Chapter 13 lists all of them in one place. Nothing here is
+  aspirational by accident: if the text does not mark a behaviour as outstanding,
+  it is in `main` and has a test.
+- **The decisions survive as rationale, not as a diff.** Appendix A is the
+  decisions log, D1–D33, each with the reason it was taken and the chapter it
+  governs. It no longer pretends to be a changelog against v1.0.
+- **Every factual claim was checked against the code**, not inherited from the
+  previous draft. File and line references are to `main` at the time of writing.
 
-Status of the implementation (September 2026):
-- Chapters 3–10 are built in the coordination repo `poc-swarm-ensemble`,
-  except the Jira adapter (D4).
-- The full test suite passes on macOS, including the CLI and Swarm Board tests.
-- The end-to-end trial on MatchWire has not been run yet.
+The v1.0 whitepaper remains the origin document and is archived in the DAGS
+project. v1.1 is superseded.
 
+\newpage
 
 # Contents
 
-1. Problem Statement and Design Constraints
-2. Architecture Overview
-3. The Task Graph — A Pluggable Issue Backend
-4. The Coordination Repository — GitHub as the State Store
-5. Bootstrapping — One Script to Join the Swarm
-6. The Claim Protocol — Deterministic, Leaderless Coordination
-7. Quota, Concurrency, and Multi-Machine Scheduling
-8. Pause, Resume, and Failure Recovery
-9. Human Control — Review, Merge, and Conflict Arbitration
-10. Swarm Board — A Local Command Centre for Humans
-11. Gluing It Together — The End-to-End Flow
-12. Limitations and Operating Boundaries
+**Part I — What the system is**
 
-- Appendix A. Decisions log (v1.0 → v1.1)
-- Appendix B. Primer — DAGS in ten minutes
-- Appendix C. How-to guides
-- Appendix D. Reference
+1. Problem statement and design constraints
+2. Architecture overview
 
-**Infrastructure assumed:**
+**Part II — The three substrates**
 
-- an issue backend behind the port defined in Chapter 3 (Jira and GitHub Issues
-  are the designed adapters; others can be added);
-- GitHub: repositories, git, and the official `gh` CLI.
+3. The task graph — a pluggable issue backend
+4. The coordination repository — git as the state store
+5. Bootstrapping — one script to join the swarm
 
-There are no GitHub Actions, no Pages, no hosted CI, and no server anyone has
-to operate. Each participating machine runs a lightweight local poller instead
-of hosted automation.
+**Part III — Coordination**
 
-**Scope:**
+6. The claim protocol — deterministic and leaderless
+7. Quota, concurrency and multi-machine scheduling
+8. Pause, resume and failure recovery
 
-- the coordination protocol;
-- one-command swarm bootstrap;
-- quota-bounded concurrency and multi-machine parallelism;
-- pause/resume and dependency management;
-- human authority over code merges and over agent-conflict arbitration.
+**Part IV — Humans**
 
+9. Human control — review, merge and arbitration
+10. The Swarm Board — a local command centre
+11. Verification — tests, scope and continuous integration
 
-# 1. Problem Statement and Design Constraints
+**Part V — Operating it**
 
-A set of epics, tracked in whatever issue backend a team already uses, must be
-decomposed and executed by a swarm of coding agents. At most N agents may run
-concurrently, where N is governed by a shared, time-varying quota. Work may be
-parallelized across multiple machines, each capable of running its own local
-swarm. The system must handle task interdependencies, safe pausing and
-resumption, and agent autonomy boundaries — while guaranteeing that humans
-retain final authority over what ships and how conflicts between agents are
-settled.
+12. End-to-end flow
+13. Specified but not yet built
+14. Limitations and operating boundaries
 
-**Hard constraints:**
+**Appendices**
 
-- No process may be installed on, or kept alive by, a central server.
-  - Only these are assumed available:
-    - an issue backend behind the abstract port in Chapter 3;
-    - GitHub: repositories, git, and the official `gh` CLI;
-    - Python 3.10+ on every participating machine (Ch.5), the one runtime
-      prerequisite nothing here can install on a human's behalf.
-- No hosted automation either: no GitHub Actions, no Pages, no
-  webhooks-as-a-service. Any "always on" behaviour must run as an ordinary
-  local process on a machine someone already controls.
-- Machines may be offline or disconnected for arbitrary periods and must
-  reconcile safely on reconnect.
-- No agent may merge code into a protected branch without human approval, and
-  humans must be able to settle any agent-vs-agent conflict directly, not
-  merely observe the automated outcome.
-- Joining the swarm on a new machine must be a single command, not a manual
-  setup procedure.
-- The system must not assume the thing implementing a task is an AI agent, or
-  that it can be spawned and left unattended. A human driving their own IDE is
-  an equally valid way to complete a claimed task (Ch.7.3).
+- A. Decisions log (D1–D33)
+- B. Primer — DAGS in ten minutes
+- C. How-to guides
+- D. Reference
 
-These constraints rule out both a classic client-server scheduler and reliance
-on a platform's hosted automation. The architecture below replaces a live
-coordinator with a deterministic protocol every node evaluates identically from
-shared, synced state, and replaces hosted notifications with a local poller
-every human or machine runs themselves.
+\newpage
 
-> **v1.1 — D3:** the first implementation launches workers on **macOS only**.
-> Scheduling, the ledger and the poller are portable Python; only the launchers
-> behind the Worker port (Ch.7.3) are macOS-specific.
+# 1. Problem statement and design constraints
 
-# 2. Architecture Overview
+## 1.1 The problem
 
-The system has four layers, each addressed by a specific tool and detailed in
-its own chapter. Every machine reads all of them before it acts, and every
-machine computes the same conclusions from the same data — there is no
-privileged node and no hosted service.
+Several coding agents, on several machines, should be able to work a shared
+backlog at the same time without a server to coordinate them, without two of them
+doing the same task, and without a human losing the ability to say no.
 
-| Layer | Responsibility | Tool |
+The hard part is not making an agent write code. It is the three questions that
+appear the moment there is more than one of them:
+
+- **Who is working on what?** Two agents that claim the same ticket waste both
+  their efforts and produce two conflicting branches.
+- **How much is running at once?** An unbounded number of agents on one laptop is
+  slower than one, and on several laptops it is a way to exhaust a quota nobody
+  is watching.
+- **Where does a human intervene?** An agent that cannot be stopped, redirected
+  or overruled is not a tool.
+
+## 1.2 Constraints
+
+These are the constraints the design accepted, and they explain most of what
+follows.
+
+**No server.** There is no DAGS service, no database and no leader election. A
+machine joins the swarm by cloning a git repository and running one script. This
+is the constraint that shapes everything else: coordination state has to live
+somewhere every machine can read and write with tools it already has.
+
+**Nothing trusted to an agent's memory.** Every fact that matters — who claimed
+what, when, what the plan was, who approved it — is a file in a repository.
+An agent that dies mid-task loses nothing that another agent needs.
+
+**Determinism over negotiation.** Machines do not talk to each other. Given the
+same synced repository, every machine computes the same answer to "who owns this
+task?" by the same pure function. Disagreement is impossible without divergent
+state, and divergent state is a git problem with a git solution.
+
+**A human is in the loop by construction, not by convention.** The gates are in
+the protocol: a plan is reviewed before code is written, a pull request is merged
+by a person, and a running swarm can be paused from any machine. An agent cannot
+route around them, because the thing it must do to make progress — write a ledger
+record — is the thing a human can refuse.
+
+**Boring tools.** git, the GitHub CLI, Python's standard library and four
+packages. No message queue, no scheduler daemon of its own beyond a local
+process, no custom protocol on the wire. Every piece of swarm state can be read
+with `cat` and fixed with `git revert`.
+
+## 1.3 What DAGS is not
+
+It is not a CI system: it does not run your builds, and since the swarm's own
+verification now leans on CI (Chapter 11), it assumes one exists.
+
+It is not an agent framework: it does not decide how an agent reasons, and it
+makes no assumptions about which one you use beyond the worker port in §7.3.
+
+It is not a replacement for review. The swarm's output is pull requests. Who
+merges them, and on what evidence, is Chapter 9.
+
+\newpage
+
+# 2. Architecture overview
+
+DAGS is three substrates and a protocol that connects them.
+
+![The three substrates, and the three places a human enters.](figures/fig1-substrates.pdf){width=159mm}
+
+| Substrate | What it holds | Who writes it |
 |---|---|---|
-| Plan | Epics, tasks, dependencies, human-facing status, review workflow | Pluggable issue backend (Ch.3) |
-| State | Claims, heartbeats, checkpoints, completions, arbitration, audit trail | GitHub coordination repo, plain git |
-| Execution | Code changes, tests, pull requests, reviews, merges | GitHub code repos, via `gh` |
-| Notification & bootstrap | Joining the swarm; surfacing review-ready and stale work | Local poller, start script and Swarm Board on each machine |
+| **The task graph** | What work exists, its shape and its permissions | Humans, through a tracker |
+| **The coordination repository** | What is happening right now, and what happened | Machines, through `swarm.py` |
+| **The code repositories** | The product | Workers, on branches, through pull requests |
 
-The bound issue backend is the plan humans read and steer. The coordination
-repository is the ledger machines use to avoid stepping on each other, and the
-record humans use to arbitrate them when they do collide. It is a plain data
-repo, so plain git is all it needs.
+The protocol is the rules by which a machine moves work from the first to the
+third, recording every step in the second.
 
-Code repositories are where actual work happens and where human review gates
-live. There, the official `gh` CLI does the GitHub-specific work — opening PRs,
-checking CI status, reviewing, merging — in place of the GitHub web UI or a
-hand-rolled API client.
+## 2.1 The three substrates
 
-The poller, start script and Swarm Board are the only "always on" pieces:
-ordinary local processes, not hosted infrastructure.
+**The task graph** lives in an issue tracker — GitHub Issues today. Epics,
+tasks, dependencies and permissions are issues and labels. A human's entire
+interface for *what should be built* is the tracker: they file, order and label
+there, and nothing requires them to learn the ledger. Chapter 3.
 
-Of everything in this table, the scheduler loop, poller, `resolve()` and Swarm
-Board are all ordinary deterministic Python — none of them writes code or makes
-a judgment call. The implementation work is done by a *worker*, dispatched once
-per claimed task (Ch.7.3), and this document does not assume that is an AI
-agent.
+**The coordination repository** is a git repository holding append-only records:
+claims, withdrawals, completions, plan reviews, arbitrations, machine control and
+quota. It is the swarm's shared memory, and git's merge semantics are its
+concurrency control. One coordination repository per swarm, holding no product
+code (D27). Chapter 4.
 
-> **v1.1 — D1:** all DAGS code lives inside the coordination repo, in `bin/`.
-> "Installing the protocol" is cloning that repo.
+**The code repositories** are whatever the work targets. A task names its repo;
+the machine that owns the claim prepares a worktree on a branch named for the
+task, and the worker changes code only there. Chapter 7.3.
 
+## 2.2 What runs on a machine
 
-# 3. The Task Graph — A Pluggable Issue Backend
+![One machine: a single daemon, three loops, one local clone.](figures/fig2-loops.pdf){width=159mm}
 
-**Tool:** an abstract issue-backend port, bound to one concrete adapter per
-coordination repo.
+One process, three loops, started by `swarm.py start` and detached as
+`swarm.py _daemon` (`bin/dags/daemon.py`):
 
-The swarm never talks to a tracker directly. It calls a small, fixed interface —
-list ready tasks, read a task's dependencies and autonomy tier, transition its
-status, post a comment — and a concrete adapter, chosen once (3.4), translates
-those calls into whatever the bound tracker actually supports. This is a Ports
-and Adapters (hexagonal) boundary: the scheduler, the poller and the Board
-depend only on the port.
+- **The scheduler**, every 30 seconds by default: pull, sync the plan, honour
+  control records, tidy its own claims, claim ready work within quota, prepare a
+  worktree, dispatch a worker.
+- **The heartbeat**, every `min(heartbeat_s, lease_s / 3)`: prove that this
+  machine still owns the claims it holds, and discover the ones it has lost.
+- **The poller**, every 60 seconds: notice what changed, read pull request state
+  from GitHub, and notify a human.
 
-Each epic is decomposed into subtasks sized for a single agent run (hour-scale,
-not minute-scale — see Chapter 12), with dependencies between them forming a
-DAG.
+Plus two things a human runs directly: the **Swarm Board**, a terminal UI over
+the same local clone (Chapter 10), and `swarm.py` itself for everything the Board
+does not cover.
+
+Nothing on a machine upgrades itself. A machine runs the protocol code it was
+started with until a human stops it and starts it again (D33, §5.6).
+
+## 2.3 The shape of the code
+
+`bin/` is committed to the coordination repository and is what every machine
+executes. The division that matters is between pure computation and effects:
+
+| Layer | Modules | Rule |
+|---|---|---|
+| **Pure** | `resolve.py`, `snapshot.py`, `testscope.py`, `boardview.py`, `feed.py`, `panel.py` | No network, no writes. Time enters as an argument. Identical inputs give identical answers on every machine. |
+| **Effects** | `ledger.py`, `gitsync.py`, `gh.py`, `worktree.py`, `repos.py` | One git transaction or one `gh` call per function. |
+| **Policy** | `scheduler.py`, `work.py`, `actions.py`, `plan.py`, `poll.py` | Decides what to do, then calls the two layers above. |
+| **Ports** | `backends/`, `workers/` | The two places a different implementation can be plugged in. |
+| **Surfaces** | `cli.py`, `board.py`, `skill/swarm-task` | Argument parsing and presentation only. |
+
+`resolve.py` is the heart of it: claim resolution, readiness and quota, as pure
+functions over the ledger. Every machine and every surface answers "who owns
+this?" by calling the same code on the same synced files, which is why there is
+no leader.
+
+## 2.4 Two ports, and why only two
+
+**The issue backend** (`bin/backends/base.py`) is the boundary to a tracker.
+Nothing outside `bin/backends/` talks to a tracker directly. Two adapters exist:
+`github` and `fake` (file-backed, for tests and offline demos). A Jira adapter is
+designed for but not written — see `FutureWork.md` and §3.5.
+
+**The worker** (`bin/workers/base.py`) is the boundary to whatever implements a
+task. A worker is an AI CLI in a terminal or a human in an IDE; the scheduler only
+ever calls `dispatch`, and completion is detected from the output contract — a
+ledger record and a pull request — never from the worker's process. That is what
+lets a human and an agent be the same kind of thing to the scheduler. Three
+adapters: `claude`, `intellij`, `vscode`, all macOS launchers (D3).
+
+Everything else is deliberately not a port. There is one state store (git), one
+clock scheme (§6.1), one notification path (§9.4). Pluggability was spent where
+it buys something and refused where it would only buy indirection.
+
+\newpage
+
+# 3. The task graph — a pluggable issue backend
+
+Humans describe work in a tracker. The swarm reads it and never invents work of
+its own. This chapter is the contract between the two.
 
 ## 3.1 The port
 
+`bin/backends/base.py` defines the interface. Nothing outside `bin/backends/`
+may talk to a tracker, which is what makes the fake adapter a faithful stand-in
+and a second adapter a contained piece of work.
+
+The port's vocabulary is small and fixed:
+
 ```python
-# bin/backends/base.py
-class IssueBackend(Protocol):
-    def ready_tasks(self) -> list[TaskRef]: ...
-    def get_task(self, ref: TaskRef) -> Task: ...
-    def set_status(self, ref: TaskRef, status: str) -> None: ...
-    def dependencies(self, ref: TaskRef) -> list[TaskRef]: ...
-    def epic_children(self, ref: TaskRef) -> list[TaskRef]: ...
-    def post_comment(self, ref: TaskRef, text: str) -> None: ...
-    def coordination_ref(self, ref: TaskRef) -> str: ...
+SWARM_STATUSES  = ("ready", "claimed", "in-progress",
+                   "awaiting-review", "blocked", "done")
+AUTONOMY_TIERS  = ("auto-pr", "human-must-review", "human-must-scope")
+DEFAULT_AUTONOMY = "human-must-review"
+PLAN_SCOPES     = ("labelled", "all")
+DEFAULT_PLAN_SCOPE = "labelled"
 ```
 
-`Task` carries whatever the port's callers need regardless of backend:
-dependencies, `swarm:autonomy` tier, epic membership and status.
+A `Task` carries its ref, title, body, status, autonomy tier, target repo, epic,
+dependencies and labels. A `TaskRef` is a backend-native identifier — an issue
+reference like `owner/repo#7` for GitHub, a key like `MW-14` for a tracker that
+uses them.
 
-`coordination_ref` is the one method worth flagging. Some backends have no
-native home for an arbitrary structured pointer and must store it explicitly
-(3.2). Others have an ID that already serves that purpose and implement the
-method as a pass-through (3.3).
+Two rules in the port rather than in any adapter, so every backend behaves the
+same way:
 
-> **v1.1 — D10, D18:**
->
-> - Every shipped adapter also provides:
->   - `all_tasks()`, used by plan sync, which lists only the plan's issues
->     (D26), and `all_issues()`, which lists every issue;
->   - `set_autonomy()`, used by the failure downgrade;
->   - `web_url()` and `short_key()`, used by the Board.
-> - `Task` also carries the target code repo (`repo`), whether it is an epic,
->   and whether it is closed.
-> - `ready_tasks()` means "tasks the backend does not hold back": open, not an
->   epic, not `blocked` or `done`, and not under a blocked epic. The ledger
->   decides the rest (Ch.7.2).
+**Readiness** (`ready_from`): a task is ready when it is open, is not an epic, is
+not `blocked` or `done`, and its epic is not blocked. The last clause is the
+"halt everything" lever of §9.2 — blocking an epic stops all its children without
+touching them individually.
 
-## 3.2 The Jira adapter
+**Membership** (`split_plan`): see §3.4.
 
-No custom fields and no custom workflow states are assumed — only two
-mechanisms available on any Jira instance without admin configuration: plain
-labels, for short enumerable values, and a plain file attachment, for anything
-more structured.
+## 3.2 Labels are the human-facing contract
 
-- **Status labels:** `swarm:status:ready`, `claimed`, `in-progress`,
-  `awaiting-review`, `blocked` and `done`, layered on top of whatever native
-  status (To Do / In Progress / Done) humans already use.
-- **Autonomy labels:** `swarm:autonomy:auto-pr`,
-  `swarm:autonomy:human-must-review` and `swarm:autonomy:human-must-scope`
-  (Ch.9.2).
+On GitHub the task graph is expressed in labels, and those labels are what a
+human reads. Four families:
 
-`coordination_ref` doesn't fit a label, so the adapter reads and writes one
-small attachment, `swarm.yaml`:
+| Label | Meaning | Lifecycle |
+|---|---|---|
+| `swarm:status:<s>` | Where the task is | Changes as work proceeds |
+| `swarm:autonomy:<t>` | How much review the task requires | Set by a human; may be lowered by the swarm (§8.3) |
+| `repo:OWNER/NAME` | Which repository the task changes | Fixed |
+| `type:epic` / `type:task` | What the thing is | Fixed |
+
+**`swarm:status:ready` means "a human says this may be worked" — nothing more**
+(D28). It is permission, not availability. Whether a task can be claimed *right
+now* also depends on its dependencies, and that is computed in the ledger
+(`resolve.deps_done`) and deliberately **not** written back to the tracker.
+
+This is a decision with a visible cost: the tracker alone will not tell you what
+the swarm will pick up next, because an issue can read `ready` while a dependency
+is still open. The alternative — having `plan sync` write computed state back —
+makes the tracker self-explanatory at the price of a write loop that can drift
+when sync fails, and of many more API writes. The Board and `swarm.py backend
+ready --ledger` answer the availability question instead.
+
+The corollary, also D28: **labels that have stopped applying are retired.** When
+a task is done, `swarm:autonomy:*` and `swarm:status:done` are removed — the
+tier only governs the review gate while a task is being worked, and a closed
+issue already shows its state. `type:` and `repo:` are lifecycle-independent and
+stay. This is specified and not yet built (`#8`).
+
+## 3.3 The GitHub adapter
+
+`bin/backends/github.py` reads through one paginated GraphQL query issued by
+`gh api graphql`, so that sub-issues (`parent`, `subIssues`), dependencies
+(`blockedBy`) and issue types arrive together in a single call. That matters
+because the `--json` fields exposed by `gh issue list` vary between gh releases,
+while the GraphQL shape does not.
+
+Writes are narrow: `_swap_label` adds a label and removes the stale ones sharing
+its prefix, so a status change is one operation and cannot leave two statuses on
+an issue. `set_status("done")` also closes the issue as completed.
+
+Epics and tasks are distinguished by `type:epic` / `type:task` labels, or by
+GitHub issue types where the repository has them configured
+(`use_issue_types: true`).
+
+## 3.4 Plan membership is a label, not an accident
+
+Under `plan_scope: labelled`, the default, an issue is part of the plan when it
+carries any `swarm:` label or a `type:` label, **or is an ancestor of an issue
+that does** — so an epic seeded without a status is not dropped. Everything else
+is invisible: not imported, not listed by `backend ready`, never claimed.
+
+The alternative, `plan_scope: all`, treats every open issue as plan membership
+and exists for a repository that is used only by the swarm.
+
+The default is `labelled` because of a concrete failure. While the meta swarm's
+plan lived in a repository that people also used, every stray issue became
+claimable work with the default autonomy and the `default_repo` from
+`backend.yaml` — a thought filed at midnight would have been work the next
+morning, with a worker opening a pull request against a repository nobody meant
+(D26).
+
+`plan sync` reports what it skipped, so nothing goes missing silently.
+`swarm.py backend adopt <issue>` adds the labels that bring one issue into the
+plan, for the common case of filing something and then handing it over.
+
+## 3.5 Selecting a backend, and the Jira question
+
+`backend.yaml` at the coordination repository root names the adapter and carries
+the settings every machine shares:
 
 ```yaml
-# swarm.yaml, attached to the Jira ticket
-coordination_ref: tasks/EPIC-14/TASK-3
-```
+backend: github                 # or: fake
 
-`dependencies()` and `epic_children()` read Jira's native issue links and epic
-relationship. Re-attaching a new version of `swarm.yaml` is the update
-mechanism, and Jira's attachment history is the audit trail.
-
-> **v1.1 — D4:** the Jira adapter is **deferred**; there was no Jira site to
-> build against. `backend: jira` currently stops with a pointer to
-> `FutureWork.md`, which records the design:
->
-> - search via `/rest/api/3/search/jql`;
-> - epic membership via `parent`, falling back to Epic Link;
-> - comments in ADF;
-> - `repo:` in `swarm.yaml` (D10);
-> - credentials from the environment or Keychain.
-
-## 3.3 The GitHub Issues adapter
-
-Native issue relationships cover almost the whole port. An issue's own
-`org/repo#number` is already a permanent, structured identifier, so
-`coordination_ref()` is a pass-through.
-
-```bash
-gh issue create --repo org/matchwire-swarm --title "E2: sports-data ingestion" \
-  --type Task --parent org/matchwire-swarm#1 \
-  --label "swarm:status:ready" --label "swarm:autonomy:human-must-review"
-gh issue edit 7 --add-label "swarm:status:claimed" --remove-label "swarm:status:ready"
-gh issue edit 7 --add-blocked-by org/matchwire-swarm#1
-```
-
-`set_status` and the autonomy tier are ordinary labels. `dependencies()` and
-`epic_children()` read GitHub's native sub-issue (`--parent`) and dependency
-(`blocked by`) relationships directly — this is the DAG, not a mirror of it.
-
-Issue types (Epic / Task) are configured at the organization level, so they are
-unavailable on a personal account's repos. There the adapter uses a plain
-`type:epic` / `type:task` label instead.
-
-> **v1.1 — D15, D18, D19, D10:**
->
-> - **Command fix:** the edit flag is `--add-blocked-by`; `--blocked-by` is
->   only valid on `gh issue create`.
-> - **Reading:** the adapter reads everything with one paginated
->   `gh api graphql` query (labels, parent, subIssues, blockedBy, issueType).
->   This avoids depending on which `--json` fields a given `gh` release
->   exposes. Without type labels, an issue that has sub-issues counts as an epic.
-> - **Keys:** tasks are keyed `OWNER/REPO#N`; the short name used everywhere
->   in the UI is `GH-N`.
-> - **Target repo:** a task names its code repo with a `repo:OWNER/NAME` label.
-> - **Labels:** they must exist before use; `swarm.py backend init` prints (or,
->   with `--apply`, creates) the full set.
-> - **Plan membership (D26):** only issues carrying a `swarm:` label or
->   `type:epic` / `type:task`, and the epics above them, belong to the plan.
->   Every other issue in the plan repo is invisible to the swarm.
-
-## 3.4 Selecting a backend
-
-One config file at the coordination repo's root is read once by `swarm.py` at
-startup to import the matching module from `bin/backends/`. It is the one place
-a human's choice of tracker is recorded.
-
-```yaml
-# backend.yaml, coordination repo root
-backend: github            # or: jira (deferred)
 github:
-  repo: org/matchwire-swarm
-jira:
-  base_url: https://yourorg.atlassian.net
-  project_key: MW
+  repo: OWNER/plan-repo         # the repo whose issues are the plan
+  use_issue_types: false        # true only where issue types are configured
+  cache_seconds: 20
+
+plan_scope: labelled            # or: all
+
+repos:                          # code repositories tasks may target
+  OWNER/backend:
+    base: main
+    test_command: ./mvnw -q verify
+    checks_timeout: 300         # seconds `done` waits for CI (§11.3)
+    worktrees: inside           # §7.3
+default_repo: OWNER/backend
+
+swarm:
+  default_quota: 3              # global N (§7.1)
+  lease_minutes: 15             # claim expiry (§6.5)
+  heartbeat_minutes: 3
+  max_retries: 3                # before autonomy is lowered (§8.3)
+  human_idle_hours: 8
+  thrash_threshold: 2           # conflict cycles before arbitration (§9.5)
 ```
 
-Humans author and edit the plan directly in whichever backend is bound. The
-swarm never invents tasks or dependencies; decomposition is a human act, kept
-separate from execution. A human may use an AI assistant to draft epics, but
-that assistant is not a swarm participant — it holds no claim and consumes no
-quota.
+**There is no Jira adapter.** v1.1 documented one, including a `swarm.yaml`
+attachment format, and it was never written: `bin/backends/` contains `base`,
+`fake` and `github`. The port exists and is deliberately tracker-agnostic — the
+readiness and membership rules live in it precisely so a second adapter inherits
+them — but Jira is future work (`FutureWork.md`), and this specification no
+longer describes it as though it shipped.
 
-> **v1.1 — D10, D14, D6, D9:** `backend.yaml` also holds the swarm-wide
-> settings every machine must share:
->
-> ```yaml
-> repos:                          # per code repo: base branch and local test command
->   org/matchwire-backend: {base: main, test_command: ./mvnw -q verify}
->   org/matchwire-frontend: {base: main, test_command: npm test --silent}
-> default_repo: org/matchwire-backend   # repo for tasks without a repo: label
-> epic_repos:                           # optional per-epic default
->   GH-1: org/matchwire-frontend
-> swarm:
->   default_quota: 3                    # global N until a quota/ record overrides it
->   lease_minutes: 15
->   heartbeat_minutes: 3
->   max_retries: 3
->   human_idle_hours: 8
->   thrash_threshold: 2
-> ```
->
-> A task's code repo is, in order: its `repo:` label, its epic's entry in
-> `epic_repos`, then `default_repo`. The resolved repo is recorded in the
-> task's `meta.yaml`.
->
-> **v1.1 — D26: the plan is opt-in.** `plan_scope: labelled` (the default)
-> admits an issue to the plan only when:
->
-> - it carries a `swarm:` label (normally `swarm:status:*`) or `type:epic` /
->   `type:task`; or
-> - it is the epic, at any depth, of an issue that does.
->
-> GitHub issue types don't count, and membership never flows down from an epic
-> to an unlabelled sub-issue. Everything else is not imported, not listed by
-> `backend ready`, and never claimed. `plan sync` reports how many open issues
-> it skipped. `plan_scope: all` restores the v1.0 rule (every issue is in the
-> plan). The rule lives in the port (`backends/base.py`), so every adapter
-> applies it the same way.
->
-> - **Dependencies without a label.** A plan task that depends on an
->   unlabelled issue is an error, not a guess. `plan sync` names it and leaves
->   it out, so the dependant stays unready. `backend init --apply` labels it:
->   `swarm:status:ready` if open, `done` if closed, plus `type:task`.
-> - **Swarms that predate D26.** `backend init --apply` also labels every
->   issue the ledger already tracks but that has no swarm label. The status is
->   taken from the ledger (`done`, `claimed`, `in-progress`, `awaiting-review`,
->   otherwise `ready`). A task that is frozen or rejected is listed for a human
->   to label instead.
-> - **One issue at a time.** `swarm.py backend adopt ISSUE [--autonomy TIER]`
->   brings a hand-filed issue into the plan.
+## 3.6 Seeding a plan from a file
 
+Typing a large plan into a tracker by hand is error-prone, and a half-finished
+run must be safe to repeat. `swarm.py backend seed FILE` takes a YAML plan of
+epics and tasks with their parents and dependencies, and creates the labels,
+issues, parent links and "blocked by" links to match (D25).
 
-# 4. The Coordination Repository — GitHub as the State Store
+It is idempotent by construction: each created issue carries a hidden marker
+`<!-- dags-seed: ID -->` in its body, so a re-run creates only what is missing
+and never rewrites what exists. It is a dry run unless given `--apply`, and
+`--apply` requires a recognised human (`--yes` skips only the confirmation, not
+the human check).
 
-**Tool:** a dedicated GitHub repository (not a code repo).
+\newpage
 
-It acts as the append-only ledger of machine state: who is doing what, since
-when, what has been tried, and where a human has stepped in to settle a
-conflict. It mirrors, but does not replace, the issue backend's task status.
+# 4. The coordination repository — git as the state store
 
-Layout (v1.1):
+The ledger is a git repository. There is no database because there does not need
+to be one: the problem is a small number of small facts that many writers append
+and everyone must agree on, and that is what git already does well.
 
-```text
-bin/
-  swarm.py            # one-command bootstrap and CLI (Ch.5)
-  resolve.py          # claim resolution, run locally (Ch.6)
-  poll.py             # local poller (Ch.9.4)
-  board.py            # Swarm Board, Textual UI (Ch.10)
-  dev-setup.sh        # venv + full test suite, for developers
-  requirements.txt    # typer, rich, textual, pyyaml (Ch.5.2)
-  dags/               # support package: ledger I/O, git sync, gh, scheduler, …
-  backends/           # base.py (port), github.py, fake.py; jira.py deferred
-  workers/            # base.py (port), claude.py, intellij.py, vscode.py
-  skill/              # injected as .swarm-task/ (Ch.7.3): README.md, swarm-task
-backend.yaml          # adapter + shared settings (Ch.3.4)
-humans.yaml           # recognised humans (Ch.6.6)
-CONVENTIONS.md        # required reading for every worker (Ch.9.3)
-templates/
-  commit-message.txt  # every worker commit (4.1)
-  pr-description.md   # every worker PR (4.1)
-tasks/EPIC-14/TASK-3/
-  meta.yaml           # issue ref, repo, dependencies, autonomy — never rewritten
-  meta/<machine>-<clock>.yaml             # later tracker changes (revisions)
-  claims/<machine>-<clock>.yaml
-  withdrawals/<machine>-<clock>.yaml
-  arbitration/human-<name>-<clock>.yaml   # optional (Ch.6.6)
-  plan-reviews/human-<name>-<clock>.yaml  # plan approvals (Ch.7.3)
-  heartbeats/<machine>.yaml               # single writer
-  checkpoint.yaml                         # single writer (Ch.8)
-  completions/<machine>-<kind>-<clock>.yaml
-  events/<machine>-<kind>-<clock>.yaml    # feed-only notes of checkpoint changes (10.3)
-tasks/EPIC-14/_epic/meta.yaml             # the epic itself
-control/<machine>-<action>-<clock>.yaml   # pause/resume/stop/start/throttle (Ch.10.3)
-priority/<machine>-<epic>-<action>-<clock>.yaml   # epic takeover/release (Ch.10.4)
-quota/<human>-<clock>.yaml                # global N (Ch.7.1)
-.swarm/      (git-ignored) machine-local state: venv, identity, logs, clones
-.worktrees/  (git-ignored) one git worktree per claimed task
+**One coordination repository per swarm, holding no product code** (D27). This
+was learned the hard way — see §4.6.
+
+## 4.1 Layout
+
+```
+tasks/<EPIC>/<TASK>/
+    meta.yaml              the task as the tracker describes it
+    meta/<machine>-<n>.yaml later revisions (autonomy, title, deps)
+    claims/<machine>-<n>.yaml
+    withdrawals/<machine>-<n>.yaml
+    heartbeats/<machine>.yaml       single-writer, rewritten in place
+    completions/<machine>-<kind>-<n>.yaml
+    plan-reviews/<human>-<n>.yaml
+    arbitration/<human>-<n>.yaml
+    events/<machine>-<kind>-<n>.yaml
+    test-scope/<...>.yaml
+    checkpoint.yaml         single-writer, rewritten in place
+control/<machine>-<action>-<n>.yaml
+priority/<human>-<n>.yaml
+quota/<human>-<n>.yaml
 ```
 
-The governing rule is **append-only, never mutate-in-place**. Claims,
-completions, arbitration, control, priority and quota records are always new,
-uniquely named files. Two writers at once therefore cannot produce a textual
-git conflict: their files coexist after a sync, and arbitration happens
-afterwards, as pure computation (Chapter 6).
+`<n>` is the logical clock (§6.1), which makes every filename unique and every
+directory sortable into the order events happened.
 
-Every read or write against this repository is plain git — pull, commit, push.
-There is nothing here for `gh` to do; it earns its place in the code repos.
+## 4.2 Append-only, and the two exceptions
 
-> **v1.1 — D7:**
->
-> - **Mutable files.** Two kinds of file are rewritten in place:
->   - `heartbeats/<machine>.yaml` (YAML rather than `.txt`);
->   - `checkpoint.yaml`.
->
->   Only the current owner of the task writes them, and it re-checks
->   ownership after every pull, so no two machines write them concurrently.
->   If a stale copy ever conflicts, the remote version wins.
-> - **Record names.** The claim ID is `<machine>-<clock>`, e.g. `laptop-b-450`.
->   Every record carries `logical_clock`, `machine` and `wall_utc`.
-> - **`meta.yaml`.** It is written once at import. Later changes in the tracker
->   become revisions under `meta/`, and readers merge them by clock.
+**The rule: records are new files, never edits** (`records.write_new`). Two
+writers appending different files to the same directory cannot conflict, which is
+what allows the sync in §4.3 to be as simple as it is.
 
-## 4.1 Commit and PR templates
+**The exceptions are single-writer files**, rewritten in place
+(`records.write_replace`): a machine's own `heartbeats/<machine>.yaml`, and
+`checkpoint.yaml`, which the machine owning the claim is alone in writing. These
+can conflict, and §4.3 says what happens when they do.
 
-Two committed templates keep every worker's output legible regardless of which
-machine, human or IDE produced it.
+## 4.3 One transaction, and how conflicts resolve
 
-```text
-# templates/commit-message.txt
-[{task_ref}] {summary}
+![One ledger transaction, and the three layers of concurrency control.](figures/fig3-transaction.pdf){width=159mm}
 
-Issue: {issue_ref}
-Coordination-ref: {coordination_ref}
-```
+Every write is `Coord.transaction` (`bin/dags/gitsync.py`): take the lock, pull
+with rebase, run the function that writes the files, commit, push. The pull
+happens before the write so that any logical clock the write computes has seen
+everything synced so far.
 
-```markdown
-# templates/pr-description.md
-## Summary
-{summary}
+Concurrency control is in three layers, because a single clone is shared by the
+daemon's threads, the Board, and a worker's `swarm-task done`:
 
-## Risks
-{risks}
+- an in-process re-entrant lock;
+- an OS file lock on `.swarm/git.lock`, across processes;
+- git itself, across machines.
 
-## Open questions
-{open_questions}
+A push that loses a race comes back non-fast-forward; the transaction pulls and
+retries with exponential backoff, up to six attempts. A rebase conflict can only
+be in a single-writer file, and there the **remote wins** (`-X ours` after a
+failed rebase, which in rebase terms is the upstream side): a stale writer
+discovers it lost on its next `resolve()`.
 
-## Task
-Issue: {issue_ref}
-Coordination ref: {coordination_ref}
-```
+**Reading is not writing.** `Coord.pull()` is called at the top of every
+scheduler and poller cycle regardless of whether anything will be written
+(`scheduler.py:114`), and `Coord.commit()` returns false when nothing is staged.
+An idle machine therefore stays within one cycle of current while contributing
+nothing to the history — a distinction that matters in §4.5.
 
-Agents render these programmatically from the fields kept in `checkpoint.yaml`
-(Ch.8), not through git's interactive editor. `swarm.py` also sets
-`commit.template` to this file in every code repo clone, so a human committing
-by hand gets the same prompt.
+## 4.4 Attribution
 
-> **v1.1:**
->
-> - In the rendered text, `{task_ref}` is the short key (e.g. `GH-7`) and
->   `{coordination_ref}` is the task's ledger path, e.g. `tasks/GH-1/GH-7`.
-> - Empty risk and question lists render as "None.".
+A record written by a machine carries that machine's identity. A record that
+represents a human decision — a plan review, an arbitration, a quota change —
+carries the human's name from `humans.yaml`, and the surfaces that act on those
+records refuse to accept one whose author is not a recognised human (§10.6).
+`humans.yaml` is committed, so every machine agrees on who may decide.
 
+## 4.5 Liveness does not live in the history
 
-# 5. Bootstrapping — One Script to Join the Swarm
+A heartbeat is not history. It says one thing — "this machine still holds this
+claim, as of now" — and the previous value is of no interest to anyone. But it is
+the only record whose volume is a function of wall-clock time rather than work
+done, and in the original design it was a commit.
 
-**Tool:** `bin/swarm.py`, committed in the coordination repo.
+Measured on the meta swarm's ledger over its first fortnight: **493 commits, 238
+of them heartbeat-only.** A machine holding a claim beats every
+`min(heartbeat_s, lease_s / 3)` — 3 minutes with the default lease — so roughly
+480 commits a day each. Four machines across two swarms is some 2,000 a day,
+around 700,000 a year, none of which anybody will ever read.
 
-The whole onboarding procedure for a new machine is: clone the coordination
-repo, run one script. Nothing else to install, configure or register centrally.
+The mitigations that look obvious are not available. Skipping the beat when a
+machine holds no claim is already the behaviour (`ledger.heartbeat` returns early
+on an empty list). And beat frequency is pinned to lease length on purpose:
+`lease / 3` gives three beats per lease so that one missed beat does not expire a
+claim that is alive. Lengthening the lease to beat less often directly slows
+recovery when a machine dies, which is the wrong trade.
 
-## 5.1 Why Python, not bash
+**So liveness is specified to live outside the branch**, in a git ref per
+machine: `refs/dags/live/<machine>`, written with `git update-ref` and pushed on
+its own. No commit on the default branch, ever. Each machine writes only its own
+ref, so there is no contention, no rebase and no conflict rule to reason about;
+readers fetch `refs/dags/live/*` and read the blobs. Nothing is lost, because
+heartbeats are already rewritten in place and no history of them exists today.
 
-Everything the bootstrap starts — `resolve.py`, `poll.py`, the Board — is
-Python. The tool parses YAML on every record, computes a logical clock across
-the whole repo, and shells out to git and gh constantly. A bash entry point
-would only re-implement argument parsing and process supervision, then call
-Python for everything that matters. So the entry point is Python too:
-`bin/swarm.py`, directly executable (`#!/usr/bin/env python3`).
+Two consequences are worth stating, because they are the actual reasons to do it:
 
-## 5.2 Dependencies
+- **Commit volume becomes a function of work, not time.** Everything still
+  committed — claims, checkpoints, completions, events, control — is
+  event-driven. The ledger stops growing while the swarm is merely switched on.
+- **Expiry detection gets better rather than cheaper.** Once a beat costs no
+  commit, a machine can beat every 30 seconds with a *shorter* lease, so a dead
+  machine's claim returns to the pool sooner.
 
-Four small, widely used libraries, declared once:
+This is specified and not yet built (D31; the issue is drafted, not yet filed). Migration must be dual-read, not a
+cutover: under the pinned-copy model (§5.6) old and new machines coexist, and a
+new machine that writes only a ref would look dead to an old one, which would
+then expire its claims — the exact failure the change exists to prevent.
 
-```text
-# bin/requirements.txt
-typer>=0.16     # command-line interface
-rich>=13.7      # formatted terminal output
-textual>=0.58   # the Swarm Board UI (Ch.10)
-pyyaml>=6.0     # every claim, checkpoint and arbitration file
-```
+## 4.6 One ledger per swarm
 
-`swarm.py` installs these itself into an isolated virtual environment under
-`.swarm/venv` the first time it runs. The equivalent manual command, for a
-locked-down machine:
+A coordination repository never doubles as a repository the swarm writes code to
+(D27).
 
-```bash
-python3 -m venv .swarm/venv
-.swarm/venv/bin/pip install -r bin/requirements.txt
-```
+This was learned by violating it. The meta swarm's ledger lived in the same
+repository as the DAGS source for two weeks, with three consequences. Ledger
+commits swamped the code history — 328 of 369 commits on the default branch in
+one month. Branch protection, added so that a human reviews every merge, blocked
+the daemon's direct ledger pushes outright, so the swarm could not run at all
+until the ledger moved. And a worker's worktree sat inside the live ledger, which
+is the mechanism behind `#1`.
 
-> **v1.1 — D23:**
->
-> - **Version.** The typer minimum was raised from 0.12 to 0.16; older typer
->   breaks with click 8.2 and later.
-> - **Re-exec and rebuild.** `swarm.py` re-executes itself inside the venv. The
->   venv is stamped with the platform, CPU and Python version, and is rebuilt
->   automatically if it was created somewhere else (e.g. inside a Linux VM that
->   mounts the same folder).
-> - **Options.**
->   - `DAGS_NO_VENV=1` skips the bootstrap.
->   - `bin/dev-setup.sh` builds the same venv with the test dependencies and
->     runs the suite; that venv also serves normal runs.
+The rule also makes the "one ledger per swarm" shape explicit: two swarms do not
+share a ledger, so volume is per-swarm, and a repository that is a swarm's plan
+and code can never be its ledger.
 
-## 5.3 What the script does, in order
+\newpage
 
-1. **Checks prerequisites** — git, the `gh` CLI, `gh auth status` and
-   Python 3.10+ — and fails fast with a clear message if any are missing. This
-   is also where it creates `.swarm/venv` if needed.
-2. **Pulls the coordination repo** it runs from. The human clones it once, by
-   hand; that is the only manual step.
-   - For every code repo referenced by unfinished tasks, it runs
-     `gh repo clone`, or fetches if the repo is already present.
-   - On every run it idempotently sets `commit.template` in that repo to
-     `templates/commit-message.txt`.
-   - It also makes sure `.swarm-task/` is listed in the repo's shared
-     `info/exclude` (Ch.7.3), checked rather than blindly appended.
-3. **Establishes a stable machine identity** (`hostname-<4 hex>`) on first run
-   and caches it, so this machine's claims are attributed consistently across
-   restarts.
-4. **Starts the local loops:**
-   - the scheduler (Ch.7), which claims and dispatches ready tasks up to this
-     machine's share of quota;
-   - the poller (Ch.9.4), which syncs periodically and notifies humans;
-   - and makes the Swarm Board (Ch.10) available.
-5. **Prints a status panel** (5.4) and exits, or stays attached showing the
-   live Board with `--attach`.
+# 5. Bootstrapping — one script to join the swarm
 
-> **v1.1 — D8, D17, D6:**
->
-> - **Step 2 — code repo location.** If `.swarm/local.yaml` maps the repo to an
->   existing checkout, that checkout is used in place. Otherwise the clone goes
->   to `.swarm/repos/OWNER/NAME`.
-> - **Step 2 — plan sync.** Plan sync (Ch.11 step 1) runs here and on every
->   scheduler cycle.
-> - **Step 3 — two more steps.**
->   - The operator is identified: `gh api user` is matched against
->     `humans.yaml`, or `human:` is set in `.swarm/local.yaml`. `start` refuses
->     to run for someone not listed there.
->   - Clock skew against GitHub is measured from the `Date` header of
->     `gh api -i /meta`.
-> - **Step 4 — process model.** Threads die with their process, so `start` spawns a
->   **detached daemon** running the scheduler, heartbeat and poller loops. It
->   writes `.swarm/daemon.pid`, `.swarm/daemon.json` and `.swarm/swarm.log`,
->   then prints the panel and exits.
-> - **Step 4 — the Board.** A terminal UI can't live inside a headless daemon,
->   so the Board is its own foreground process: `swarm.py board`, or
->   `swarm.py start --attach`. v1.0's `./bin/swarm.py --attach` becomes
->   `start --attach`.
-> - **Step 4 — shared record.** `start` writes a shared `control/…-start-…`
->   record carrying the quota share and default worker.
+A machine joins by cloning the coordination repository and running
+`./bin/swarm.py start`. There is nothing to install first beyond git, the GitHub
+CLI and Python 3.10 or newer.
 
-## 5.4 Beautified output
+## 5.1 Why a committed script, in Python
 
-```text
-$ gh repo clone <org>/<coordination-repo>
-$ cd <coordination-repo>
-$ ./bin/swarm.py start --quota-share 3 --poll-interval 60s
-╭─────────────────────────── swarm ───────────────────────────╮
-│ identity      mbp-jane-7f2a (new)  ·  operator jane         │
-│ coordination  synced -- 14 tasks ready                      │
-│ scheduler     ● running   quota-share 3  ·  default worker … │
-│ poller        ● running   interval 60s                      │
-│ board         ● available  `swarm.py board` or --attach      │
-│ quota         2/4 in use swarm-wide  ·  this machine 0/3    │
-╰─────────────────────────────────────────────────────────────╯
-```
+The bootstrap has to run before any dependency is installed, which rules out
+anything that needs a package. It is Python rather than shell because it is the
+same language as the rest of the system, so a reader has one language to follow
+and the logic is testable; and because `bin/dags/venv.py` has to be importable
+before any third-party module exists, it is strictly standard library.
 
-`--quota-share` lets a human bound how much of the global quota N this machine
-may consume. Stopping is symmetric: `./bin/swarm.py stop` signals every loop to
-finish its current cycle and exit. Leases are released through the normal
-heartbeat timeout rather than an abrupt kill.
+The script is **committed to the coordination repository**, so every machine runs
+the same code by construction. That is also why upgrading is explicit (§5.6).
 
-> **v1.1:**
->
-> - **Extra panel rows.** The panel also shows tasks waiting for a worker
->   choice, plans waiting for review, and PRs awaiting review.
-> - **`status` command.** `swarm.py status` prints the same panel at any time.
-> - **Throttling.** `swarm.py throttle N` changes the share live, without a
->   restart (Ch.10.2).
+## 5.2 The virtual environment
 
-## 5.5 Preparing a code repo, once
+`bin/swarm.py` creates `.swarm/venv`, installs `bin/requirements.txt` and
+re-executes itself inside it. The dependency list is deliberately four packages
+— `typer`, `rich`, `textual`, `pyyaml` — and everything else is standard library
+(D23). `bin/skill/swarm-task` has no dependencies at all, because it must run in
+any worktree whether or not a venv is present.
 
-Everything in 5.3 is local git config and self-heals on every run. One thing
-doesn't fit that pattern: **branch protection** (Ch.9.1), the server-side
-setting that makes "an agent may open a PR but never merge one" a structural
-guarantee. It is global to the repo, and no machine should decide to set it. A
-human does it once, before the first task against a repo is claimed.
+The venv is **stamped** with the platform, machine architecture, Python
+minor version and a hash of the requirements files, and rebuilt when the stamp no
+longer matches. This matters more than it sounds: a folder shared with a virtual
+machine can hold a venv built for the wrong system, and a requirements change
+must not leave a machine running stale packages.
 
-On GitHub's Free plan this only works on a **public** repository. A private
-repo needs GitHub Pro or Team, or the protection silently doesn't apply. Decide
-this deliberately per repo.
+The stamp has a cost worth knowing about. A coordination repository running a
+pinned older `bin/` (§5.6) has a different requirements hash from the code
+repository its worktrees come from, so a worktree's environment will not match
+the coordination repository's and will be rebuilt — a multi-minute install that,
+under `-q`, is indistinguishable from a slow test run. Sharing one environment
+(`#49`) only helps when the stamps agree, which under the pinned-copy model they
+often will not. `DAGS_NO_VENV=1` skips the whole mechanism for a hand-managed
+environment.
 
-> **v1.1 — D15:** v1.0's one-line `gh api … -f` call can't work. The
-> protection endpoint requires all four of these fields, and `-f` cannot send
-> `null`:
->
-> - `required_status_checks`
-> - `enforce_admins`
-> - `required_pull_request_reviews`
-> - `restrictions`
->
-> Use:
->
-> ```bash
-> ./bin/swarm.py protect org/matchwire-backend            # prints the call (dry run)
-> ./bin/swarm.py protect org/matchwire-backend --apply    # a human applies it
-> ```
->
-> The body sets:
->
-> - one required approval, with stale approvals dismissed;
-> - `enforce_admins: true`;
-> - no required status checks (there is no hosted CI, Ch.9.1).
->
-> With the bot account of D2, "agents can never merge" holds even for repo
-> admins.
+## 5.3 What `start` does, in order
 
+1. **Prerequisites** (`bin/dags/prereqs.py`): fail fast and completely rather
+   than half-configure. git, `gh` and an authenticated `gh` session, Python
+   version, a writable coordination repository, a readable `backend.yaml`.
+2. **Identity.** A machine's identity is derived from its hostname plus a random
+   suffix, stored in `.swarm/identity`, and never changes afterwards unless
+   `identity set --force` is used. It is the second half of the claim tiebreak
+   (§6.3), so it must be stable and unique.
+3. **Clock calibration** (`bin/dags/timeutil.py`): measure this machine's offset
+   from GitHub's clock once, and route every timestamp it writes or compares
+   through the correction. The logical clock orders events, but lease expiry is
+   about real elapsed time, and a machine with a skewed clock would otherwise
+   expire live claims or keep dead ones.
+4. **Code repositories** (`bin/dags/repos.py`): for every repository named by an
+   unfinished task, use the checkout mapped in `.swarm/local.yaml` or clone it,
+   point `commit.template` at the coordination repository's template, and keep
+   the swarm's scratch paths in the clone's `info/exclude` — resolved through
+   `--git-common-dir`, so every linked worktree inherits it and nothing has to be
+   committed to anybody's code repository.
+5. **The daemon.** `swarm.py start` writes a `start` control record and spawns
+   `swarm.py _daemon` detached, which runs the three loops of §2.2, writes
+   `.swarm/daemon.pid` and logs to `.swarm/swarm.log`.
 
-# 6. The Claim Protocol — Deterministic, Leaderless Coordination
+## 5.4 Machine-local state
 
-**Tool:** `bin/resolve.py`, run locally by every machine.
+Everything under `.swarm/` is per-machine and never committed:
 
-This replaces a live scheduler. Given the same synced repo state, every machine
-computes the same answer to "who owns this task", with no network calls beyond
-git sync — and a human can always override the answer directly.
+| Path | Contents |
+|---|---|
+| `identity` | This machine's name |
+| `local.yaml` | Human name, repository checkout paths, worker token source, bot identity, terminal and IDE choices, notification settings |
+| `venv/` | The environment of §5.2 |
+| `daemon.pid`, `daemon.json` | The running daemon and its liveness |
+| `swarm.log` | The daemon's log |
+| `notifications.log` | Every notification, always (§9.4) |
+| `poller-state.json` | What the poller has already seen |
+| `git.lock` | The cross-process lock of §4.3 |
 
-## 6.1 Logical clock
+The separation is strict on purpose: anything a second machine would need to know
+is a ledger record, and anything only this machine needs is here. A machine can
+be rebuilt by deleting `.swarm/` and starting again.
 
-Wall clocks are not trusted for ordering. Every record carries a Lamport-style
-counter, computed fresh at write time and never stored or incremented locally:
+## 5.5 The worker token
 
-```text
-next_clock() = 1 + max(logical_clock across every record in the repo)
-```
+Worker pull requests are opened by a bot account, not by the human running the
+machine, so that a human can review and merge them — a GitHub account cannot
+approve its own pull request, which is the mechanical reason the bot exists
+(D2). Its token is read per call (`bin/dags/gh.py`) from the macOS Keychain, an
+environment variable, or not at all, as configured in `.swarm/local.yaml`. It is
+never written to the ledger, never logged, and never placed in a file in the
+repository.
 
-A newly joined machine's first claim is automatically ordered after everything
-it can see, and a machine returning from an offline period jumps forward rather
-than reusing a stale low value.
+## 5.6 Nothing upgrades itself
+
+A coordination repository holds a **pinned copy** of `bin/`, and a running
+machine executes the code it was started with. Merging a change to the protocol
+changes nothing anywhere until a human copies the new `bin/` into the
+coordination repository, commits it, and stops and starts each machine (D33).
+
+This is deliberate. A swarm whose task is to change the protocol it is running
+would otherwise rewrite itself mid-flight, and a broken merge would be discovered
+by every machine simultaneously. With an explicit upgrade, a bad change is
+discovered on restart, by one machine, with a human watching.
+
+The cost is that a merged fix can sit unused. It has already happened: the
+command that stops workers polling for plan approval merged on one day and was
+still not running on the next, because the coordination repository had not been
+upgraded. An upgrade is a deliberate act, and it needs to be a routine one.
+
+\newpage
+
+# 6. The claim protocol — deterministic and leaderless
+
+This is the core. Every machine, given the same synced repository, computes the
+same answer to "who owns this task?" by the same pure function. There is no
+negotiation because there is nothing to negotiate.
+
+## 6.1 The logical clock
+
+Every record carries a `logical_clock`. A new record's clock is
+`1 + max(logical_clock across every synced file)` — computed by reading the
+ledger, never stored locally (`resolve.next_clock`).
+
+That definition is the whole trick. It is a Lamport clock whose state *is* the
+repository, so a machine that has just pulled cannot pick a clock value that
+ignores what others have done, and a machine that has not pulled cannot write at
+all, because every write begins with a pull (§4.3). The clock also names the
+files: `claims/<machine>-<clock>.yaml` sorts a directory into the order events
+happened.
+
+A consequence worth noting: the clock is derived, so anything that removes
+records — a compaction of old history, for instance — must preserve a floor for
+it, or a machine could reuse clock values and break the tiebreak below.
 
 ## 6.2 Making a claim
 
-- Sync (`git pull --rebase`).
-- Confirm the task is ready: its dependencies are Done, there is no valid
-  claim, no arbitration record, and no open PR.
-- Write a uniquely named claim file with the freshly computed logical clock.
-- Commit and push. On non-fast-forward rejection, pull/rebase (no textual
-  conflict is possible, by construction) and push again.
+A claim is a new file in the task's `claims/` directory, written inside one
+transaction: pull, compute the clock, write, commit, push. Nothing is reserved
+beforehand and nothing is locked. Two machines may claim the same task at the
+same moment, and both claims are valid records; §6.3 decides which one counts.
 
-## 6.3 Resolution — the default tiebreaker
+A claim is accompanied by nothing else. The worktree is prepared and the worker
+dispatched only after the claim has been pushed and re-resolved, because until
+then this machine does not know it won.
 
-```text
-resolve(task):
-    if arbitration_record_exists(task):
-        return arbitration_record.winner      # human decision, absolute (6.6)
-    claims = valid claims in task/claims/     # not withdrawn, not expired (6.5)
-    return min(claims, key = (logical_clock, machine_id))
-```
+## 6.3 Resolution
 
-Both racing claims are preserved in the ledger; only the interpretation of who
-owns the task is computed, and it is computed identically everywhere,
-including by machines that sync hours later.
+![Claim resolution: a pure function every machine computes identically.](figures/fig4-resolution.pdf){width=159mm}
 
-> **v1.1:**
->
-> - **Which claims count.** A claim stops being valid once it is withdrawn or
->   its lease has expired. A claim whose PR is open stays attributed to its
->   task until the PR is merged, rejected or reopened.
-> - **Arbitration order.** The latest arbitration record (by clock) is the one
->   in force. A record with `action: withdraw` lifts the arbitration.
+`resolve.resolve(task_dir, now, lease_s, humans)` reads the claims, withdrawals,
+heartbeats, completions and arbitration for one task and returns the winner,
+with the reason. Its logic, in order:
 
-## 6.4 What a losing agent sees
+1. **A claim is live** unless it was withdrawn, or its work already produced a
+   completion that is no longer current, or its lease has expired (§6.5).
+2. **An active human arbitration wins outright** (§9.5). If it names a winner,
+   that claim owns the task; if it names none, the task is *frozen* and nobody
+   owns it.
+3. **Otherwise the live claim with the lowest `(clock, machine)` wins.**
 
-Git accepts a losing claim without error; the loss is only visible by
-re-running `resolve()`. A machine must re-check `resolve()` before any
-expensive or irreversible step, not only at claim time. On detecting a loss it
-stops work, marks the claim withdrawn for the audit trail, and picks a
-different ready task.
+The tiebreak is the logical clock first, and the machine identity as a
+deterministic tiebreaker when two claims share a clock. Both are strings and
+numbers in files, so every machine sorts them identically. "First to write the
+record wins" is not quite the rule — "lowest clock wins" is — and the difference
+only shows when two machines write concurrently from the same pulled state,
+which is exactly the case the tiebreak exists for.
 
-> **v1.1:**
->
-> - **Where the re-check happens.** The scheduler re-checks right after each
->   claim, every cycle, and before every heartbeat. `swarm-task done` checks at the
->   start and again just before pushing; the PR is opened straight after the push.
-> - **Withdrawal reasons.** Every withdrawal records one:
->   - `lost-race`, `arbitration`, `released` or `quota` — these are not counted as failures;
->   - any other reason is counted as a failure (Ch.8).
+## 6.4 What a losing machine sees
+
+Nothing happens to it. Its claim record stays in the ledger as an accurate
+statement that it tried, and on its next cycle `resolve()` tells it that it does
+not own the task. The scheduler then withdraws its own claim
+(`scheduler.tidy_own_claims`) and notifies the human, and the worker — if one was
+already dispatched — is told its claim is gone rather than discovering it when
+`done` fails.
+
+This is why claims are never deleted: the ledger is a record of what happened,
+not a projection of what is true now, and "who tried and lost" is useful when a
+task starts thrashing (§9.5).
 
 ## 6.5 Lease expiry, evaluated lazily
 
-There is no watchdog process. A claim is valid only if its heartbeat was
-updated within the lease window as of the last sync; any machine, when next
-picking work, treats a stale claim as expired. Expiry is a read-time
-computation, not a background job.
+![Liveness and expiry. Nothing sweeps; the reader computes it.](figures/fig5-lease.pdf){width=159mm}
 
-> **v1.1 — D6:**
->
-> - **Clock.** "Within the lease window" needs a clock. Heartbeats and claims
->   carry `wall_utc` in addition to the logical clock, and each process
->   corrects its own wall clock by its measured skew against GitHub (5.3).
-> - **Timing.** Defaults: lease 15 minutes, heartbeat every 3 minutes. With
->   that much margin, leftover skew doesn't matter.
-> - **Why not logical time alone.** Purely logical leases were rejected: they
->   break when only one machine is active.
+A claim is live while its machine keeps proving it. `is_expired` compares the
+claim's last heartbeat against `now` and the lease — fifteen minutes by default.
+
+Nothing sweeps expired claims. Expiry is **computed at read time**, by whoever is
+reading, which means there is no reaper to run, no clock to be authoritative and
+nothing to go wrong while every machine is asleep. A laptop that closes its lid
+stops heartbeating; its claims become expired to every reader fifteen minutes
+later, and the work returns to the pool without anybody doing anything.
+
+Two details matter in practice:
+
+**A claim with no heartbeat at all is expired**, not pending. A machine that
+claims and then dies before its first beat holds nothing.
+
+**Expiry is not failure.** A claim that expires because a machine went away
+should not count toward the retry budget that lowers a task's autonomy (§8.3) —
+a sleeping laptop is not a worker that cannot do the job. This distinction is
+specified and only partly built: the withdrawal reasons now distinguish a
+no-worker-chosen expiry from a failure (`#12`, merged), but lease expiry caused
+by a machine disappearing is still counted (`#14` territory).
 
 ## 6.6 Human arbitration overrides the algorithm
 
-The tiebreak in 6.3 is a default, not a ceiling on human authority. Any
-identity listed in `humans.yaml` may write an arbitration file that always wins
-`resolve()`, regardless of logical clock:
+A recognised human can write an `arbitration/` record that names the winning
+claim, or names none to freeze the task. It is checked before the tiebreak, so it
+is not advice the algorithm may weigh — it is a decision the algorithm obeys.
 
-```yaml
-# tasks/EPIC-14/TASK-3/arbitration/human-jane-500.yaml
-human: jane
-winner: laptop-b-450          # or: none (freeze the task, no one owns it)
-reason: "laptop-a's branch touches shared config, defer to laptop-b"
-logical_clock: 500
-```
+An arbitration record is signed by a human from `humans.yaml` and carries a
+reason. The surfaces refuse to write one on behalf of anybody else, and refuse to
+honour one whose author is not recognised (§10.6).
 
-This gives humans three low-friction levers: pick a winner outright, freeze a
-task until the arbitration is withdrawn, or do nothing and let 6.3 stand.
-Because arbitration is checked first, a human's decision is never a race
-against agents. A repeatedly thrashing task (the same two machines racing
-more than once) is what the poller surfaces as a suggested arbitration target
-(Ch.9.4).
+\newpage
 
-> **v1.1 — D16:**
->
-> - **Unlisted names.** Records naming a human who isn't in `humans.yaml` are
->   ignored by every machine. The same rule applies to quota and plan-review
->   records.
-> - **Not built yet.** The planned check that the arbitration commit's author
->   email matches that human's `emails:` entry in `humans.yaml`.
-> - **Frozen tasks.** A machine holding a claim on a frozen task withdraws it
->   (reason `arbitration`) on its next cycle.
-> - **Reason required.** The `reason` field is mandatory; the tooling refuses
->   an empty one.
+# 7. Quota, concurrency and multi-machine scheduling
 
+Claiming decides *who* works a task. Quota decides *how many* are worked at once,
+which is the difference between a swarm and a stampede.
 
-# 7. Quota, Concurrency, and Multi-Machine Scheduling
+## 7.1 Two numbers
 
-**Tool:** the scheduler loop started by `swarm.py` on each machine.
+**The global cap, N.** How many tasks the whole swarm may have in flight.
+It comes from `backend.yaml`'s `swarm.default_quota`, and any human may change it
+at runtime by writing a `quota/` record; the latest record from a recognised
+human wins (`resolve.global_quota`). It is a ledger value, so every machine
+agrees on it without being told.
 
-There is no global scheduler process. Each machine runs an identical loop that
-treats quota as just another precondition for claiming work. The loop never
-writes code: for each task it wins, it hands off to exactly one worker (7.3).
+**The per-machine share.** How many of those N this machine may hold. It is a
+local choice — `start --quota-share 2`, or `throttle` at runtime — because the
+right number depends on the machine's CPU, not on the swarm's policy.
 
-## 7.1 The global cap
-
-N is enforced as a counted resource. Before claiming, a machine counts
-currently valid claims across the whole repo; if that count is already N, it
-does not claim, whatever its local capacity. A machine's `--quota-share`
-further caps how much of that room it takes for itself.
-
-> **v1.1 — D9:**
->
-> - **Where N lives.** N is the latest record in `quota/` written by a
->   recognised human (`swarm.py quota set N`, or `n` on the Board). Until one
->   exists, `swarm.default_quota` applies.
-> - **What counts.** Only tasks that are claimed or in progress use up quota.
->   A task awaiting review releases its slot (Ch.9.1).
-> - **Throttle.** A `throttle` control record overrides this machine's
->   `--quota-share` live.
-
-## 7.2 Multi-machine parallelism
-
-Each machine runs its own loop against the same repo and races safely
-(Chapter 6). No machine needs to know about the others directly. A task is
-"ready" purely from locally read data: its upstream dependencies show Done in
-the coordination repo, and no arbitration freeze is in effect. Load is not
-globally optimized — only locally correct decisions are guaranteed.
-
-> **v1.1 — D11, D12, D10:**
->
-> - **Readiness.** A task is ready when all of these hold:
->   - the backend lists it in `ready_tasks()`;
->   - the ledger shows all its dependencies done;
->   - no arbitration is in force (neither a freeze nor an award);
->   - it has no live claim and no open or rejected PR.
-> - **Order.** Candidates are taken in import order. Tasks under an epic that
->   another machine has taken over come last (Ch.10.4).
-> - **Skipped tasks.** A machine whose default worker is an AI never claims
->   `human-must-scope` tasks, and tasks without a target repo are never claimed.
-
-## 7.3 What actually implements a task — choosing a worker
-
-Everything so far is ordinary deterministic Python; none of it writes a line
-of the actual task. A **worker** is whatever does: an autonomous coding CLI,
-or equally a human at their own IDE. The scheduler depends on a small port,
-and each worker type is a binding.
+Room to claim is the smaller of the two gaps:
 
 ```python
-# bin/workers/base.py
-class Worker(Protocol):
-    name: str
-    def dispatch(self, task: ClaimedTask, worktree: Path) -> None: ...
+room = max(0, min(N - len(active_claims), share - mine))
 ```
 
-Three bindings ship:
+Both terms read the same synced ledger, so two machines cannot each believe they
+have the last slot unless they are working from different state — and the
+transaction in §4.3 is what stops that.
 
-- **claude** — an interactive `claude` session in a new terminal, inside the
-  task's worktree, pointed at the injected skill.
-- **IntelliJ + Human** — IntelliJ opens on the worktree with
-  `.swarm-task/README.md` as the first tab.
-- **VSCode + Human** — the same via `code <worktree>`.
+## 7.2 Lowering the quota mid-flight
 
-> **v1.1 — D3:** the launchers are macOS-only:
->
-> - **claude:** `osascript` opens Terminal, or iTerm if `terminal_app: iTerm`
->   is set.
-> - **IntelliJ:** `open -na "IntelliJ IDEA.app" --args <worktree> <README>`.
-> - **VSCode:** `code -n <worktree> <README>`.
->
-> Per-machine overrides live in `.swarm/local.yaml`: `claude_bin`,
-> `claude_args`, `intellij_app` and `code_bin`.
+Raising N is uneventful. Lowering it below what is already running is the
+interesting case, and it is resolved without any machine talking to another.
 
-**Selecting a worker, at claim time.** Claiming stays fully automatic. With a
-default worker (`swarm.py start --default-worker claude`), dispatch follows
-immediately. Otherwise the task sits in "claimed, awaiting worker" — without
-blocking the loop — until a human answers on the Board (10.7):
+`resolve.over_quota` answers "which of *my* claims must yield?" — and it does so
+by sorting **all** active claims in the swarm by `(clock, machine)` descending,
+so the newest yield first. Every machine computes that same global ordering from
+the same ledger and then looks up only its own claims in it. Together they
+release exactly the excess: no more, no fewer, no negotiation.
 
-```text
-[swarm-board] I have claimed TASK-3 for completion, who is my worker?
-  a) claude
-  b) IntelliJ + Human
-  c) VSCode + Human
-```
+What yielding means depends on how far the task has got
+(`scheduler.enforce_quota`):
 
-The answer is written into `checkpoint.yaml`, so it survives a resume and
-appears in the audit trail.
+- **A claim with no worker yet** is withdrawn immediately. Nothing is lost.
+- **A running one is asked to stop politely**: `pause_requested` is written into
+  its checkpoint, the injected skill shows it, and the worker is expected to
+  record what it has tried and stop. One lease later the claim is withdrawn
+  whether or not it complied.
+- The task then sits ready until a slot frees, and the next worker **resumes from
+  the checkpoint** rather than starting over.
 
-> **v1.1 — D12:**
->
-> - **Scope-restricted tasks.** For a `human-must-scope` task the prompt offers
->   only the human workers.
-> - **Answering elsewhere.** The same choice can be made without the Board:
->   `swarm.py task worker TASK-3 b`.
-> - **Prepared in advance.** The worktree is prepared as soon as the claim is
->   won, so the choice takes effect at once.
+**Share 0 is drain and release, not freeze.** Setting a machine's share to zero
+releases what it holds through the same path rather than keeping it alive. That
+is a deliberate decision, and it is worth stating because the opposite is
+intuitive enough that it was once written down wrongly and a worker planned
+against it.
 
-**Inputs and isolation.** Before dispatch the scheduler assembles the ticket
-(via `get_task`), the shared conventions document and, on a resumed task,
-`checkpoint.yaml`. Every dispatch gets its own git worktree, so several workers
-on one machine never collide.
+## 7.3 What implements a task — the worker port
 
-> **v1.1 — D17:**
->
-> - **Worktree and branch.** The worktree is `.worktrees/<TASK>`, on branch
->   `swarm/<TASK>`.
-> - **Starting point.**
->   - A brand-new task starts from `origin/<base>`.
->   - A resumed task reuses the local or pushed `swarm/<TASK>` branch, so the
->     next worker continues from whatever the last one pushed.
+Once a machine owns a claim it prepares a worktree and dispatches a worker.
 
-**The injected skill — plan, implement, done.** Dispatch copies a small skill
-package into the worktree — the same for every worker type — plus a fresh copy
-of the ticket:
+**The worktree.** A git worktree of the task's code repository, on a branch named
+`swarm/<TASK>`, at `.worktrees/<TASK>` **inside the code repository's checkout**.
+A resumed task reuses the existing local or remote branch, so the next worker
+continues from whatever the last one pushed.
 
-```text
-.swarm-task/
-  README.md        # plain-English instructions for a human
-  spec.md          # the ticket's text, downloaded at dispatch
-  conventions.md   # CONVENTIONS.md
-  context.json     # task, claim, repo, branch, test command (v1.1)
-  swarm-task       # the skill's CLI
-```
+The location matters more than it sounds. Worktrees used to live inside the
+*coordination* repository, and an agent started there would walk up the directory
+tree, find the coordination repository's own `CLAUDE.md` and `bin/`, and conclude
+that maintaining the swarm was part of its task (`#1`). Putting them in the code
+repository both removes that and gets project ancestry right — `.editorconfig`,
+`.nvmrc`, Maven settings discovery, a language server's project root all resolve
+the way they would for a human working in that repository. A location outside
+both repositories resolves none of them and eventually walks up into `$HOME`.
+`repos.configure` keeps `.worktrees/` in the clone's `info/exclude`, so nothing
+has to be committed to anybody's code repository, and the dot-prefixed name is
+already skipped by pytest's default `norecursedirs`. The move is specified and
+not yet built (D32; the issue is drafted, not yet filed); a per-repo `worktrees:` setting covers the case where a
+repository must not hold them.
 
-- `swarm-task plan` reads the spec, conventions and (on a resume) the
-  checkpoint, and produces `plan.md`. Nothing is implemented yet.
-- A **review gate**, human or self-review, comes before anything proceeds.
-- `swarm-task implement` proceeds against the reviewed plan and keeps
-  `checkpoint.yaml` up to date.
-- `swarm-task done` is the completion signal, and the only subcommand that
-  touches anything outside the worktree.
+**The worker.** `bin/workers/base.py` is the port. A worker is whatever
+implements one claimed task: an AI CLI in a terminal, or a human in an IDE.
+Three adapters ship, all macOS launchers (D3): `claude` opens an interactive
+Claude Code session in the worktree pointed at the injected skill; `intellij` and
+`vscode` open the worktree with `.swarm-task/README.md` as the first tab and then
+get out of the way.
 
-> **v1.1 — D20, D21, D12:**
->
-> - **Implementation.** The skill is stdlib-only Python, so it runs in any
->   worktree. It delegates ledger, backend and GitHub work to
->   `swarm.py task …`.
-> - **Commands:**
->   - `plan` writes the `plan.md` template. `plan --submit` records the plan
->     text and its hash in `checkpoint.yaml`.
->   - `status` shows whether the plan has been approved.
->   - `implement` refuses until the plan is approved. Then it prints the plan,
->     the checkpoint, and any tagged reviewer feedback (`fix:`, `explain:`,
->     `reject-approach:`).
->   - `note --summary/--tried/--remaining/--question/--risk` records progress.
->   - `block "<question>"` records a question for a human and stops.
->   - `done` finishes the task (below).
-> - **The review gate by tier:**
->   - `auto-pr`: the worker may approve its own plan.
->   - `human-must-review`: a human approves on the Board (`v`) or with
->     `swarm.py task approve-plan`. The approval is an append-only record in
->     `plan-reviews/`; submitting a changed plan needs a fresh approval.
->   - `human-must-scope`: only a human worker may take the task at all, and its
->     plan needs a human approval, as for `human-must-review`. `done` refuses
->     if the recorded worker is an AI.
+Two properties of the port are what make a human and an agent interchangeable:
 
-**The output contract — the same for every worker.** Before the scheduler
-considers a claim finished, it needs:
+- **The scheduler only ever calls `dispatch`.** It does not supervise, read
+  output or know whether a process is still alive.
+- **Completion is detected from the output contract** — a ledger record and a
+  pull request — **never from the worker's process.** A worker that crashes, is
+  closed, or goes to lunch is indistinguishable from one that is thinking, and
+  the lease (§6.5) is what eventually resolves it.
 
-- a commit following `templates/commit-message.txt`;
-- an updated `checkpoint.yaml`;
-- autonomy permitting, a `gh pr create` using the PR template.
+**Autonomy restricts the choice.** `workers.allowed_for` returns only human
+workers for a `human-must-scope` task: a task whose scope a human must set is
+never handed to an AI. This is a filter on the offer, not a check at the end —
+which is why a `human-must-scope` task set to `ready` will sit claimable and
+unclaimed if no human picks it up.
 
-`swarm-task done` produces all three. A worker that cannot proceed says so in
-`checkpoint.yaml` and never runs `done`. If a worker dies, hangs or never
-fulfils the contract, nothing special happens: the heartbeat goes stale, the
-lease expires (6.5), and the task returns to Ready.
+**The injected skill.** Each worktree gets a `.swarm-task/` directory containing
+the ticket, the house conventions, a `context.json` describing the task, claim,
+repository and branch, and the `swarm-task` command itself (§9.3). It is removed
+when the pull request opens.
 
-> **v1.1 — D14, D2, D22:** `swarm-task done`, in order:
->
-> 1. Checks the claim is still this machine's, the plan is approved, and a
->    summary has been recorded.
-> 2. Runs the repo's `test_command` and stops on failure.
-> 3. Commits all changes with the rendered template, authored as the bot if
->    one is configured. `.swarm-task/` stays out of the commit because the
->    repo's `info/exclude` lists it (Ch.5.3).
-> 4. Re-checks ownership, then pushes `swarm/<TASK>`.
-> 5. Opens the PR with the **bot token**, or comments on the existing PR if one
->    is still open (the request-changes loop).
-> 6. Records `pr_url` in the checkpoint and writes a `pr-opened` completion.
-> 7. Sets the ticket to `awaiting-review` and posts the same rendered text as a
->    ticket comment.
+## 7.4 Several machines
 
-**Cleanup — none of this reaches the main repo.** `.swarm-task/` is excluded
-from git before any worker touches the worktree, so cleanup is a disk
-deletion. The moment the poller or Board observes the output contract
-fulfilled, it — not the worker — runs `rm -rf .swarm-task/`, before reporting
-the task finished. Nothing about the orchestration appears in the PR's diff or
-commit log.
+Machines do not coordinate; they converge. Each pulls, computes the same
+readiness and quota answers from the same files, and claims what is left. Two
+that claim the same task at the same moment both write valid records and §6.3
+decides. The only shared state is the repository.
 
-> **v1.1:**
->
-> - **When the contract counts as fulfilled.** The `pr-opened` record exists
->   *and* the checkpoint carries the same PR URL.
-> - **Removing the worktree.** A task's worktree is removed once its PR is
->   merged or closed: immediately by the Board's `m` / `swarm.py task merge`,
->   and on every machine by its poller, which sweeps the worktrees of tasks
->   that are done or rejected.
+**Epic takeover** is the one exception to pure first-come ordering. A human may
+write a `priority/` record claiming an epic for one machine, after which other
+machines leave that epic's tasks alone (`resolve.active_takeovers`). It exists
+for the case where one machine has the right toolchain, or where a human wants a
+whole epic worked in one place rather than spread across three laptops.
 
-This is also the literal meaning of quota N: a hard cap on how many workers —
-subprocesses or humans — may be actively dispatched across the whole swarm.
+**Two machines on one computer** is the normal development set-up: two clones of
+the coordination repository, each with its own `.swarm/identity`, both pushing to
+the same remote. It exercises the racing properly, and it is how most of the
+protocol's behaviour was observed.
 
+That configuration does have a sharp edge today. If both clones map the *same*
+code repository checkout, a branch can only be checked out in one worktree, so a
+task that moves between those machines cannot be dispatched by the second — the
+first still holds the branch. That breaks resume-on-another-machine for lease
+expiry, arbitration, reassignment and freeze alike. Two changes fix it, both
+specified and not yet built (`#13`): the machine that loses a task releases its
+worktree, and a machine does not claim work whose branch it cannot check out.
 
-# 8. Pause, Resume, and Failure Recovery
+\newpage
 
-**Tool:** `checkpoint.yaml` per task, plus the git branch/worktree it
-references.
+# 8. Pause, resume and failure recovery
 
-Every task is resumable by any machine, not just the one that started it. An
-agent resuming a task never restarts from the original ticket; it reads
-`checkpoint.yaml` — branch, what has been tried, what remains, open
-questions — as its starting context. That one file serves crash recovery,
-quota-driven pause/resume, and progress reporting to humans.
+A swarm that cannot be stopped is not governable, and an agent that fails must
+fail in a way the next one can pick up. Both are ledger records.
 
-Failure modes and their handling:
+## 8.1 Machine control
 
-- **Agent crash:** the heartbeat goes stale, the lease expires lazily
-  (Ch.6.5), and the task returns to Ready.
-- **Quota exhausted mid-task:** the task is checkpointed and not reclaimed
-  until a slot frees. This is the same "blocked" state as an unmet dependency.
-- **Human pause:** set the ticket to Blocked in the backend, or write an
-  arbitration record with `winner: none`. Every machine's readiness check skips
-  the task.
-- **Repeated failure:** past a threshold of retries, the ticket's
-  `swarm:autonomy` label is lowered one step and the task goes to human triage.
-- **Machine goes offline:** leases expire naturally once the heartbeat window
-  passes. No cleanup is needed anywhere else.
+`control/` records change a machine's behaviour, and because they are ledger
+records any machine can write one about any other — pausing a laptop from the
+Board on a different laptop is the normal case.
 
-> **v1.1 — D7, D12, D13:**
->
-> - **Quota exhausted mid-task.** When N or a machine's share is lowered below
->   what is running, the newest claims yield first; every machine computes
->   the same order, so together they release exactly the excess.
->   - A claim with no worker yet is withdrawn at once (reason `quota`).
->   - A running task gets `pause_requested` in its checkpoint and a
->     notification. The skill tells the worker to record progress with
->     `swarm-task note` and stop, and `implement` refuses to continue.
->   - One lease later (15 minutes by default) the claim is withdrawn
->     (reason `quota`) and the ticket goes back to `ready`.
->   - The task then waits until a slot frees and resumes from its checkpoint
->     and pushed branch. If the quota is raised during the grace period, the
->     request is lifted and the work carries on.
->   - A `quota` withdrawal doesn't count as a failure.
-> - **Retry count.** It is computed from the ledger, not stored in
->   `meta.yaml`: the number of claims that expired, or were given up for a
->   reason other than `lost-race` / `released` / `arbitration` / `quota`.
-> - **Downgrade.** When the count reaches `max_retries` (default 3), plan sync
->   lowers the autonomy one step in the backend, comments on the ticket, and
->   records the change as a meta revision. The next downgrade needs another
->   `max_retries` failures.
-> - **Resuming.** A resumed checkpoint keeps the earlier history (`tried`,
->   `remaining`, `open_questions`, `previous_claims`), and the new machine
->   continues from the pushed `swarm/<TASK>` branch.
-> - **Idle limit.** A worker that stays attached but makes no progress would
->   otherwise hold its lease forever, because the daemon heartbeats on its
->   behalf. So after `human_idle_hours` (default 8) with no new commit and no
->   checkpoint change:
->   1. The owner is asked "still working on TASK?". They answer with
->      `swarm.py task still-working TASK`.
->   2. If nobody answers within one more lease period, heartbeats stop and the
->      claim expires normally.
+| Record | Effect |
+|---|---|
+| `start` | The daemon is running; sets the share |
+| `stop` | The daemon shuts down; its claims lapse when their leases expire |
+| `pause` | Claim nothing new; keep heartbeating what is held |
+| `resume` | Undo a pause |
+| `throttle` | Change this machine's share, live |
 
+`ledger.machine_control` folds the records in clock order into the machine's
+current state. Pause and resume are idempotent — pausing an already-paused
+machine writes nothing, which was not always true and produced duplicate feed
+entries.
 
-# 9. Human Control — Review, Merge, and Conflict Arbitration
+**Which of these survive a restart is specified explicitly**, because leaving it
+implicit produced two opposite bugs. A `pause` currently outlives `stop` and
+`start`, so a restarted machine looks healthy and silently claims nothing
+(`#30`); a `throttle` currently does *not* outlive them, because `start` rewrites
+the share from its flag, so a deliberate throttle is silently lost (`#61`). Both
+are the same unanswered question. The specified behaviour: **a deliberate `start`
+clears a pause**, and **`start` without an explicit share keeps the machine's
+last throttled share**, and in both cases `start` says which it used and why.
+Neither is built yet.
 
-**Tool:** GitHub pull requests via `gh`, branch protection rules,
-`humans.yaml`, and the local poller.
+## 8.2 What a worker leaves behind
 
-This is the ultimate authority layer. Every mechanism above can be overridden
-or halted by a human through ordinary issue-backend or GitHub actions, or
-through a single arbitration file.
+`checkpoint.yaml` is the task's working memory, written by the machine that owns
+the claim: the approved plan and its hash, a one-line summary, what has been
+tried, what remains, open questions, risks, the dispatched worker, and the pull
+request once there is one.
 
-## 9.1 Mandatory gates
+It exists so that a failure costs the work, not the understanding. A new worker
+on a resumed task is given the plan, what the last one tried and what it left —
+`swarm-task implement` prints exactly that — so the second attempt starts where
+the first stopped rather than from the ticket.
 
-- **Opening, never merging.** The worker opens a pull request with
-  `gh pr create --body-file <rendered pr-description.md> --base main`, and may
-  never run `gh pr merge` in that step. Branch protection (Ch.5.5) enforces this
-  server-side.
-- **Awaiting review.** On completion, the task moves to Awaiting Review and
-  stops using a quota slot.
-- **Merging.** Merge requires an explicit human review:
-  `gh pr review --approve` followed by `gh pr merge --squash` (one key on the
-  Board), plus passing CI, checked with `gh pr checks`.
-- **Overlapping files.** When a task's files overlap another in-flight task's,
-  the poller flags both (via `gh pr diff`) and a human decides the merge order.
+## 8.3 Failure, and lowering autonomy
 
-> **v1.1 — D2, D14, D11:**
->
-> - **Who opens and who merges.** PRs are opened under the **bot account**;
->   humans review and merge under their own `gh auth`. That keeps GitHub's
->   "authors can't approve their own PR" rule from blocking the merge, and keeps
->   `enforce_admins` on.
-> - **No hosted CI.** "CI passing" is the repo's `test_command`, run by
->   `swarm-task done` before the PR exists. Merge reads the PR's status checks
->   (`gh pr view --json statusCheckRollup`) and refuses only if some are
->   *failing* (`--force` overrides); a PR with no checks is fine. It also
->   refuses if the PR is no longer open.
-> - **Done.** A task is Done when its PR is **merged**. The Board records that
->   immediately after Approve & merge. The poller records it for merges made
->   anywhere else (e.g. the GitHub web UI), sets the ticket to `done`, and
->   dependants become ready.
+A claim that ends badly is withdrawn with a reason, and the reasons are
+distinguished because they mean different things: `lost-race`,
+`no-worker-chosen`, `quota` and `dispatch-failed`. Expiry is the exception — it
+writes nothing, because it is computed rather than performed (§6.5).
 
-## 9.2 Human override paths
+Repeated failure on one task lowers its autonomy tier by one step — `auto-pr` to
+`human-must-review` to `human-must-scope` — on the grounds that a task three
+agents could not finish is a task whose framing needs a human. The threshold
+scales with how many times it has already been lowered
+(`failures >= max_retries * (downgrades + 1)`), so a downgraded task gets a
+longer rope before being downgraded again. The tier is changed in the backend
+first and the ledger records it only on success.
 
-- **Halt everything:** block an epic in the issue backend. Every task under it
-  becomes unready.
-- **Arbitrate a conflict directly:** write an arbitration file (Ch.6.6) naming
-  the winner, or freeze the task.
-- **Reject an approach:** distinct from "needs revision". Close the PR with
-  `gh pr close` and re-open planning in the backend, rather than looping the
-  same worker on a rejected approach.
-- **Throttle a machine:** lower its quota share without touching the global
-  cap.
-- **Autonomy tier:** set per task with the ticket's `swarm:autonomy` label:
-  whether an AI worker may run unattended and open a PR, or must wait for
-  scoping approval.
+Three refinements are specified here, none built:
 
-> **v1.1 — D22, D12:**
->
-> - **What a closed PR does.** The poller records `rejected` and sets the
->   ticket to `blocked`, with a comment asking for re-planning. When a human
->   sets `swarm:status:ready` again, plan sync records `replanned` and the task
->   can be claimed. Add the lesson to `CONVENTIONS.md` so it doesn't come back.
-> - **Throttle.** `swarm.py throttle N`, or `t` on the Board, applies without a
->   restart.
-> - **Tiers.** The exact behaviour of each tier is in 7.3 (review gate) and
->   Appendix A (D12).
+**Expiry caused by a machine going away is not failure.** A sleeping laptop is
+not a worker that cannot do the job, and counting it lowered a real task's
+autonomy overnight. A claim withdrawn as `no-worker-chosen` is already exempt
+(`#12`); lease expiry still needs the same treatment.
 
-## 9.3 Information flow between humans and workers
+**A downgrade can be undone.** Today it cannot: `read_meta` lays every `meta/`
+revision over `meta.yaml`, so a recorded downgrade beats whatever the tracker
+says, and the only CLI reset writes the tracker label. The specified behaviour is
+a `task set-autonomy` command, with **the ledger as the source of truth and the
+tracker label following it** (D30).
 
-Structured, not free-form:
+**A plan-level question drops a task out of `auto-pr` for that run** (D30,
+`#45`). When a worker records `needs_human` about its plan, the self-approval is
+cleared and the plan goes through the normal review gate, because a plan written
+against a wrong assumption should not reach a pull request unreviewed. The
+downgrade is **scoped to the run** and cleared when the task completes.
 
-- **What the worker writes:**
-  - the PR description: `templates/pr-description.md`, rendered from
-    `checkpoint.yaml`;
-  - commits, following `templates/commit-message.txt`;
-  - a ticket comment reusing the same rendered text.
-- **What humans write back:** tagged review comments, e.g.
-  `gh pr review --request-changes -b "fix: ..."`, using the tags `fix:`,
-  `explain:` and `reject-approach:`. A resuming worker reads them with
-  `gh pr view --json comments,reviews`.
-- **Arbitration** carries a mandatory `reason`.
-- **Conventions.** A shared conventions document is required reading for every
-  worker, so a rejected approach doesn't resurface on another task.
+## 8.4 Thrashing, and when to stop trying
 
-> **v1.1 — D22:**
->
-> - **What a request for changes does.** Each new CHANGES_REQUESTED review
->   makes the poller record `reopened` exactly once (keyed by review id). The
->   ticket goes back to `ready`.
-> - **Who picks it up.** Any machine may claim it and resume from the
->   checkpoint. `swarm-task implement` lists the tagged feedback, and the next
->   `done` pushes to the same branch and comments on the same PR.
+A task that is claimed, lost and re-claimed repeatedly is not making progress,
+and the protocol is capable of doing that forever. Two guards:
 
-## 9.4 The local poller — notification without a hosted service
+**An unanswered worker prompt is not a claim.** A task claimed but never given a
+worker is withdrawn after one lease as `no-worker-chosen` — a non-failure — and
+parked until someone unparks it, rather than being re-claimed on the next cycle.
+Without this, one task was claimed nine times with no worker ever chosen.
 
-`bin/poll.py`, started by `swarm.py`, replaces hosted automation. Any human
-who wants visibility runs it on their own machine. On each cycle it:
+**Conflict cycles are counted.** Past `swarm.thrash_threshold`, the task is
+flagged as needing arbitration and a human is notified (§9.5) rather than left in
+the loop.
 
-1. Syncs the coordination repo.
-2. Diffs against its last-seen state. It looks for tasks that newly entered
-   Awaiting Review, tasks whose heartbeat has gone stale, and tasks with more
-   than one live claim.
-3. For any task with an open PR, reads the live review and CI state with `gh`.
-4. Emits a local notification for each: a desktop notification, a log line, or
-   an outbound webhook. The notify step is a single pluggable function.
-5. For a repeatedly racing task (the same conflict signature across several
-   cycles), escalates the alert to "needs arbitration" instead of repeating it.
+## 8.5 Dispatch failure is a state, not a silence
 
-Because every human who wants alerts runs the poller, no single point must stay
-up for the team to have visibility. The trade-off is that notification latency
-equals each human's poll interval (Chapter 12).
+A claim whose worker could not be launched used to leave a task claimed and
+apparently in progress forever. A failed dispatch is now recorded in the
+checkpoint, so every Board and `status` shows `not started · dispatch failed ×N`;
+after three attempts the claim is withdrawn as `dispatch-failed` — explicitly not
+a failure for the autonomy count — and the machine backs off for one lease.
 
-> **v1.1 — D8, D24, D22:**
->
-> - **State file.** The poller keeps its last-seen state in
->   `.swarm/poller-state.json`. On its first run it doesn't replay the feed or
->   old state changes. Conflicts, PR outcomes, overlaps and "finished"
->   announcements are still reported on the first cycle.
-> - **More it does.**
->   - Watches the output contract (Ch.7.3) for this machine's tasks.
->   - Turns PR state into ledger records: merged → `done`; closed → `rejected`;
->     new CHANGES_REQUESTED → `reopened`.
->   - Removes this machine's worktrees for every task that is done or rejected.
->   - Reports overlapping files once per pair of PRs.
-> - **Where notifications go.**
->   - They always go to `.swarm/notifications.log`.
->   - For macOS notifications, set `notify: {desktop: true}` in
->     `.swarm/local.yaml`.
->   - For a webhook, set `notify: {webhook: <url>}`.
-> - **Where it runs.** Normally inside the daemon. The Board runs its own
->   poller when no daemon is running. It also runs standalone with the venv
->   interpreter: `.swarm/venv/bin/python bin/poll.py [--once]`.
-> - **Escalation threshold.** `swarm.thrash_threshold` (default 2) sets how
->   many conflict cycles, or lost races between the same pair of machines,
->   count as "needs arbitration".
+## 8.6 The idle check
 
+An AI worker that is thinking and a human worker who has gone home look identical
+to the scheduler. After `swarm.human_idle_hours` without progress, the human is
+asked whether the task is still being worked (`task still-working` confirms it).
+This is a prompt, not a timeout: the lease is what actually releases a claim.
 
-# 10. Swarm Board — A Local Command Centre for Humans
+\newpage
 
-**Tool:** `bin/board.py`, a Textual dashboard.
+# 9. Human control — review, merge and arbitration
 
-The Board is built with Textual (from the Rich ecosystem). It reads the same
-local clone the poller syncs, and shells out to `gh` only for what lives on
-GitHub (PR status, CI, reviews). It replaces "read YAML in an editor" with
-one-key controls and a plain-English feed of what every human's swarm is doing.
+The swarm's output is pull requests, and a human decides what becomes of them.
+This chapter is the set of places a person can say yes, no, or not like that —
+and the reason each one is in the protocol rather than in a convention.
 
-## 10.1 What it is, concretely
+## 9.1 The mandatory gates
 
-Textual needs no browser and runs anywhere a terminal does, over SSH included.
-For anyone who prefers a browser, the same UI can be served on
-`http://localhost:4590`. Most controls write an ordinary file into the local
-clone and let the sync carry it; a few run the exact `gh` command a human would
-otherwise type. The Board never bypasses the mechanisms of Chapters 6 and 9.
+Two gates cannot be bypassed by an agent, because what the agent must do to make
+progress is write a record a human can refuse.
 
-> **v1.1 — D8, D15:**
->
-> - **How to open it.** `swarm.py board`, or `swarm.py start --attach`. Running
->   `bin/board.py` directly needs the venv interpreter:
->   `.swarm/venv/bin/python bin/board.py`.
-> - **In a browser.** `swarm.py board --web` runs `textual serve` on port 4590,
->   installing `textual-dev` into the venv on first use.
-> - **Refresh.** The Board refreshes every 5 seconds.
+**The plan gate.** On a `human-must-review` or `human-must-scope` task, a worker
+writes `plan.md`, submits it, and may not implement until a recognised human has
+approved it. `work.finish` refuses outright if the plan is not approved, so the
+gate is enforced at the end as well as at the start — an agent that ignored the
+instruction still cannot open a pull request. An `auto-pr` task self-approves on
+submit, which is what that tier means.
 
-## 10.2 Commands over this machine's swarm
+**The merge gate.** The swarm never merges. `done` pushes a branch and opens a
+pull request; a human merges it. On GitHub this is reinforced mechanically: the
+pull request is opened by the bot account and an account cannot approve its own
+pull request, so a human review is structurally required rather than merely
+expected (D2).
 
-| Key | Command | Effect |
+A third restriction is narrower but worth naming: on a `human-must-scope` task,
+`finish` refuses to open a pull request at all if the recorded worker is not a
+human. The tier is enforced twice — once as a filter on who may be offered the
+work (§7.3), once as a check on who may finish it.
+
+## 9.2 Override paths
+
+Everything here is a ledger record written by a recognised human, so it works
+from any machine and every machine sees it.
+
+| Lever | Record | Effect |
 |---|---|---|
-| `p` | Pause | Scheduler stops claiming; in-flight work carries on. Writes a shared control record. |
-| `r` | Resume | Reverses Pause. |
-| `t` | Throttle | Sets this machine's quota share live (control record). |
-| `s` | Stop | Full shutdown, like `swarm.py stop`; leases expire normally. |
-| `f` | Freeze / unfreeze | Writes an arbitration record with `winner: none`, or lifts it. |
-| `a` | Reassign | Picks a winner from the task's claimants; arbitration record with a reason. |
-| `e` | Take over / release epic | Soft priority for this machine on the selected task's epic (10.4). |
-| `m` | Approve & merge | `gh pr review --approve`, then `gh pr merge --squash`, then records Done. |
-| `o` / `O` | Open ticket / PR | Opens the ticket or the PR in the browser. |
-| `n` | Set global N | Writes a `quota/` record (v1.1). |
-| `v` | Review plan | Approve or send back a submitted plan (v1.1). |
-| `w` | Choose worker | Re-opens the worker prompt for a task waiting on one (v1.1). |
-| `q` | Quit | Closes the Board only; the daemon keeps running. |
+| Approve or send back a plan | `plan-reviews/` | Opens or closes the plan gate |
+| Freeze a task | `arbitration/` with no winner | Nobody owns it; nobody may claim it |
+| Reassign a task | `arbitration/` naming a claim | That claim owns it, whatever the clock says |
+| Release a task | `withdrawals/` | Back to the pool |
+| Block an epic | `swarm:status:blocked` on the epic | Halts every child task at once |
+| Change the global cap | `quota/` | §7.1 |
+| Pause, stop, throttle a machine | `control/` | §8.1 |
+| Take over an epic | `priority/` | One machine works it |
+| Answer a worker's question | `events/` | §9.3 |
 
-Everything except Approve & merge follows the append-only pattern: a new,
-uniquely named file carried by the normal sync. Approve & merge runs real `gh`
-commands, because that is where the merge gate lives.
+**Blocking an epic is the big red button.** Because readiness excludes a task
+whose epic is blocked (§3.1), one label stops an entire branch of the plan
+without touching its children, and unblocking restores them in whatever state
+they were.
 
-> **v1.1 — D16, D14:**
->
-> - **Who may use the human-only commands.** Commands that exercise human
->   authority require the operator to be listed in `humans.yaml`: freeze,
->   reassign, set N, plan review and merge. Anyone else gets an error, and
->   nothing is written.
-> - **Failing checks.** Merge refuses if the PR's status checks are failing,
->   or if the PR is no longer open.
+## 9.3 Telling the worker
 
-## 10.3 Making local actions visible to everyone — the activity feed
+A gate is only useful if the worker learns the gate has opened. This was the
+weakest part of the original design: approval wrote a record, the Board and the
+poller read it, and nothing told the worker session anything. A plan approved
+while a worker was waiting could sit for hours.
 
-Commands that matter to the rest of the team write into the coordination repo,
-using the same naming convention as claims:
+The specified behaviour has three parts, of which the first two are built:
 
-```yaml
-# control/laptop-a-pause-503.yaml
-human: joe
-machine: laptop-a
-action: pause
-logical_clock: 503
-```
+**`swarm-task wait` blocks until something happens** — a plan approved or sent
+back with its note, an answer to a question, a pause requested, a claim lost. It
+is a cheap polling loop over the ledger after a pull, which is what a worker
+would otherwise improvise badly.
 
-Every Board, each cycle, turns new records into plain-English lines:
+**Every `swarm-task` command prints pending news first**, so a worker that
+forgets to wait still cannot miss a pause or a lost claim.
 
-- "Joe paused their swarm (laptop-a)"
-- "Priya's swarm claimed TASK-7 (laptop-p)"
-- "Jane arbitrated TASK-3: laptop-b wins — 'branch touches shared config'"
-- "Joe's swarm took over EPIC-14"
+**`swarm-task block "question"` has an answer path.** The question goes to
+`checkpoint.needs_human` and to the tracker; a human answers with
+`task answer` or from the Board, and `wait` returns with the answer.
 
-> **v1.1 — D24:** the feed also covers:
->
-> - withdrawals, set-quota records, and completions (finished, merged, changes
->   requested, rejected, re-planned);
-> - the daemon's notifications, prefixed `[swarm-board]`. For example: "claude
->   has finished TASK-3. The PR can be found at …", or "Still working on
->   TASK-5?".
->
-> **v1.1 — GH-3:** plan reviews ("Roman approved the plan for GH-4", "… sent
-> the plan for GH-4 back — '<note>'") and what a worker or human did through
-> the checkpoint: plan submitted, a worker asking a human, a worker handed the
-> task or awaited, "still working" confirmed, a quota pause requested or
-> lifted. The checkpoint is rewritten in place, so each of these writes a small
-> append-only `events/` record in the same commit. Pause and resume write
-> nothing when the machine is already in that state, and notification log
-> lines for feed events carry the record's `wall_utc`, not the time the
-> poller saw it.
+The third part is the contract itself, and it is **not** built. The injected
+`README.md` still tells a worker to poll `status`, which is the instruction a
+worker actually follows — so `wait` exists and nothing invokes it, and plan
+pickup is still a human round-trip (`#58`). Specified: the contract says to
+`wait` after submitting a plan, `plan --submit` prints that invocation, and the
+same idiom covers waiting on an answer, a test-scope decision, and checks after
+`done`.
 
-## 10.4 Epic takeover, defined precisely
+## 9.4 Pull request feedback
 
-"Took over an epic" writes a `priority/` record scoped to an epic. Every
-scheduler, when choosing among ready tasks, treats a task under an epic with an
-active takeover from a *different* machine as lower priority. It claims such a
-task only if it has no other ready work. The signal stays soft and revocable,
-and a matching `release` record revokes it.
+Feedback reaches a worker through the poller, which reads each open pull request
+and records what changed.
 
-> **v1.1:** the machine holding the takeover ranks that epic's tasks first.
+**A "Request changes" review binds.** It records a `reopened` completion, the
+task returns to the queue, and the next worker is shown the feedback by
+`swarm-task implement`. Lines tagged `fix:`, `explain:` or `reject-approach:` are
+the actionable items; a `reject-approach:` tells the worker to stop and re-plan
+rather than patch.
 
-## 10.5 Read-only panels
+**A comment from a recognised human surfaces but does not reopen** (D29). It is
+shown on the Board and to the worker, and it does not by itself put the task back
+in the queue. The distinction is deliberate: discussion and instruction are
+different acts, and conflating them turns every passing remark into work. The
+cost is that a comment-only review can be missed, which has happened — so the
+Board shows comment and unresolved-thread counts, and a "new since you looked"
+marker, rather than relying on the reviewer to use the right control.
 
-- **Live claims:** task, owning machine and human, logical clock, claim age,
-  worker, state. The state is flagged "needs human" or "pausing (quota)" when
-  one applies.
-- **Awaiting review:** tasks with an open PR, with live review and CI status.
-- **Needs arbitration:** tasks flagged by the poller's thrash detection, plus
-  live conflicts.
-- **Quota gauge:** global N used of total, and this machine's own share.
-- **Activity feed:** the running plain-English log from 10.3.
+Inline review threads are read through GraphQL `reviewThreads`, with path, line
+and resolution state, and passed to the worker with the file and line. Most of
+§9.4's richer behaviour — the detail screen, sending work back from the Board,
+resolving threads — is specified and not yet built (`#6`).
 
-> **v1.1 — D20:**
->
-> - A **Plans awaiting review** panel lists submitted plans that still need a
->   human decision.
-> - A status line shows whether this machine is running, paused or stopped,
->   and the state of the other machines.
+## 9.5 Arbitration
 
-## 10.6 Attribution and trust
+When a task has been claimed, lost and re-claimed past
+`swarm.thrash_threshold` cycles, the protocol stops trying and asks. The task is
+flagged as needing arbitration and a human is notified; they write an
+`arbitration/` record naming the winning claim, or naming none to freeze it.
 
-Every command the Board issues is tagged with the operator's entry in
-`humans.yaml`, so the audit trail and the feed name a real person.
+Arbitration is checked before the tiebreak (§6.3), so it is not an input to the
+algorithm — it replaces it. That is the point: the deterministic rule is right
+almost always, and when it is not, a person should not have to fight it.
 
-> **v1.1:**
->
-> - **Which commands check.** Commands that exercise human authority refuse to
->   run for anyone not in `humans.yaml`: arbitration, quota, plan review,
->   merge, `start`, and the `--apply` variants. Machine controls (pause,
->   resume, throttle, stop, epic takeover) record whatever operator name
->   resolves, which can be `unknown`.
-> - **Operator resolution order:**
->   1. `human:` in `.swarm/local.yaml`;
->   2. `DAGS_HUMAN`;
->   3. the cached name in `.swarm/operator` (delete it if your login changes);
->   4. `gh api user`, matched against the `github:` field in `humans.yaml`,
->      then cached.
+## 9.6 Notification without a service
 
-## 10.7 Choosing a worker, worked example
+There is no hosted notifier. The poller runs on each machine and its notify step
+is pluggable, with one channel that always works: every notification is appended
+to `.swarm/notifications.log`, which a human can `tail -f`. A macOS desktop
+notification and an outbound webhook are opt-in in `.swarm/local.yaml`.
 
-```text
-[swarm-board] I have claimed TASK-3 for completion, who is my worker?
-  a) claude
-  b) IntelliJ + Human
-  c) VSCode + Human
-> a
-[swarm-board] Ok, you have selected claude. Handing over TASK-3 to it —
-              when done, it will announce with the PR link here.
-...opens claude in a new terminal, in TASK-3's worktree, .swarm-task/ injected...
-...the Board and poller watch for the output contract (Ch.7.3)...
-...contract fulfilled: rm -rf .swarm-task/ (never tracked, no commit needed)...
-[swarm-board] claude has finished TASK-3. The PR can be found at
-              https://github.com/org/matchwire-backend/pull/42
-```
+Notifications are emitted on state transitions the poller detects by diffing
+against `.swarm/poller-state.json`: newly awaiting review, stale heartbeats, more
+than one live claim, dispatch failures, daemon errors, and pull request events.
+Daemon errors reach the feed rather than only `swarm.log`, which is what makes a
+silent failure visible.
 
-Choosing `c` instead opens VS Code on the worktree with
-`.swarm-task/README.md` already open; the second half of the transcript is
-identical. The Board doesn't know or care whether claude or a human produced
-the PR — only that the output contract was fulfilled.
+One gap in the poller is worth stating because it is a correctness bug rather
+than a missing feature: it refreshes a pull request's state only while the task
+is `awaiting-review`, and records the merge from inside that same loop. A failed
+`gh pr view` is logged and dropped, so a transient network failure during the one
+poll that would have seen a merge loses it permanently, and the pull request shows
+as open forever. Specified: keep querying until a terminal record exists, treat a
+failed fetch as "not yet checked", and surface a pull request whose state has not
+been confirmed (`#56`).
 
-> **v1.1:**
->
-> - **When it appears.** The prompt pops up automatically for each task this
->   machine is holding for a worker choice.
-> - **Postponing.** `Esc` postpones it; `w` brings it back.
-> - **Fixed letters.** The letters always mean a = claude, b = IntelliJ,
->   c = VSCode. For `human-must-scope` tasks the claude option is not offered.
+\newpage
 
+# 10. The Swarm Board — a local command centre
 
-# 11. Gluing It Together — The End-to-End Flow
+![The Swarm Board: panels, actions, and the one action that is not a ledger record.](figures/fig6-board.pdf){width=159mm}
 
-A single task's lifecycle, drawing on every chapter in order:
+The Board is a terminal application over the same local clone everything else
+reads. It is not a dashboard onto a service; it is a view of files, which is why
+it works offline and why two Boards on two machines agree.
 
-1. **A human plans the work.** They decompose an epic into tasks and
-   dependencies in the issue backend (Ch.3). A matching task file appears in
-   the coordination repo.
-2. **A machine joins.** It runs `./bin/swarm.py start` once (Ch.5), which
-   starts its scheduler and poller.
-3. **A task becomes eligible.** The scheduler (Ch.7) syncs and finds a task
-   that is Ready (dependencies Done, no freeze) and within both the global N
-   and this machine's share.
-4. **The machine claims it.** It computes the next logical clock and writes a
-   claim (Ch.6.2).
-   - A machine that loses the race detects it via `resolve()` and withdraws.
-   - If the same pair keeps racing, the poller flags the task for arbitration.
-5. **A worker takes over.** The winner hands the task to a worker (Ch.7.3) in
-   an isolated branch and worktree: the default worker, or a human's choice on
-   the Board. Heartbeats and `checkpoint.yaml` are updated throughout, so any
-   machine can resume the task.
-6. **The PR is opened.** The worker runs `swarm-task done`: PR opened with the
-   template, completion written, ticket moved to Awaiting Review, quota slot
-   released.
-7. **A human reviews.** Every poller surfaces the review-ready task with live
-   `gh` status. The human either:
-   - approves and merges (one key on the Board);
-   - requests changes (the task resumes from the checkpoint);
-   - or rejects the approach (PR closed, re-planning in the backend).
-8. **Dependants start.** Downstream tasks become Ready as soon as the merge is
-   recorded, and the cycle repeats on whichever machine picks one up.
+`swarm.py board`, or `swarm.py board --web` to serve it on localhost.
 
-No step needs a process that isn't one of these:
+## 10.1 What it is made of
 
-- an agent invoked on demand;
-- a human using the issue backend or GitHub normally;
-- a local script (`swarm.py`, `poll.py`, `board.py`) on a machine a human
-  already controls.
+`bin/dags/boardview.py` computes what the Board shows, as plain data, with no
+Textual import. `bin/board.py` lays those rows out and binds keys to
+`dags.actions` and `dags.work`. The split is why the Board's logic is tested
+everywhere, including in environments with no terminal.
 
-> **v1.1 — D11:** in step 1 the task file is `tasks/<EPIC>/<TASK>/meta.yaml`,
-> created by **plan sync** from the tracker. Nobody writes it by hand.
+Every button is an ordinary ledger record or an ordinary `gh` call. The Board has
+no privileges and no private state: anything it can do, `swarm.py` can do, and
+anything it shows, `status` can show.
 
+## 10.2 Panels
 
-# 12. Limitations and Operating Boundaries
+- **Machines** — each machine, its share, its state (running, paused, share 0,
+  stopped), uptime and awake share, with the key that undoes the current state.
+- **Live claims** — what is claimed, by whom, how old the claim is, the worker
+  and the task's state.
+- **Plans awaiting review** — submitted plans, plus plans written but *not*
+  submitted, and plans changed since submission. The Board reads the worktree to
+  find them, which is how it can offer "submit and review" for a plan a human
+  worker left behind.
+- **Awaiting review** — open pull requests, their review decision, their check
+  state, and comment counts.
+- **Activity feed** — ledger records in plain English, attributed to a person.
+- **Daemon log** — the tail of `swarm.log`, filtered by level, so a failure that
+  would otherwise be invisible is one keypress away.
 
-- **Latency, not real-time.** Every decision is only as fresh as the last sync;
-  notification latency equals each human's poll interval. Fine for hour-scale
-  tasks, unsuitable for sub-minute churn.
-- **Local correctness, not global optimality.** No duplicate work is
-  guaranteed; perfectly balanced load is not.
-- **Task granularity matters.** Size tasks coarse enough (roughly hour-scale)
-  that sync and resolution latency never dominate the work.
-- **GitHub's push ordering is the one implicit serialization point.** The
-  remote's atomic accept/reject of pushes is what the leaderless scheme leans
-  on.
-- **Visibility requires someone's poller to be running.** Without one,
-  conflicts and review-ready work still resolve correctly in the ledger, but
-  nobody is notified until someone looks.
-- **Human review remains the true rate limiter.** Nothing reaches a protected
-  branch without a human decision.
+## 10.3 Actions
 
-> **v1.1 — D10, D3, D16, D4:** boundaries of the first implementation:
->
-> - **One repo per task.** Cross-repo work is split into tasks linked by
->   dependencies.
-> - **macOS-only worker launchers.**
-> - **Arbitration trust is by name only.** The commit-author check is not built yet (K4, Appendix A).
-> - **No Jira adapter yet.**
-> - **Branch protection needs a public repo** (or a paid plan). On a private
->   repo with GitHub Free, "agents can never merge" rests only on workers
->   following the skill.
+`p` pause, `r` resume, `t` throttle, `s` stop; `w` choose a worker, `f`
+freeze or unfreeze, `a` reassign, `e` take over an epic; `v` review a plan, `x`
+answer a test-scope question, `y` answer a worker's question, `m` approve and
+merge; `o` open the ticket, `O` the pull request; `n` set the global cap, `l`
+cycle the log level, `?` help.
 
+Three of these deserve a note:
 
-# Appendix A. Decisions log (v1.0 → v1.1)
+**`m` is the only action that is not a ledger record.** It runs the real `gh`
+approve-and-merge, and it warns on red or pending checks, merging over red only
+on explicit confirmation.
 
-"Plan §" refers to `claude/DAGS-implementation-plan.md` in the DAGS project.
-**Status** describes the implementation as of 2026-09-16.
+**`w` offers only the workers the task's tier allows** (§7.3), and offers "Not
+now" and "Not now, and pause this machine" as first-class choices rather than
+leaving Escape as the undocumented way out.
 
-| # | Decision | Why | Chapters | Status |
-|--|------------------------------------------|-------------------------|------|------|
-| D1 | All DAGS code lives in the coordination repo's `bin/` (plan §2.15). | "Installing the protocol is cloning the repo" (Ch.4). | 2, 4 | Done |
-| D2 | Worker PRs are opened by a separate **bot account**. Its token comes from `DAGS_WORKER_GH_TOKEN` if set, else the macOS Keychain (`dags-worker-token`); `worker_token: none` opts out. Humans approve and merge with their own `gh auth`. Commits are authored as the bot if `bot:` is set (plan §2.1). | GitHub won't let a PR's author approve it. With one shared identity, the review rule blocks every merge, or admins bypass it and the "agents never merge" guarantee is gone. | 7.3, 9.1 | Done |
-| D3 | Worker launchers are **macOS only**: Terminal/iTerm via `osascript`, `open -na` for IntelliJ, `code -n` for VSCode (plan §2.14). | The POC runs on one Mac; the Worker port leaves room for other systems. | 1, 7.3 | Done |
-| D4 | The **Jira adapter is deferred** (`FutureWork.md`). | No Jira site to build and test against, and the API is changing (search, Epic Link, ADF). | 3.2 | Deferred |
-| D5 | Two builders share the repo with a `BATON` file: Claude in Cowork writes code, Claude Code on the Mac runs what needs the Mac. Hand-offs are local commits. | Cowork's sandboxes can't install typer/rich/textual or reach GitHub. This is a development arrangement, not part of the protocol. | — | Done |
-| D6 | Leases use skew-corrected wall-clock time: offset measured from GitHub's `Date` header; lease 15 min; heartbeat every 3 min (plan §2.3). | A Lamport clock orders events but can't measure 15 minutes. Purely logical leases fail when only one machine is active. | 6.5 | Done |
-| D7 | Heartbeats (`heartbeats/<machine>.yaml`) and `checkpoint.yaml` have a single writer, which re-checks `resolve()`. Heartbeats go in one commit per cycle. The retry count is computed. `meta.yaml` never changes; changes go to `meta/` revisions (plan §2.4). | Keeps "append-only, no textual conflicts" true where v1.0 implied rewriting files in place. | 4, 8 | Done |
-| D8 | `start` spawns a **detached daemon** (scheduler, heartbeat and poller threads) with a pidfile and log. The **Board is a separate process** (`board` or `start --attach`). `stop` = shared stop record + SIGTERM (plan §2.2). | Threads die with their process, and a terminal UI can't run inside a headless daemon. | 5.3, 10.1 | Done |
-| D9 | Global N lives in `quota/` records; latest clock from a recognised human wins; default `swarm.default_quota` (plan §2.5). | v1.0 called N "time-varying" but didn't say where it lives. | 7.1 | Done |
-| D10 | A task's code repo is its `repo:` label, else `epic_repos:`, else `default_repo:`. Epics have none; one repo per task; `repos:` holds `base` and `test_command` (plan §2.6). | Neither tracker has a field for the target repo, and v1.0 doesn't say how `meta.yaml` gets one. | 3.3, 3.4 | Done |
-| D11 | **Plan sync** mirrors the tracker into `tasks/` every cycle. Done = PR merged (or closed by hand in the tracker). Readiness = backend not holding it back **and** ledger checks (plan §2.7). | v1.0 doesn't say who creates task files or who marks a task Done. | 7.2, 9.1, 11 | Done |
-| D12 | **Autonomy tiers:** `auto-pr` self-approves its plan; `human-must-review` needs a human plan approval; `human-must-scope` is never given to an AI worker. After `max_retries` failed claims, the tier drops one step (plan §2.8). | v1.0 names the tiers but doesn't define their behaviour. | 7.3, 8, 9.2 | Done |
-| D13 | **Idle limit:** no progress for `human_idle_hours` → "still working?"; no answer within one lease → heartbeats stop. Applies to every worker type (plan §2.9 said humans only). | The daemon heartbeats on the worker's behalf, so an abandoned IDE or a dead terminal would otherwise hold the lease forever. | 8 | Done |
-| D14 | **Local tests instead of CI:** `done` runs the repo's `test_command` and refuses on failure. Merge refuses only if the PR's status checks (read with `gh pr view`) are *failing* (plan §2.10). | There's no hosted CI (Ch.1), so a PR usually has no checks at all. | 7.3, 9.1 | Done |
-| D15 | **Command corrections** (plan §2.11). | The v1.0 commands don't work as written. | 3.3, 5.5, 10.1 | Done |
-| D16 | **Arbitration trust:** records from names not in `humans.yaml` are ignored. The commit-author email check is **not built yet** (plan §2.12). | Anyone with push access can write a record naming any human. | 6.6, 10.2 | Partly done |
-| D17 | Worktrees at `.worktrees/<TASK>` on branch `swarm/<TASK>`. Machine state in `.swarm/` (both git-ignored). Code repos: a path mapped in `.swarm/local.yaml`, else `.swarm/repos/OWNER/NAME` (plan §2.13). | v1.0's `cp` commands imply these locations. The mapping lets a human reuse an existing checkout. | 5.3, 7.3 | Done |
-| D18 | GitHub reads use one paginated `gh api graphql` query. Without type labels, an issue with sub-issues counts as an epic. | Doesn't depend on which `--json` fields a `gh` release supports; one call per sync. | 3.3 | Done |
-| D19 | GitHub task keys are `OWNER/REPO#N`, short key `GH-N`. Ledger path `tasks/<EPIC>/<TASK>`, epics at `…/_epic`, loose tasks at `tasks/_no-epic/`. Commands accept the full key, the short key or the task's folder name. | Human-friendly names on the Board and in branches, while keeping the permanent reference. | 3.3, 4 | Done |
-| D20 | **Plan gate records:** the plan text and its hash live in `checkpoint.yaml`; human approvals are append-only `plan-reviews/` records; a changed plan needs a new approval. | The checkpoint has a single writer, but the approving human may be on another machine. | 7.3, 10.5 | Done |
-| D21 | The **skill is stdlib-only** and delegates to `swarm.py task …`. It is configured by `.swarm-task/context.json` (the plan said `context.yaml`). | It must run in any worktree without the venv on its path. | 7.3 | Done |
-| D22 | **Outcome records** (`completions/`): `pr-opened`, `done`, `reopened` (once per review), `rejected` (PR closed → ticket `blocked`), `replanned` (ticket set back to `ready`). | Makes the request-changes and reject-approach paths of Ch.9 computable from the ledger. | 9.2, 9.3 | Done |
-| D23 | **Venv:** self-installing, stamped by platform and Python version, rebuilt if it came from elsewhere. `typer>=0.16`; works whether typer bundles its own click (0.17+) or uses the real package. | Folders shared with VMs can hold a venv built for the wrong system, and older typer breaks with current click. | 5.2 | Done |
-| D24 | **Notifications** always go to `.swarm/notifications.log`; desktop and webhook are opt-in in `.swarm/local.yaml`. The Board shows the log in its feed. | Ch.9.4's notify step is pluggable; the log is the one channel that always works. | 9.4, 10.3 | Done |
-| D25 | **Plan seeding:** `swarm.py backend seed FILE` creates a YAML plan's labels, issues, parents and "blocked by" links. Dry run by default; `--apply` is for humans. Issues carry a `dags-seed` marker, so re-runs only add what is missing and never rewrite. GitHub only. | The Phase 9 plan has 21 issues and 47 links. Typing them by hand is error-prone, and a failed run must be safe to repeat. | 3.3 | Done (first real run pending) |
-| D26 | **The plan is opt-in:** `plan_scope: labelled` (default) or `all`. Under `labelled`, an issue is in the plan when it carries a `swarm:` or `type:epic`/`type:task` label, or is the epic of one that does. `plan sync` reports skipped issues and unlabelled dependencies, and never imports the latter. `backend init --apply` labels unlabelled dependencies and ledger-tracked issues (upgrade path). `backend adopt` admits one issue. | A plan repo that people also use (the meta swarm's) turned every stray issue into claimable work with `default_repo`. Membership has to be deliberate, and a missing label is fixed, not inferred. | 3.3, 3.4 | Done |
+**Deferral is specified and not built.** A claim a human is not ready to staff
+should be snoozeable — remind me in ten minutes, back in an hour, park it — with
+a Board section listing parked and snoozed tasks and a ledger record so the
+snooze survives a restart (`#4`). Today the only options are to choose a worker
+or leave the claim held.
 
-**D15 corrections in full:**
+## 10.4 Attribution and trust
 
-- `gh issue edit … --add-blocked-by`; the prerequisite check verifies the flag exists.
-- Branch protection is set with a full JSON body through `swarm.py protect`.
-- `textual serve` comes from `textual-dev`, installed on demand, on port 4590.
-- `start --attach` replaces `swarm.py --attach`.
+Every human action the Board takes is recorded under the human's name from
+`humans.yaml`, taken from `.swarm/local.yaml` or matched through `gh api user`.
+The Board refuses to act as a human it cannot identify, and the resolver ignores
+plan reviews and arbitrations whose author is not a recognised human — so an
+agent cannot approve its own plan by writing the record directly.
 
-**Known gaps** (found while checking this spec against the code)
+`humans.yaml` is committed, which means the set of people who may decide is
+itself reviewed.
 
-| # | Gap | Status |
-|--|--------------------------------------------|--------------------|
-| K1 | Merging with the Board's `m` or `task merge` left the task's worktree on disk. | **Fixed:** merge removes it, and every poller sweeps worktrees of done or rejected tasks. |
-| K2 | Lowering N or a share didn't pause running tasks (v1.0 Ch.8 says they are checkpointed). | **Fixed:** pause request, then a `quota` release one lease later (Ch.8 note). |
-| K3 | `--identity` wasn't remembered between commands. | **Fixed:** it names a fresh clone for good; `swarm.py identity show/set`. |
-| K4 | The D16 commit-author check isn't built. | **Open.** Arbitration is trusted by name only; review arbitration commits in git history. |
+\newpage
 
-**Open questions**
+# 11. Verification — tests, scope and continuous integration
 
-- Are the MatchWire repos public or private? This decides whether branch
-  protection works on GitHub Free.
-- Whether to build K4.
+![Three places work is verified, and the only one that tests what will actually land.](figures/fig7-verification.pdf){width=159mm}
 
+This chapter did not exist in v1.1, because when v1.1 was written a worker ran
+the whole test suite and that was the whole story. It is now the part of the
+system with the most moving parts, and the part where the swarm's throughput is
+won or lost.
+
+## 11.1 Three places work is verified
+
+| Where | What it proves | Who waits for it |
+|---|---|---|
+| The worker's worktree | This change does not break what it touches | The worker, before `done` |
+| CI, on the pull request | The **merge result** is sound | The human, before merging |
+| CI, on the default branch | The branch is sound after the merge | Everyone, continuously |
+
+The middle one is the one that matters most and is easiest to get wrong. A
+`pull_request` workflow does not test the branch — it tests `refs/pull/N/merge`,
+the merge of the branch into the base. That is the only place a conflict between
+two independently green branches is caught, and it is exactly the failure that
+once left the default branch unable to even collect its tests: two branches each
+passed, their merge resolved a conflict badly, and nothing had run the merged
+result.
+
+## 11.2 Test scope
+
+Running the full suite for a three-line change is the wrong default when a worker
+is holding a claim whose lease is ticking.
+
+`bin/dags/testscope.py` computes a scope from the diff, as a pure function:
+`none`, `targeted`, `neighbours` or `full`. A table (`tests/map.yaml`, glob to
+test files) is consulted first; for a changed module with no table entry, the
+tests that import it are the fallback, found by a static import scan;
+"neighbours" adds the tests of modules that import a changed module, one hop out.
+Anything it cannot map escalates to `full` — the safe direction — and files shared
+by every test (`conftest.py`, the fakes) always mean `full`.
+
+The flow is a conversation, not a guess: `swarm-task test --propose` records a
+proposal and a question, a human answers from the Board (`x`) or with
+`task answer-tests --scope`, and `swarm-task test` then runs only that scope and
+refuses to run before an answer exists. An `auto-pr` task may accept its own
+proposal.
+
+**The default is still the full suite**, and that is specified to change (`#59`).
+`done` runs the complete `test_command` unless a human has already approved a
+narrower scope for the same changed files. Specified: `done` runs the `targeted`
+scope by default, with `--scope` to widen or narrow it, the chosen scope recorded
+in the checkpoint and stated in the pull request body, and the hidden
+`--skip-tests` replaced by `--scope none`.
+
+Two mechanical traps belong in the same change, because they make a "targeted"
+run no cheaper than a full one. A test command that hardcodes the test directory
+and appends the caller's arguments turns a scope into a *filter* — the whole suite
+is still collected and then deselected, and collection is a large share of the
+cost. And parallel execution across all cores makes a small selection worse, not
+better, because every worker process imports and collects the whole suite
+independently. Scopes must be passed as paths, and parallelism should apply only
+to the full scope.
+
+## 11.3 `done`, end to end
+
+`work.finish` is the single path from "the work is finished" to "a human has
+something to review", and its order is deliberate:
+
+1. Pull, and confirm this machine still owns the claim.
+2. Refuse if the task is `human-must-scope` and the worker is not a human.
+3. Refuse if the plan is not approved.
+4. Refuse if no summary has been recorded.
+5. Run tests — the agreed scope if one was approved, otherwise the full command.
+6. Commit with the house template, authored as the bot.
+7. **Refuse if the branch is no new commits ahead of its base.** A reopened task
+   whose worker produced nothing must not re-announce itself as finished, which it
+   once did, posting the same commit twice.
+8. Push the branch and open the pull request.
+9. **Wait for the checks**, up to `checks_timeout` (300 seconds by default). Red
+   keeps the task in progress with `ci_failure` in the checkpoint, so the session
+   that wrote the code is still the one that fixes it. Pending or no checks
+   configured finishes as before.
+
+Step 9 is why §11.1's middle row has a waiter. Before it existed, `done` opened a
+pull request and walked away: the worker exited, the Board said ready, and a red
+build reached nobody.
+
+## 11.4 The merge gate on the default branch
+
+A protected default branch is what makes the merge gate real rather than
+customary. The configuration that works with DAGS is: no force-push, no deletion,
+the test workflow required, one approving review, and no bypass actors — combined
+with pull requests opened by the bot (D2) so that a human review is
+mechanically necessary.
+
+Two interactions are worth recording, because both were discovered the hard way.
+
+**A protected branch and a ledger cannot share a repository.** The daemon pushes
+ledger commits directly, hundreds a day; protection forbids exactly that. This
+is one of the reasons for D27 (§4.6), and `swarm.py status` should warn when a
+coordination repository's default branch is protected (`#41`).
+
+**Requiring branches to be up to date is a real trade.** Without it, merging one
+pull request makes every other open one's green check stale — computed against
+the older base. With it, every merge invalidates the others and they must absorb
+the base again. With several pull requests open at once the safe procedure is to
+merge one at a time and let the default branch's own workflow go green between
+merges.
+
+\newpage
+
+# 12. End-to-end flow
+
+![One task end to end, and the two gates an agent cannot pass.](figures/fig8-lifecycle.pdf){width=159mm}
+
+One task, from a human's idea to merged code, naming the chapter that governs
+each step.
+
+1. **A human files an issue** in the plan repository and labels it: a
+   `swarm:status`, an autonomy tier, and `repo:`. Without a swarm label it is
+   invisible to the swarm (§3.4). When the plan is large, `backend seed` creates
+   the whole shape from a file (§3.6).
+2. **A machine's scheduler pulls and syncs the plan** into `tasks/` (§3, D11).
+   New tasks get a `meta.yaml`; later tracker changes arrive as `meta/`
+   revisions.
+3. **It computes readiness and quota room** (§3.1, §7.1), both pure functions over
+   the synced ledger.
+4. **It claims a ready task** — a new file in `claims/`, written in one
+   transaction (§6.2) — then pulls again and re-resolves to find out whether it
+   won (§6.3).
+5. **It prepares a worktree** on `swarm/<TASK>` in the code repository and
+   **dispatches a worker** from the tiers that task allows (§7.3). The Board asks
+   a human which worker, unless a default is configured.
+6. **The worker plans.** `swarm-task plan` writes `plan.md` from the ticket and
+   from whatever a previous attempt recorded; `--submit` puts it in the
+   checkpoint and, on an `auto-pr` task, self-approves it (§9.1).
+7. **A human reviews the plan** on the Board, or sends it back with a note
+   (§9.2). The worker waits on that outcome rather than polling (§9.3).
+8. **The worker implements**, recording what it tried and what remains as it goes,
+   and asking rather than guessing when it needs a decision (§8.2, §9.3).
+9. **It agrees a test scope** if the repository is set up for it, and runs that
+   scope (§11.2).
+10. **`done` verifies and publishes**: the plan is approved, a summary exists, the
+    branch is actually ahead, tests pass, commit with the house template as the
+    bot, push, open the pull request, wait for the checks (§11.3).
+11. **The poller notices** and tells a human the task is awaiting review (§9.6).
+12. **A human reviews the pull request.** Request changes sends it back to the
+    queue with the feedback attached (§9.4); approve and merge finishes it (§9.1).
+13. **The poller records the merge**, the task becomes done, its worktree is
+    swept, and the quota slot frees — at which point step 3 happens again.
+
+Everything in that list except steps 1, 7 and 12 is a machine acting on files.
+Everything in steps 1, 7 and 12 is a human, and none of them can be skipped by an
+agent.
+
+\newpage
+
+# 13. Specified but not yet built
+
+This chapter is the honest index of the document. Everything listed here is
+specified in the chapters above as though it worked; none of it is in `main` at
+the time of writing. Each entry names the issue that will build it.
+
+| Area | Specified behaviour | Issue | Chapter |
+|---|---|---|---|
+| Worker contract | The contract tells a worker to `wait` after submitting a plan, instead of telling it to poll | `#58` | §9.3 |
+| Sandboxing | `done` refuses a diff touching ledger files, `BATON`, `CLAUDE.md`, `backend.yaml` or `humans.yaml`; per-worktree worker rules | `#1` | §7.3 |
+| Worktrees | Worktrees live in the code repository's checkout, excluded via `info/exclude`, with a per-repo override | drafted, not filed (D32) | §7.3 |
+| Worktrees | The machine that loses a task releases its worktree; a machine does not claim work whose branch it cannot check out | `#13` | §7.4 |
+| Labels | `ready` means human permission; computed readiness is never written back; labels that stop applying are retired | `#8` | §3.2 |
+| Board | Deferral: snooze, back in an hour, park, with a Board section and a ledger record that survives a restart | `#4` | §10.3 |
+| Pull requests | Comment and thread counts, a detail screen, sending work back from the Board, resolving threads | `#6` | §9.4 |
+| Pull requests | The poller keeps querying until a terminal record exists; a failed fetch is "not yet checked" | `#56` | §9.6 |
+| Machine control | A deliberate `start` clears a pause | `#30` | §8.1 |
+| Machine control | `start` without an explicit share keeps the last throttle | `#61` | §8.1 |
+| Autonomy | `task set-autonomy`; the ledger is authoritative and the label mirrors it | `#45` | §8.3 |
+| Autonomy | A plan-level question drops a task out of `auto-pr` for that run only | `#45` | §8.3 |
+| Autonomy | Lease expiry caused by a machine going away does not count as failure | `#14` territory | §6.5, §8.3 |
+| Tests | `done` runs the `targeted` scope by default; `--scope` widens it; the scope is recorded and stated in the pull request | `#59` | §11.2 |
+| Tests | Scopes are passed as paths, not filters; parallelism only on the full scope; a venv build announces itself | `#59` | §11.2, §5.2 |
+| Liveness | Heartbeats move to `refs/dags/live/<machine>`; dual-read migration | drafted, not filed (D31) | §4.5 |
+| Plan review | A plan review can carry an answer, so discussion happens on the issue and the gate stays on the Board | `#33` | §9.3 |
+| Commit messages | The summary becomes a commit *subject*, not the whole body | `#35` | §11.3 |
+| Diagnostics | `status` answers from the ledger without the network, and every `gh` call has a timeout | `#60` | §9.6 |
+| Diagnostics | `status` warns when a coordination repository's default branch is protected | `#41` | §11.4 |
+| Trust | The arbitration commit-author check (D16 is only partly done) | — | §6.6, §10.4 |
+
+Two observations about this table, rather than about its entries.
+
+**Most of it is about telling someone something.** The protocol's correctness was
+largely right early; what was missing was making state visible to whoever needed
+it next — the worker, the reviewer, the operator. A leaderless design makes every
+participant responsible for reading state, and reading is the part that is easy
+to leave out.
+
+**Several entries exist because a merged fix was not reachable.** `wait` shipped
+and nothing invoked it; the test scope shipped and the default did not change.
+Under the pinned-copy model (§5.6) that gap is structural, not accidental: a
+feature is not usable until the contract, the defaults and the running copy all
+move. The specification counts a behaviour as built only when all three have.
+
+\newpage
+
+# 14. Limitations and operating boundaries
+
+Things that are true by design, as opposed to Chapter 13's things that are true
+for now.
+
+**It is macOS-only in practice.** The worker launchers drive Terminal, iTerm,
+IntelliJ and VS Code through `osascript` and `open` (D3). The worker port makes
+another platform a contained piece of work, and nothing else in the system cares.
+
+**It assumes GitHub for more than the tracker.** The adapter boundary covers the
+issue tracker, but pull requests, reviews, checks, branch protection and the
+`gh` CLI are assumed throughout Chapters 9 and 11. A different forge is a larger
+change than a different tracker.
+
+**One task, one repository.** A task names a single `repo:`, and a change
+spanning two repositories is two tasks with a dependency between them. There is
+no cross-repository atomic change.
+
+**The ledger grows.** Until liveness moves off the branch (§4.5), commit volume
+is a function of how long the swarm has been switched on rather than how much it
+has done. Even afterwards the ledger only grows; there is no compaction, and the
+options for one — archiving terminal tasks, or rolling over to a fresh repository
+per period — are recorded in §4.5 rather than implemented. Any compaction must
+preserve a floor for the logical clock (§6.1) and must reckon with being the
+first non-append-only operation in the system.
+
+**A swarm is as parallel as its merge queue.** Workers scale by adding machines;
+merging does not, because a human merges one pull request at a time and each
+merge can stale the others' checks (§11.4). Past a handful of concurrent tasks on
+one repository, the bottleneck is review, not execution.
+
+**Lease length is a trade, not a tuning knob.** A shorter lease recovers a dead
+machine's work sooner and expires a slow one's work wrongly; a longer one does
+the reverse. It is coupled to heartbeat frequency by `lease / 3`, which is why
+§4.5 matters for more than disk.
+
+**Nothing prevents a worker from doing something stupid inside its worktree.**
+The guard rails are the path guard on `done`, the plan gate, and human review.
+DAGS constrains where a worker writes and who approves the result; it does not
+constrain what the worker thinks.
+
+**It is a proof of concept.** It has run two swarms on one developer's machines,
+not a team's. The parts exercised hardest — claiming, leases, quota, the plan
+gate — are the parts most likely to be right. The parts exercised least are
+multi-human review, a second platform, and anything involving a tracker that is
+not GitHub.
+
+\newpage
+
+# Appendix A. Decisions log
+
+Each decision records what was chosen and why. **Status** is `Done` when it is in
+`main` with tests, `Specified` when this document describes it and Chapter 13
+lists it, `Partly done` when some of it shipped, `Deferred` when it was chosen
+not to build it.
+
+| # | Decision | Why | Ch. | Status |
+|---|---|---|---|---|
+| D1 | All DAGS code lives in the coordination repository's `bin/`. | "Installing the protocol is cloning the repository." | 2, 4 | Done |
+| D2 | Worker pull requests are opened by a separate **bot account**; its token comes from an environment variable, else the macOS Keychain; `worker_token: none` opts out. Humans approve and merge with their own `gh auth`, and commits are authored as the bot. | Keeps worker writes separable from a human's. It later turned out to be the mechanism that makes the merge gate real: a GitHub account cannot approve its own pull request, so a bot-opened pull request *requires* a human reviewer. | 5.5, 9.1, 11.4 | Done |
+| D3 | Worker launchers are **macOS only**: Terminal and iTerm via `osascript`, `open -na` for IntelliJ, `code -n` for VS Code. | The proof of concept runs on Macs; the worker port leaves room for other systems. | 1, 7.3 | Done |
+| D4 | The **Jira adapter is deferred.** | No Jira site to build and test against, and a moving API. The port stays tracker-agnostic so the work is contained when it happens. | 3.5 | Deferred |
+| D5 | Two builders share the repository with a `BATON` file; hand-offs are local commits. | A development arrangement for building DAGS, not part of the protocol. | — | Done |
+| D6 | Leases use **skew-corrected wall-clock time**: the offset is measured from GitHub's `Date` header; lease 15 minutes, heartbeat every 3. | A logical clock orders events but cannot measure fifteen minutes, and a purely logical lease never expires when only one machine is active. | 5.3, 6.5 | Done |
+| D7 | `heartbeats/<machine>.yaml` and `checkpoint.yaml` are **single-writer** and re-check `resolve()`; heartbeats are one commit per cycle; `meta.yaml` never changes, later changes become `meta/` revisions. | Keeps "append-only, no textual conflicts" true for everything else. | 4.2, 4.3 | Done |
+| D8 | `start` spawns a **detached daemon** with scheduler, heartbeat and poller threads, a pidfile and a log; the **Board is a separate process**; `stop` is a shared record plus a signal. | Threads die with their process, and a terminal UI cannot run inside a daemon. | 2.2, 5.3 | Done |
+| D9 | The **global cap N lives in `quota/` records**; the latest from a recognised human wins; the default comes from `backend.yaml`. | N has to be changeable at runtime by any human, from any machine. | 7.1 | Done |
+| D10 | A task's code repository is its `repo:` label, else the epic's, else `default_repo`. One repository per task. | Neither tracker has a field for a target repository. | 3.3, 3.5 | Done |
+| D11 | **Plan sync** mirrors the tracker into `tasks/` every cycle. Done means the pull request merged. Readiness is the backend's rule **and** the ledger's. | Nothing in the original design said who creates task files or who marks a task done. | 3, 7.4, 12 | Done |
+| D12 | **Autonomy tiers:** `auto-pr` self-approves its plan, `human-must-review` needs a human approval, `human-must-scope` is never given to an AI worker. Repeated failure drops the tier one step. | The tiers were named but their behaviour was undefined. | 7.3, 8.3, 9.1 | Done |
+| D13 | **Idle limit:** no progress for `human_idle_hours` prompts "still working?", for every worker type. | The daemon heartbeats on the worker's behalf, so an abandoned IDE would otherwise hold a claim indefinitely. | 8.6 | Done |
+| D14 | `done` runs the repository's tests and refuses on failure; merge refuses only on *failing* checks. | Written when there was no CI, so a pull request usually had no checks at all. Superseded in part by Chapter 11. | 11.3 | Done |
+| D15 | Corrections to the originally published commands. | The commands as first written did not run. | — | Done |
+| D16 | **Arbitration trust:** records naming a human not in `humans.yaml` are ignored. The commit-author email check is not built. | Anyone with push access can write a record naming any human. | 6.6, 10.4 | Partly done |
+| D17 | Machine state lives in `.swarm/`; code repositories are a mapped path or a clone under `.swarm/repos/`. | Lets a human reuse an existing checkout. Worktree location superseded by D32. | 5.4, 7.3 | Done |
+| D18 | GitHub reads use **one paginated GraphQL query**; without type labels, an issue with sub-issues counts as an epic. | Independent of which `--json` fields a `gh` release supports, and one call per sync. | 3.3 | Done |
+| D19 | GitHub keys are `OWNER/REPO#N` with short key `GH-N`; ledger paths are `tasks/<EPIC>/<TASK>`, epics at `_epic`, loose tasks at `_no-epic`. | Human-friendly names on the Board and in branch names, with permanent keys underneath. | 4.1 | Done |
+| D20 | **Plan gate records:** the plan and its hash live in the checkpoint; approvals are append-only `plan-reviews/`; a changed plan needs a new approval. | The checkpoint is single-writer, but the approving human may be on another machine. | 9.1, 10.2 | Done |
+| D21 | The **injected skill is stdlib-only** and delegates to `swarm.py task …`, configured by `.swarm-task/context.json`. | It must run in any worktree without a venv on its path. | 7.3, 9.3 | Done |
+| D22 | **Outcome records:** `pr-opened`, `done`, `reopened`, `rejected`, `replanned`. | Makes the request-changes and reject-approach paths computable from the ledger. | 9.4 | Done |
+| D23 | **The venv is self-installing and stamped** by platform, architecture, Python version and a requirements hash, and rebuilt when the stamp does not match. | A folder shared with a virtual machine can hold a venv built for the wrong system. | 5.2 | Done |
+| D24 | **Notifications** always append to `.swarm/notifications.log`; desktop and webhook are opt-in. | The log is the one channel that always works, with no service. | 9.6 | Done |
+| D25 | **Plan seeding** from a YAML file, idempotent through a hidden `dags-seed` marker, dry run by default. | A twenty-one issue plan with forty-seven links is not worth typing, and a failed run must be safe to repeat. | 3.6 | Done |
+| D26 | **The plan is opt-in:** `plan_scope: labelled` by default. Membership is any `swarm:` or `type:` label, or being the ancestor of something that has one. | A plan repository that people also use turned every stray issue into claimable work. | 3.4 | Done |
+| D27 | **One coordination repository per swarm, holding no product code.** | Ledger commits swamped a code history, branch protection blocked the daemon's pushes outright, and a worker's worktree sat inside the live ledger. | 4.6 | Done |
+| D28 | **The tracker is a human input surface.** `swarm:status:ready` means "a human says this may be worked"; computed readiness is never written back; labels that have stopped applying are retired on completion. | The alternative makes the tracker self-describing at the cost of a write loop that drifts when sync fails. The tracker stays the place humans state intent. | 3.2 | Specified |
+| D29 | **A "Request changes" review binds; a comment from a recognised human surfaces without reopening.** | Discussion and instruction are different acts. Conflating them makes every passing remark into work; ignoring comments entirely loses real feedback, so they are shown instead. | 9.4 | Partly done |
+| D30 | **The ledger is the source of truth for autonomy**, and the tracker label mirrors it. A plan-level question drops a task out of `auto-pr` **for that run only**; a downgrade can be undone. | A downgrade recorded in the ledger already beat the label, with no way to reverse it — so a single question could permanently change a task's tier. | 8.3 | Specified |
+| D31 | **Liveness lives outside the branch**, in `refs/dags/live/<machine>`, migrated by dual-read. | Heartbeats were half of all ledger commits and have no historical value. Moving them makes commit volume a function of work rather than time, and lets beats get *more* frequent with a shorter lease. | 4.5 | Specified |
+| D32 | **Worktrees live in the code repository's checkout**, kept out of git by `info/exclude`, with a per-repo override. | Inside the coordination repository, an agent walked up the tree into the swarm's own rules. Outside both repositories, project ancestry resolves to nothing and then to `$HOME`. | 7.3 | Specified |
+| D33 | **Nothing upgrades itself.** `bin/` in a coordination repository is a pinned copy; a merged change takes effect only when a human copies it in and restarts each machine. | A swarm that edits the protocol it is running would otherwise rewrite itself mid-flight, and a bad merge would break every machine at once. | 5.6 | Done |
+
+\newpage
 
 # Appendix B. Primer — DAGS in ten minutes
 
-## B.1 What DAGS is
+## B.1 What it is
 
-DAGS lets several machines, each running AI coding agents or humans in their
-IDEs, work through a shared plan of tasks without a central server. Three
-things make that work:
-
-- **The plan** lives in your issue tracker (GitHub Issues today). Humans write
-  it: epics, tasks, dependencies, and how much autonomy each task gets.
-- **The ledger** is a plain git repo, the *coordination repo*. Machines write
-  small, uniquely named YAML files into it: "I claim this task", "still alive",
-  "PR opened". Every machine reads the same files and computes the same
-  answer to "who owns what".
-- **The code** lives in normal GitHub repos. Workers open pull requests there,
-  and only humans merge them.
+A way for several coding agents, on several machines, to work one backlog without
+a server and without stepping on each other. Work is described in an issue
+tracker. Coordination happens in a git repository. Code lands as pull requests
+that a human merges.
 
 ## B.2 Vocabulary
 
 | Term | Meaning |
 |---|---|
-| Coordination repo | The git repo holding the ledger and the DAGS scripts (`bin/`). Every participant clones it. |
-| Code repo | A repo where the actual work lands (e.g. `matchwire-backend`). |
-| Machine | One running swarm, identified by a name like `mbp-jane-7f2a`. |
-| Operator | The human attending a machine, as listed in `humans.yaml`. |
-| Task / epic | Tracker issues. A task is hour-sized work in one code repo; an epic groups tasks. |
-| Claim | A machine's bid for a task. The lowest logical clock wins unless a human arbitrates. |
-| Logical clock | A counter, one more than the highest number anywhere in the ledger. It orders events without trusting wall clocks. |
-| Lease / heartbeat | A claim stays valid only while its machine keeps writing heartbeats (every 3 minutes; it expires after 15). |
-| Worker | Whatever implements a claimed task: `claude` in a terminal, or a human in IntelliJ or VSCode. |
-| Worktree | A private checkout of the code repo for one task (`.worktrees/<TASK>`, branch `swarm/<TASK>`). |
-| Skill | The `.swarm-task/` folder dropped into the worktree: instructions plus the `swarm-task` command. |
-| Checkpoint | `checkpoint.yaml`: the plan, what was tried, what remains, open questions. It is how any machine resumes a task. |
-| Quota N | The maximum number of tasks worked at once across the whole swarm. Each machine also has its own **quota share**. |
-| Arbitration | A human's file that overrides who owns a task, or freezes it. |
-| Board | The terminal dashboard where humans watch and steer. |
-| Daemon | The background process a machine runs: scheduler, heartbeats, poller. |
+| **Task** | One unit of work: an issue in the tracker, mirrored as a folder in the ledger |
+| **Epic** | A parent of tasks. Blocking an epic halts all of them |
+| **Plan repository** | The tracker whose issues are the plan |
+| **Coordination repository** (ledger) | The git repository holding claims, checkpoints and control records. One per swarm, no product code |
+| **Code repository** | What a task changes. A task names exactly one |
+| **Machine** | One clone of the coordination repository with its own identity, running one daemon |
+| **Claim** | A record saying a machine intends to work a task. Several may exist; one wins |
+| **Lease** | How long a claim survives without a heartbeat. Fifteen minutes by default |
+| **Quota** | N in flight across the swarm; a share per machine |
+| **Worker** | Whatever implements a task: an AI CLI, or a human in an IDE |
+| **Plan** | What the worker says it will do, written before any code, reviewed by a human |
+| **Checkpoint** | The task's working memory: plan, summary, what was tried, what remains |
+| **Autonomy tier** | How much human review a task needs |
+| **The Board** | A terminal UI over the local clone |
 
 ## B.3 The life of a task
 
-```text
-tracker issue ──plan sync──▶ tasks/E/T/meta.yaml           (open, ready)
-      scheduler claims ─────▶ claims/<machine>-<clock>.yaml (claimed)
-      worker chosen ────────▶ checkpoint.yaml worker: …     (in-progress)
-      swarm-task plan / implement / done
-      PR opened by bot ─────▶ completions/…-pr-opened.yaml  (awaiting-review)
-      human merges ─────────▶ completions/…-done.yaml       (done) → dependants ready
-         ├─ changes requested → reopened → back to ready, resumed from the checkpoint
-         └─ PR closed         → rejected → re-plan in the tracker → ready again
-```
+A human files and labels an issue. A machine mirrors it, finds it ready, claims
+it, and dispatches a worker into a fresh worktree. The worker writes a plan; a
+human approves it; the worker implements, records what it tried, runs the agreed
+tests, and opens a pull request as the bot. A human reviews and merges. The
+poller notices, the task is done, the slot frees.
 
-Other states you may see:
-
-- `frozen`: a human froze the task.
-- `rejected`: waiting for re-planning.
-- `arbitrated-stale`: a human awarded the task to a claim whose lease has
-  since expired. Reassign it, or unfreeze.
+If anything goes wrong — the machine sleeps, the agent dies, the human goes home
+— the claim's lease expires and the task returns to the pool with its checkpoint
+intact, so the next attempt resumes rather than restarts.
 
 ## B.4 Who does what
 
-| Actor | Does | Never does |
-|---|---|---|
-| Human planner | Writes epics and tasks in the tracker; sets labels | Edits `tasks/` by hand |
-| Scheduler (per machine) | Claims ready tasks within quota; prepares worktrees; dispatches workers | Writes code; merges |
-| Worker | Plans, implements, runs `swarm-task done` | Merges; edits the ledger directly |
-| Poller (per human) | Notices review-ready, stale and conflicting work; records merges and rejections | Makes judgment calls |
-| Human reviewer | Approves plans; reviews, merges or rejects PRs; arbitrates | — |
+| | Humans | Machines | Workers |
+|---|---|---|---|
+| Decide what to build | ✓ | | |
+| Decide what to work next | | ✓ | |
+| Approve a plan | ✓ | | |
+| Write code | | | ✓ |
+| Run tests | | | ✓ |
+| Open a pull request | | | ✓ (as the bot) |
+| Merge | ✓ | | |
+| Pause everything | ✓ | | |
 
 ## B.5 Where things live
 
-| What | Where |
+| | Path |
 |---|---|
-| The plan | Tracker issues (labels `swarm:status:*`, `swarm:autonomy:*`, `repo:*`, `type:*`) |
-| Shared settings | `backend.yaml`, `humans.yaml`, `CONVENTIONS.md`, `templates/` in the coordination repo |
-| Your machine's settings | `.swarm/local.yaml` (never committed) |
-| Ledger records | `tasks/`, `control/`, `priority/`, `quota/` |
-| Your machine's state | `.swarm/`: venv, identity, daemon pid and log, notifications, cloned repos |
-| Work in progress | `.worktrees/<TASK>` on branch `swarm/<TASK>` |
-| Finished work | A PR in the task's code repo |
+| The plan | Issues in the plan repository |
+| The ledger | `tasks/`, `control/`, `priority/`, `quota/` |
+| The protocol | `bin/`, committed, pinned per swarm |
+| Shared settings | `backend.yaml`, `humans.yaml`, `templates/` |
+| This machine only | `.swarm/` |
+| A task's code | `<code repo>/.worktrees/<TASK>` on `swarm/<TASK>` |
+| A worker's instructions | `<worktree>/.swarm-task/` |
 
-## B.6 Five rules worth remembering
+## B.6 Six rules worth remembering
 
-1. **Edit the plan in the tracker, never in `tasks/`.**
-2. **Only humans merge.** The bot opens PRs; branch protection enforces the rest.
-3. **When in doubt, freeze.** `f` on the Board stops every machine from
-   touching a task until you lift it.
-4. **Tag your review comments** `fix:`, `explain:` or `reject-approach:` so the
-   next worker can act on them.
-5. **Workers that are stuck should say so** (`swarm-task block "…"`), not guess.
+1. **Records are files, and files are append-only.** Two writers never conflict,
+   except on the two single-writer files, where the remote wins.
+2. **Nobody is in charge.** Every machine computes the same answer from the same
+   synced ledger; the lowest `(clock, machine)` wins.
+3. **Expiry is computed, not swept.** Nothing has to be running for a dead
+   machine's work to come back.
+4. **A human gate is a record an agent cannot forge.** The plan gate and the
+   merge gate are enforced where the work ends, not only where it starts.
+5. **Nothing upgrades itself.** A merged change does nothing until someone copies
+   it in and restarts.
+6. **If it isn't in the ledger, it didn't happen.** An agent's memory is not
+   state.
 
+\newpage
 
 # Appendix C. How-to guides
 
-Commands run from the coordination repo clone unless stated otherwise.
-`./bin/swarm.py` bootstraps its own venv on first use.
+## C.1 Set up a new swarm
 
-## C.1 Set up a new swarm (once per team)
+1. Create the coordination repository. It holds `bin/`, `templates/`,
+   `backend.yaml`, `humans.yaml` and empty ledger folders — and **no product
+   code** (D27).
+2. Write `backend.yaml` (§3.5): the plan repository, `plan_scope`, the code
+   repositories with their `base` and `test_command`, and the `swarm:` settings.
+3. Write `humans.yaml`: everyone whose decisions the swarm will honour.
+4. `swarm.py backend init` to see what labels it would create, then `--apply`.
+5. Give the bot account write access to each code repository.
+6. Protect each code repository's default branch (§11.4). Do **not** protect the
+   coordination repository's — the daemon pushes to it directly.
+7. Add the test workflow to each code repository (§11.1).
 
-1. **Create the repos.**
-   - The coordination repo, e.g. `org/project-swarm-ensemble`. Copy in `bin/`,
-     `templates/`, `backend.yaml`, `humans.yaml`, `CONVENTIONS.md` and
-     `.gitignore` from `poc-swarm-ensemble`.
-   - The plan repo that will hold the issues, e.g. `org/project-swarm`.
-2. **Edit `backend.yaml`.**
-   - `github.repo`: the plan repo.
-   - `repos:`: every code repo, each with `base` and `test_command`.
-   - `default_repo`.
-   - Adjust the `swarm:` settings if needed.
-   - On an organization with issue types configured, set
-     `use_issue_types: true`.
-3. **Edit `humans.yaml`.** Add one entry per person who may arbitrate, set
-   quota, approve plans or merge: `name`, `github` login, and the `emails`
-   they commit with.
-4. **Create the labels.** First check the list, then apply:
-
-   ```bash
-   ./bin/swarm.py backend init            # review the list
-   ./bin/swarm.py backend init --apply    # create/update them
-   ```
-
-   `backend init` also lists any issues the plan is missing: dependencies of
-   plan tasks that have no swarm label, and issues the ledger already tracks
-   without one. Run it again after upgrading a swarm to D26. The procedure is:
-   upgrade `bin/`, run `backend init` and read the list, run it again with
-   `--apply`, then restart each machine. Read the dry run first: labelling an
-   open dependency `swarm:status:ready` makes it claimable.
-
-5. **Create the bot account.**
-   1. Make a separate GitHub user, e.g. `project-dags-bot`.
-   2. Add it as a collaborator with **Write** access to every code repo, and
-      accept the invitation as the bot.
-   3. Create a token for it. On personal-account repos use a classic token with
-      `repo` scope. On organization repos, a fine-grained token with Contents,
-      Pull requests and Issues set to read/write.
-6. **Protect the base branch** of every code repo. Remember that GitHub Free
-   only enforces this on public repos.
-
-   ```bash
-   ./bin/swarm.py protect org/project-backend            # dry run: shows the call
-   ./bin/swarm.py protect org/project-backend --apply
-   ```
-
-7. **Commit and push** the coordination repo.
-
-## C.2 Join the swarm from a new machine
-
-1. Install the prerequisites: Python 3.10+, git, and gh. On macOS:
-   `brew install python@3.12 gh`, then `gh auth login`.
-2. Clone the coordination repo and `cd` into it.
-3. Store the bot token in the Keychain. It prompts for the token, which stays
-   off the command line:
-
-   ```bash
-   security add-generic-password -a dags-bot -s dags-worker-token -w
-   ```
-
-4. Create `.swarm/local.yaml` with anything machine-specific (all keys are
-   optional; see D.4):
-
-   ```yaml
-   human: jane                      # if your GitHub login isn't in humans.yaml
-   repos:                           # reuse checkouts you already have
-     org/project-backend: ~/code/project-backend
-   bot:
-     login: project-dags-bot
-     email: 12345+project-dags-bot@users.noreply.github.com
-   notify:
-     desktop: true
-   ```
-
-5. Start:
-
-   ```bash
-   ./bin/swarm.py start --quota-share 2                          # ask me which worker each time
-   ./bin/swarm.py start --quota-share 2 --default-worker claude  # unattended AI worker
-   ./bin/swarm.py start --attach                                 # and open the Board
-   ```
-
-6. Check at any time with `./bin/swarm.py status`. Stop with
-   `./bin/swarm.py stop`.
-
-## C.3 Write a plan in GitHub Issues
+## C.2 Join from a new machine
 
 ```bash
-R=org/project-swarm
-gh issue create --repo $R --title "E1: sports-data ingestion" --label type:epic
-gh issue create --repo $R --title "Poll the feed" --parent $R#1 \
-  --label type:task --label repo:org/project-backend \
-  --label swarm:status:ready --label swarm:autonomy:human-must-review \
-  --body "What to build, acceptance criteria, pointers."
-gh issue create --repo $R --title "Show live scores" --parent $R#1 \
-  --label type:task --label repo:org/project-frontend --label swarm:status:ready
-gh issue edit 3 --repo $R --add-blocked-by $R#2      # frontend waits for backend
+git clone <coordination repo> && cd <it>
+./bin/swarm.py start --quota-share 1
+./bin/swarm.py board
 ```
 
-- **Omitted labels.** No autonomy label means `human-must-review`. No `repo:`
-  label means `epic_repos` / `default_repo` applies. With no `swarm:` or
-  `type:` label at all, the issue is not part of the plan (D26). Use
-  `./bin/swarm.py backend adopt N` to hand an existing issue to the swarm.
-- **Sizing.** Keep each task to about an hour of work in **one** repo.
-- **Check.** `./bin/swarm.py plan sync` then `./bin/swarm.py task list` shows
-  what the swarm sees. `(ready)` means the ledger's checks pass;
-  `./bin/swarm.py backend ready --ledger` lists the tasks the tracker also
-  holds ready, which is exactly what a scheduler may claim.
-- **Web UI.** Sub-issues and "blocked by" can also be set in GitHub's web UI.
+Write `.swarm/local.yaml` first if you want to reuse existing checkouts or set
+the worker token (§5.4). Start with a share of 1 until a task has gone all the
+way through.
 
-**From a plan file (D25).** A whole plan can be written as one YAML file and
-seeded in one go. `poc/matchwire/plan.yaml` is a worked example.
+## C.3 Write a plan as issues
 
-```yaml
-repo: org/project-swarm          # must match backend.yaml github.repo
-status: ready                    # status label for new tasks
-epics:
-  - {id: BE, title: "Backend", body: "..."}
-tasks:
-  - id: T1
-    epic: BE
-    title: "Poll the feed"
-    repo: org/project-backend    # must be listed under repos: in backend.yaml
-    autonomy: human-must-review  # the default
-    depends_on: []
-    body: |
-      What to build, acceptance criteria, pointers.
-```
+One issue per task, with `type:task`, `repo:OWNER/NAME`, an autonomy tier, and
+`swarm:status:blocked` until you mean it to be worked. Use GitHub sub-issues for
+epic membership and "blocked by" for dependencies. For anything large, write a
+plan file and `backend seed` it (§3.6).
+
+Remember that `ready` is permission, not availability (§3.2): a task labelled
+`ready` whose dependency is still open will not be claimed, and the tracker will
+not tell you that. `swarm.py backend ready --ledger` will.
+
+## C.4 Release work to the swarm
 
 ```bash
-./bin/swarm.py backend seed plan.yaml            # dry run: what would change
-./bin/swarm.py backend seed plan.yaml --apply    # humans only; asks first (--yes skips)
-./bin/swarm.py plan sync
+./bin/swarm.py backend ready --ledger          # what is claimable now
+./bin/swarm.py backend set-status GH-12 ready  # release one task
 ```
 
-- **Idempotent.** Each issue gets a hidden `<!-- dags-seed: ID -->` marker.
-  A re-run creates only the missing labels and issues, and adds only the
-  missing parent and "blocked by" links.
-- **Never rewrites.** Existing titles, bodies and labels are left alone.
-  Differences, and links the plan doesn't list, are reported as notes.
-- **Interrupted runs.** If a run stops part-way, run the same command again.
-  After applying, the command re-reads the tracker and fails if anything
-  still differs.
+A `human-must-scope` task will never be claimed by an AI worker, so setting it
+`ready` without a human to take it leaves it claimable and idle (§7.3).
 
-## C.4 Pick a worker for a claimed task
+## C.5 Work a task yourself
 
-- **On the Board:** the prompt appears by itself. Press `a` (claude),
-  `b` (IntelliJ + Human) or `c` (VSCode + Human). Press `Esc` to postpone and
-  `w` to bring it back.
-- **From the shell:** `./bin/swarm.py task worker GH-7 c`.
-
-## C.5 Work a task yourself (IntelliJ or VSCode)
-
-The IDE opens on `.worktrees/GH-7` with `.swarm-task/README.md` open. In the
-IDE's terminal, from the worktree root:
+Choose `vscode` or `intellij` when the Board asks. Your IDE opens on the worktree
+with `.swarm-task/README.md` as the first tab. Then:
 
 ```bash
-.swarm-task/swarm-task plan                 # writes .swarm-task/plan.md; edit it
-.swarm-task/swarm-task plan --submit        # auto-pr: approved; otherwise wait for a human
-.swarm-task/swarm-task status               # shows when the plan is approved
-.swarm-task/swarm-task implement            # prints the plan, checkpoint, reviewer feedback
-.swarm-task/swarm-task note --tried "cached client" --remaining "parser" "tests"
-.swarm-task/swarm-task note --summary "Adds a 60s feed poller" --risk "rate limits"
-.swarm-task/swarm-task done                 # tests → commit → push → PR (by the bot)
+.swarm-task/swarm-task plan           # writes plan.md — edit it
+.swarm-task/swarm-task plan --submit
+.swarm-task/swarm-task wait           # blocks until the plan is reviewed
+.swarm-task/swarm-task implement
+.swarm-task/swarm-task note --summary "..." --tried "..." --remaining "..."
+.swarm-task/swarm-task done
 ```
 
-If you need a decision, run `.swarm-task/swarm-task block "question"` and stop.
-If you're busy but not stuck when asked "still working?", answer with
-`./bin/swarm.py task still-working GH-7` (from the coordination repo). To give
-a task back: `./bin/swarm.py task release GH-7`.
+Nothing reaches a reviewer until `plan --submit` runs. If you forget, the Board
+spots the unsubmitted plan and offers to submit it for you (§10.2).
 
 ## C.6 Review a plan
 
-- **On the Board:** select the task in *Plans awaiting review*, press `v`, then
-  **Approve** or **Request changes**.
-- **From the shell:**
+`v` on the Board. Approve, or send it back with a note — the note reaches the
+worker (§9.3). A plan edited after approval needs approving again (D20).
 
-  ```bash
-  ./bin/swarm.py task show GH-7              # plan status, checkpoint
-  ./bin/swarm.py task approve-plan GH-7
-  ./bin/swarm.py task approve-plan GH-7 --reject --note "use the push feed"
-  ```
+## C.7 Review a pull request
 
-The plan is also posted as a comment on the ticket.
+`O` opens it. Request changes to send it back to the queue with the feedback
+attached; `fix:`, `explain:` and `reject-approach:` lines are the actionable
+items (§9.4). `m` approves and merges, warning first if the checks are red or
+pending. With several pull requests open, merge one at a time and let the default
+branch's workflow go green between merges (§11.4).
 
-## C.7 Review, merge, request changes, or reject a PR
-
-- **Merge:** select the task in *Awaiting review* and press `m`, or run
-  `./bin/swarm.py task merge GH-7`. This approves and squash-merges under your
-  own GitHub account, then records Done. Merging in the GitHub web UI works
-  too; the poller records it.
-- **Request changes** with tagged lines:
-
-  ```bash
-  gh pr review 42 --repo org/project-backend --request-changes \
-    -b $'fix: handle cancelled matches\nexplain: why a second cache?'
-  ```
-
-  The task goes back to the queue and resumes from its checkpoint. The next
-  `done` updates the same PR.
-- **Reject the approach:**
-  1. `gh pr close 42 --repo org/project-backend`. The ticket becomes `blocked`.
-  2. Rewrite the ticket and add the lesson to `CONVENTIONS.md`.
-  3. Set `swarm:status:ready` again.
-
-## C.8 Control machines and the quota
-
-| Goal | Board | Shell |
-|---|---|---|
-| Stop claiming new work here | `p` | `./bin/swarm.py pause` |
-| Resume | `r` | `./bin/swarm.py resume` |
-| Change this machine's share | `t` | `./bin/swarm.py throttle 1` |
-| Pause another machine | — | `./bin/swarm.py pause --machine mbp-joe-1a2b` |
-| Stop this machine | `s` | `./bin/swarm.py stop` |
-| Change global N | `n` | `./bin/swarm.py quota set 4 --reason "budget"` |
-| Halt a whole epic | — | Set `swarm:status:blocked` on the epic in the tracker |
-
-## C.9 Settle conflicts
-
-- **Freeze a task:** `f`, or
-  `./bin/swarm.py task freeze GH-7 --reason "spec changing"`. Nobody may own it
-  until you lift the freeze.
-- **Unfreeze:** `f` again, or `./bin/swarm.py task unfreeze GH-7`.
-- **Award a task:** `a` in *Needs arbitration*, or
-  `./bin/swarm.py task reassign GH-7 laptop-b --reason "…"`. A machine name
-  picks that machine's latest claim.
-- **Give one machine priority on an epic:** `e`, or
-  `./bin/swarm.py epic takeover GH-1`. Undo with `e` or `epic release`.
-
-## C.10 Run two "machines" on one computer (the POC set-up)
+## C.8 Control the swarm
 
 ```bash
-git clone https://github.com/org/project-swarm-ensemble ~/dags/mac-a
-git clone https://github.com/org/project-swarm-ensemble ~/dags/mac-b
-cd ~/dags/mac-a && ./bin/swarm.py --identity mac-a start --quota-share 2
-cd ~/dags/mac-b && ./bin/swarm.py --identity mac-b start --quota-share 2
-./bin/swarm.py quota set 3
-./bin/swarm.py --identity mac-a board        # one Board per clone
+./bin/swarm.py pause                  # claim nothing new; keep what is held
+./bin/swarm.py resume
+./bin/swarm.py throttle 2             # this machine's share, live
+./bin/swarm.py quota set 4            # the global cap, for everyone
+./bin/swarm.py stop
 ```
 
-On a fresh clone, `--identity` is remembered in `.swarm/identity`, so later
-commands in that clone need no flag. On a clone that already has a name, the
-flag applies to that one command only, with a warning. Use
-`./bin/swarm.py identity set mac-a` to rename a clone; it refuses while the
-old name still holds live claims. Both clones can map the same code repos in
-their `.swarm/local.yaml`; worktrees are separate per clone.
+Share 0 drains and releases rather than freezing (§7.2). After a `stop` and
+`start`, check whether the machine is still paused — until `#30` lands, a pause
+outlives a restart and a restarted machine claims nothing while looking healthy.
 
-## C.11 Troubleshooting
+## C.9 Settle a conflict
 
-| Symptom | Fix |
+```bash
+./bin/swarm.py task freeze GH-12 --reason "wait for the schema decision"
+./bin/swarm.py task unfreeze GH-12
+./bin/swarm.py task reassign GH-12 <claim-id|machine> --reason "has the toolchain"
+./bin/swarm.py epic takeover E1      # one machine works a whole epic
+```
+
+## C.10 Two machines on one computer
+
+Two clones of the coordination repository, each with its own identity, both
+pushing to the same remote. Give each its own code-repository checkouts in
+`.swarm/local.yaml`: if both map the *same* checkout, a task cannot move between
+them, because one branch can only be checked out in one worktree (§7.4, `#13`).
+
+## C.11 Upgrade a swarm after a merge
+
+```bash
+git -C <code repo> pull --ff-only
+cd <coordination repo> && ./bin/swarm.py stop
+tools/upgrade-from-source.sh <code repo>      # copies bin/ and templates/
+git diff --stat && git add -A && git commit -m "Upgrade to <sha>"
+./bin/swarm.py identity show                  # forces the venv rebuild visibly
+./bin/swarm.py start --quota-share 2
+./bin/swarm.py resume                         # until #30 lands
+```
+
+The venv rebuild is silent and takes minutes (§5.2), which is why it is worth
+triggering on purpose rather than discovering it inside a test run.
+
+## C.12 Troubleshooting
+
+| Symptom | Likely cause |
 |---|---|
-| `'x' is not listed in humans.yaml` | Add yourself to `humans.yaml`, or set `human:` in `.swarm/local.yaml`. |
-| `prerequisites missing: gh features` | `brew upgrade gh`: `gh issue edit` needs `--add-blocked-by`. |
-| `no worker (bot) GitHub token found` | Store it (C.2 step 3), or export `DAGS_WORKER_GH_TOKEN`. |
-| `'swarm:status:…' not found … backend init` (in `.swarm/swarm.log`) | `./bin/swarm.py backend init --apply`. |
-| `backend.yaml github.repo must be OWNER/NAME` | Replace the `OWNER/…` placeholders. |
-| `.swarm/venv looks broken` | Delete `.swarm/venv` and run again. Manual install is in Ch.5.2. |
-| `the plan isn't approved yet` | Submit the plan (`plan --submit`) and get it approved (C.6). |
-| `tests failed … not opening a PR` | Fix the tests; `done` is safe to run again. |
-| `no changes to submit` | Nothing was changed or committed on `swarm/<TASK>`. |
-| `this machine (…) does not own …` | You lost the task (race, freeze or lease). Stop; see `task show`. |
-| A task sits in *claimed, awaiting worker* | Choose a worker (C.4) or release it. |
-| A task never becomes ready | `task show`: look at `ready`, dependencies and `arbitration`. `backend ready --ledger`: is the tracker holding it back? Does it have a target repo? |
-| Nothing happens at all | `status`: is the daemon running? Read `.swarm/swarm.log` and `.swarm/notifications.log`. Set `DAGS_DEBUG=1` for tracebacks. |
-| Branch protection "set" but merges still allowed | The repo is private on GitHub Free (Ch.5.5). |
+| Machine runs, claims nothing | A pause survived a restart (§8.1); or everything is `blocked`; or no share |
+| Nothing claimable though issues say `ready` | Dependencies are not done — `ready` is permission (§3.2) |
+| `status` hangs | A `gh` call waiting on an unreachable GitHub; no timeout yet (`#60`) |
+| A merged pull request still shows as open | The poller's one fetch failed (`#56`) |
+| Dispatch fails every cycle | Another clone holds the branch's worktree (`#13`) |
+| A "targeted" test run takes as long as a full one | A silent venv rebuild, or a scope passed as a filter (§11.2) |
+| A worker never notices its plan was approved | The contract still says to poll (`#58`) |
+| `git` refuses: `index.lock` exists | A tool left a stale lock; remove it when no git is running |
 
-
-## C.12 Take a machine out of rotation
-
-Three levers, from the Board (`?` explains them):
-
-- **Pause** (`p`): the machine claims nothing new and keeps heartbeating the
-  claims it holds. The record is in `control/`, so every machine sees it.
-  `r` resumes. In the worker prompt, "Not now, and pause this machine" does this.
-- **Share 0** (`t`, then 0, confirmed): claims nothing new and *releases* what
-  it holds. A claim with no worker goes at once; a running one checkpoints and
-  goes a lease later. It survives a daemon restart, since the share lives in the
-  ledger. `t` with a larger number undoes it.
-- **Stop** (`s`): the daemon shuts down; claims lapse when their leases expire.
-
-Pause for stepping away; share 0 to hand the work to other machines.
+\newpage
 
 # Appendix D. Reference
 
-## D.1 Commands (`./bin/swarm.py`)
+## D.1 Commands
 
-Global options go **before** the command: `--root PATH`, `--identity NAME`,
-`-v`.
+Forty-two commands, derived from `bin/dags/cli.py`. Anything marked **human**
+refuses to run unless the operator matches a name in `humans.yaml`.
 
-| Command | Purpose |
+### The machine
+
+| Command | What it does |
 |---|---|
-| `start [--quota-share N] [--poll-interval 60s] [--cycle-interval 30s] [--default-worker claude\|intellij\|vscode] [--attach] [--no-poller]` | Join the swarm and start the daemon. `--quota-share` defaults to 1 |
-| `stop [--wait S]` | Stop this machine's daemon (stop record + SIGTERM) |
-| `pause` / `resume [--machine M]` | Stop or resume claiming |
-| `throttle N [--machine M]` | Set the quota share live |
-| `status [--json]` | Status panel |
-| `board [--web] [--port 4590]` | Swarm Board |
-| `protect REPO [--branch main] [--approvals 1] [--apply] [--yes]` | Branch protection (dry run by default) |
-| `plan sync` | Mirror the tracker into `tasks/` |
-| `backend get-task T` / `backend ready [--ledger]` / `backend set-status T S` / `backend init [--apply]` | Talk to the tracker; `init` also labels issues the plan is missing (D26) |
-| `backend adopt T [--autonomy TIER]` | Bring one unlabelled issue into the plan |
-| `backend seed FILE [--apply] [--yes]` | Create a plan file's epics, tasks and links in the tracker (dry run by default) |
-| `quota set N [--reason]` / `quota show` | Global N |
-| `epic takeover E` / `epic release E` | Soft epic priority |
-| `identity show` / `identity set NAME [--force]` | Show or rename this clone's machine identity |
-| `task list [--all] [--json]` / `task show T` | Inspect tasks (`--json`: one object per row, same fields as `task show`) |
-| `task worker T a\|b\|c` | Choose a worker |
-| `task freeze T --reason` / `task unfreeze T` / `task reassign T WINNER --reason` | Arbitration |
-| `task approve-plan T [--reject] [--note]` | Plan review |
-| `task merge T [--force]` | Approve & merge |
-| `task open T [--pr]` | Open the ticket or PR |
-| `task release T` / `task still-working T` | Give a task back / answer the idle prompt |
-| `task context\|note\|submit-plan\|block\|done …` | Used by the skill |
+| `start [--quota-share N] [--poll-interval] [--cycle-interval]` | Write a `start` record and spawn the daemon |
+| `stop [--wait S]` | Shared stop record plus a signal |
+| `pause [--machine M]` / `resume [--machine M]` | Claim nothing new / undo. Idempotent |
+| `throttle N [--machine M]` | Change a machine's share, live |
+| `status [--json]` | The status panel |
+| `log [--task T] [--machine M] [--limit N] [--json] [--heartbeats]` | The ledger's history in plain English, not `git log` |
+| `board [--web]` | The Swarm Board |
+| `identity show` / `identity set NAME [--force]` | This machine's identity |
 
-**Other entry points:**
+### The plan and the tracker
 
-- `.swarm/venv/bin/python bin/poll.py [--once] [--interval S] [--identity M]`:
-  standalone poller.
-- `.swarm/venv/bin/python bin/board.py [--root] [--identity] [--refresh S]`:
-  the Board.
-- `bin/dev-setup.sh [pytest args]`: developer venv and test suite.
+| Command | What it does |
+|---|---|
+| `backend ready [--ledger]` | What the backend offers; `--ledger` also applies ledger readiness |
+| `backend get-task KEY` | One task as the backend sees it |
+| `backend set-status KEY STATUS` | Set the `swarm:status` label |
+| `backend adopt KEY [--autonomy T]` | Bring one issue into the plan |
+| `backend init [--apply]` | Create the swarm labels (**human** for `--apply`) |
+| `backend seed FILE [--apply] [--yes]` | Seed a plan file (**human** for `--apply`) |
+| `protect REPO [--branch] [--approvals] [--apply] [--yes]` | Branch protection (**human** for `--apply`) |
 
-**The skill:** `.swarm-task/swarm-task plan [--submit] [--force] | status |
-implement | note [--summary] [--tried …] [--remaining …] [--question …]
-[--risk …] | block "Q" | done`.
+### Quota and priority
+
+| Command | What it does |
+|---|---|
+| `quota show` / `quota set N [--reason]` | The global cap (**human** to set) |
+| `epic takeover EPIC` / `epic release EPIC` | Reserve an epic for this machine (**human**) |
+
+### Tasks — inspecting
+
+| Command | What it does |
+|---|---|
+| `task list [--all] [--json]` | Every task, as a table or one object per row |
+| `task show KEY` | One task in detail, as JSON |
+| `task context KEY` | What the injected skill reads |
+| `task events KEY --claim ID` | Pending news for one claim |
+
+### Tasks — human levers
+
+| Command | What it does |
+|---|---|
+| `task worker KEY a\|b\|c` | Choose the worker for a claim this machine owns |
+| `task approve-plan KEY [--reject] [--note]` | The plan gate (**human**) |
+| `task answer KEY "..."` | Answer a worker's question (**human**) |
+| `task answer-tests KEY --scope S` | Answer a test-scope proposal (**human**) |
+| `task freeze KEY --reason` / `task unfreeze KEY` | Nobody owns it / undo (**human**) |
+| `task reassign KEY WINNER --reason` | Award a task to one claimant (**human**) |
+| `task merge KEY [--force]` | Approve and merge (**human**) |
+| `task release KEY` | Give the claim back |
+| `task still-working KEY` | Answer the idle prompt |
+| `task open KEY [--pr]` | Open the ticket or the pull request |
+
+### Tasks — the worker side
+
+Called by `.swarm-task/swarm-task`, rarely by hand.
+
+| Command | What it does |
+|---|---|
+| `task submit-plan KEY --file F` | Record the plan; self-approve if `auto-pr` |
+| `task note KEY [--summary] [--tried] [--remaining] [--question] [--risk]` | Update the checkpoint |
+| `task block KEY "question"` | Ask a human and stop |
+| `task propose-tests KEY --worktree W [--accept]` | Propose a test scope from the diff |
+| `task test-run KEY --worktree W` | Run the agreed scope |
+| `task done KEY --worktree W [--skip-tests]` | The pipeline of §11.3 |
 
 ## D.2 `backend.yaml`
 
-| Key | Meaning | Default |
+| Key | Default | Meaning |
 |---|---|---|
-| `backend` | `github` (or `fake` for demos; `jira` deferred) | — |
-| `github.repo` | Plan repo `OWNER/NAME` | — |
-| `github.use_issue_types` | Use GitHub issue types instead of `type:` labels | `false` |
-| `github.cache_seconds` | How long an issue listing is reused | `20` |
-| `fake.path` | YAML file backing the fake tracker | `fake-backend.yaml` |
-| `repos.<OWNER/NAME>.base` | Base branch for worktrees and PRs | `main` |
-| `repos.<OWNER/NAME>.test_command` | Run by `done` before the PR | none |
-| `repos.<OWNER/NAME>.test_scope_command` | Base command for a scoped test run: the test files are appended. Needed when `test_command` adds its own paths (as `./bin/dev-setup.sh` does), else a scoped run runs everything | `test_command` |
-| `default_repo` | Repo for tasks without a `repo:` label | none |
-| `plan_scope` | `labelled`: only issues with a `swarm:`/`type:` label (and their epics) are in the plan; `all`: every issue (D26) | `labelled` |
-| `epic_repos.<epic key or short>` | Per-epic default repo | none |
-| `swarm.default_quota` | Global N without a `quota/` record | `3` |
-| `swarm.lease_minutes` / `heartbeat_minutes` | Lease window / heartbeat interval | `15` / `3` |
-| `swarm.max_retries` | Failures before the autonomy downgrade | `3` |
-| `swarm.human_idle_hours` | Idle limit | `8` |
-| `swarm.thrash_threshold` | Conflicts before "needs arbitration" | `2` |
+| `backend` | — | `github` or `fake` |
+| `github.repo` | — | The plan repository |
+| `github.use_issue_types` | `false` | Use GitHub issue types instead of `type:` labels |
+| `github.cache_seconds` | `20` | Read cache |
+| `plan_scope` | `labelled` | `labelled` or `all` (§3.4) |
+| `repos.<R>.base` | `main` | The branch tasks target |
+| `repos.<R>.test_command` | — | What `done` runs |
+| `repos.<R>.test_scope_command` | — | How to run a subset, if different |
+| `repos.<R>.checks_timeout` | `300` | Seconds `done` waits for checks |
+| `repos.<R>.worktrees` | `inside` | Where worktrees go (§7.3). **Specified, not built** (D32) |
+| `default_repo` | — | For tasks with no `repo:` label |
+| `swarm.default_quota` | `3` | Global N |
+| `swarm.lease_minutes` | `15` | Claim expiry |
+| `swarm.heartbeat_minutes` | `3` | Capped at `lease / 3` |
+| `swarm.max_retries` | `3` | Failures before the tier drops |
+| `swarm.human_idle_hours` | `8` | Before "still working?" |
+| `swarm.thrash_threshold` | `2` | Conflict cycles before arbitration |
 
 ## D.3 `humans.yaml`
 
-```yaml
-humans:
-  - name: jane                 # the name used in records and the feed
-    github: jane-gh            # matched against `gh api user`
-    emails: [jane@example.com] # commit author emails (for the D16 check)
-```
+The people whose records the swarm honours. Committed, so the set is reviewed.
+A plan review or arbitration naming anyone else is ignored (D16).
 
-## D.4 `.swarm/local.yaml` (per machine, never committed)
+## D.4 `.swarm/local.yaml` — per machine, never committed
 
 | Key | Meaning |
 |---|---|
-| `human` | Operator name, if your GitHub login isn't in `humans.yaml` |
-| `repos.<OWNER/NAME>` | Path of an existing checkout to use |
-| `worker_token` | `{keychain_service: dags-worker-token}` (default), `{env: VAR}`, or `none` |
-| `bot.login`, `bot.email` | Author identity for worker commits |
-| `terminal_app` | `Terminal` (default) or `iTerm` |
-| `claude_bin`, `claude_args` | How the claude worker is launched |
-| `intellij_app` | e.g. `IntelliJ IDEA CE` |
-| `code_bin` | Path to VS Code's `code` |
-| `notify.desktop`, `notify.webhook` | Extra notification channels |
+| `human` | This operator's name; otherwise matched via `gh api user` |
+| `repos.<R>` | An existing checkout to use instead of cloning |
+| `worker_token.keychain_service` / `.env` / `none` | Where the bot token comes from |
+| `bot.login`, `bot.email` | Commit authorship for worker commits |
+| `terminal_app`, `intellij_app` | Which application a launcher drives |
+| `notify.desktop`, `notify.webhook` | Opt-in notification channels |
 
-**Environment variables:**
-
-| Variable | Effect |
-|---|---|
-| `DAGS_NO_VENV=1` | Skip the venv bootstrap |
-| `DAGS_DEV=1` | Include dev requirements in the venv |
-| `DAGS_ROOT` | Coordination repo path (`swarm.py` only) |
-| `DAGS_IDENTITY` | Machine identity (`swarm.py` only) |
-| `DAGS_HUMAN` | Operator name |
-| `DAGS_WORKER_GH_TOKEN` | Bot token |
-| `DAGS_DEBUG=1` | Show full tracebacks |
-
-## D.5 Labels (tracker)
+## D.5 Labels
 
 | Label | Values |
 |---|---|
 | `swarm:status:` | `ready`, `claimed`, `in-progress`, `awaiting-review`, `blocked`, `done` |
-| `swarm:autonomy:` | `auto-pr`, `human-must-review` (default), `human-must-scope` |
-| `repo:` | `OWNER/NAME` of the target code repo |
-| `type:` | `epic`, `task` (when issue types aren't used) |
+| `swarm:autonomy:` | `auto-pr`, `human-must-review`, `human-must-scope` |
+| `repo:` | `OWNER/NAME` |
+| `type:` | `epic`, `task` |
+
+Default autonomy is `human-must-review`. `ready` is permission, not availability
+(§3.2).
 
 ## D.6 Ledger records
 
-| Record | Key fields |
-|---|---|
-| `meta.yaml` | `key`, `short`, `title`, `epic`, `dependencies`, `autonomy`, `repo`, `is_epic`, `issue_url`, `coordination_ref` |
-| `meta/<m>-<c>.yaml` | Changed fields only; `downgrades` after an autonomy downgrade |
-| `claims/<m>-<c>.yaml` | `claim_id`, `task`, `machine`, `human`, `worker`, `logical_clock`, `wall_utc` |
-| `withdrawals/<m>-<c>.yaml` | `claim_id`, `reason` (`lost-race`, `arbitration`, `released`, `quota`, or a failure), `winner` |
-| `heartbeats/<m>.yaml` | `claim_id`, `logical_clock`, `wall_utc` |
-| `checkpoint.yaml` | `claim_id`, `machine`, `worker`, `worker_label`, `branch`, `summary`, `tried`, `remaining`, `open_questions`, `risks`, `plan_md`, `plan_sha`, `plan_self_approved`, `needs_human`, `pause_requested`, `pr_url`, `previous_claims`, `dispatched_utc`, `finished_utc`, `human_confirmed_utc` |
-| `arbitration/human-<n>-<c>.yaml` | `human`, `winner` (claim id or `none`), `reason`, optional `action: withdraw` |
-| `plan-reviews/human-<n>-<c>.yaml` | `human`, `plan_sha`, `decision` (`approved` / `changes-requested`), `note` |
-| `completions/<m>-<kind>-<c>.yaml` | `kind` (`pr-opened`, `done`, `reopened`, `rejected`, `replanned`), `pr_url`, plus: `claim_id`, `worker`, `commit` (pr-opened); `merged_by`, `merged_utc`, `imported`, `reason` (done); `review_id`, `reviewer` (reopened) |
-| `events/<m>-<kind>-<c>.yaml` | `kind` (`plan-submitted`, `needs-human`, `worker-dispatched`, `awaiting-worker`, `still-working`, `pause-requested`, `pause-lifted`), `claim_id`, plus: `plan_sha`, `self_approved`, `worker` (plan-submitted); `question` (needs-human); `worker`, `human` (worker-dispatched); `human` (still-working); `grace_s` (pause-requested). Read only by the feed; same clock as the checkpoint write it accompanies |
-| `control/<m>-<action>-<c>.yaml` | `machine`, `human`, `action` (`start`, `pause`, `resume`, `throttle`, `stop`), `quota_share`, `default_worker` (start) |
-| `priority/<m>-<epic>-<action>-<c>.yaml` | `epic`, `machine`, `human`, `action` (`takeover` / `release`) |
-| `quota/<human>-<c>.yaml` | `human`, `n`, `reason` |
-
-(`<m>` = machine, `<c>` = logical clock, `<n>` = human name)
-
-## D.7 Task states (derived, never stored)
-
-| State | Meaning | Uses quota |
+| Directory | Written by | Appended or replaced |
 |---|---|---|
-| `open` | No live claim. Marked `(ready)` when the ledger's checks pass (dependencies done, no arbitration in force, no open or rejected PR). The scheduler also needs the tracker to list it as ready: `backend ready --ledger` shows both | no |
-| `claimed` | Won by a machine; no worker yet | yes |
-| `in-progress` | Worker dispatched | yes |
-| `awaiting-review` | PR open | no |
-| `done` | PR merged (or closed in the tracker) | no |
-| `frozen` | Arbitration `winner: none` | no |
-| `rejected` | PR closed; waiting for re-planning | no |
-| `arbitrated-stale` | Awarded to a claim whose lease has expired | no |
+| `tasks/<E>/<T>/meta.yaml` | Plan sync, once | Never rewritten |
+| `…/meta/` | Plan sync | Appended; later revisions win per key |
+| `…/claims/` | A machine | Appended |
+| `…/withdrawals/` | A machine | Appended |
+| `…/heartbeats/<machine>.yaml` | That machine only | Replaced |
+| `…/checkpoint.yaml` | The claim's owner only | Replaced |
+| `…/completions/` | A machine or the poller | Appended |
+| `…/plan-reviews/` | A human | Appended |
+| `…/arbitration/` | A human | Appended |
+| `…/events/` | A machine | Appended |
+| `…/test-scope/` | A worker and a human | Appended |
+| `control/` | A machine or a human | Appended |
+| `priority/` | A human | Appended |
+| `quota/` | A human | Appended |
+
+Withdrawal reasons written by the scheduler: `lost-race`, `no-worker-chosen`,
+`quota`, `dispatch-failed`. A worker-side release passes its own reason
+(`work.py:211`). Expiry writes no record at all — it is computed (§6.5). Completion kinds: `pr-opened`, `done`,
+`reopened`, `rejected`, `replanned`.
+
+## D.7 Task states — derived, never stored
+
+`open`, `claimed`, `in-progress`, `awaiting-review`, `done`, `rejected`,
+`frozen`, `arbitrated-stale`. Active for quota purposes: `claimed` and
+`in-progress`.
+
+Every state is computed by `resolve.task_state` from the records above. No file
+holds a task's state, which is why two machines cannot disagree about it without
+disagreeing about the ledger itself.
 
 ## D.8 Files on a machine
 
-| Path | Content |
+| Path | Committed |
 |---|---|
-| `.swarm/venv/` | Python environment (`.dags-stamp.json` records what it was built for) |
-| `.swarm/identity`, `.swarm/operator` | Cached machine name and operator |
-| `.swarm/local.yaml` | Machine settings (D.4) |
-| `.swarm/daemon.pid`, `.swarm/daemon.json`, `.swarm/swarm.log` | Daemon process ID, thread status, log |
-| `.swarm/notifications.log` | Every notification |
-| `.swarm/poller-state.json` | The poller's memory between cycles |
-| `.swarm/git.lock` | Serialises git operations between processes |
-| `.swarm/repos/OWNER/NAME` | Code repos cloned by DAGS |
-| `.worktrees/<TASK>/` | Task worktrees; `.swarm-task/` inside while a worker is active. Removed once the task is done or rejected |
-
-## Worker test runs: ask first (GH-50)
-
-A worker doesn't run tests on its own. `swarm-task test --propose` maps its diff to tests and
-records a question in the task's `test-scope/` directory: three options (`targeted`,
-`neighbours` = targeted plus tests of modules that import the changed ones, one hop, and
-`full`), a recommendation, a one-line reason per test file and the time from `test_durations`
-(a floor: only the slowest tests are recorded). `tests/map.yaml` (glob to test files) is read
-first; a `bin/` module with no entry falls back to the tests that import it (a static scan, so
-dynamic imports are missed). A file nothing maps, or a change to `tests/conftest.py` or
-`tests/fakes.py`, recommends `full`; a docs-only diff recommends no tests.
-
-A human answers on the Board (`x`) or with `swarm.py task answer-tests KEY --scope ...`. Until
-then `swarm-task test` refuses; afterwards it runs only the answered scope. On an `auto-pr`
-task the worker may accept its own recommendation (`swarm-task test --propose --accept`).
-
-`done` still runs the full `test_command`, unless a human's answer was recorded with
-`--targeted-is-enough` and the changed files are still the ones it was about. Then `done` runs
-the answered scope instead and the PR description says the full suite did not run. A worker's
-own acceptance never does this.
+| `bin/`, `templates/`, `backend.yaml`, `humans.yaml` | Yes |
+| `tasks/`, `control/`, `priority/`, `quota/` | Yes |
+| `.swarm/` | No |
+| `<code repo>/.worktrees/<TASK>` | No (`info/exclude`) |
+| `<worktree>/.swarm-task/` | No (`info/exclude`), removed when the pull request opens |
