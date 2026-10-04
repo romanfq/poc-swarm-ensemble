@@ -123,7 +123,7 @@ def test_freeze_unfreeze_and_takeover(setup):
             await until(pilot, lambda: isinstance(app.screen, board.ChoiceScreen))
             await pilot.press("escape")
             await until(pilot, lambda: app.query_one("#claims").row_count == 1)
-            app.query_one("#claims").focus()
+            app.show_panel("claims")
             await pilot.press("f")
             await until(pilot, lambda: isinstance(app.screen, board.InputScreen))
             await pilot.press(*"hold", "enter")
@@ -157,7 +157,7 @@ def test_review_plan_and_merge(setup, monkeypatch):
         async with app.run_test(size=(160, 50)) as pilot:
             plans = app.query_one("#plans")
             await until(pilot, lambda: plans.row_count == 1)
-            plans.focus()
+            app.show_panel("plans")
             await pilot.press("v")
             await until(pilot, lambda: isinstance(app.screen, board.PlanScreen))
             await pilot.click("#approved")
@@ -167,7 +167,7 @@ def test_review_plan_and_merge(setup, monkeypatch):
             L.complete(a, d, "pr-opened", claim_id=cid, pr_url=pr["url"], worker="claude")
             review = app.query_one("#review")
             await until(pilot, lambda: review.row_count == 1)
-            review.focus()
+            app.show_panel("review")
             await pilot.press("O")
             await until(pilot, lambda: opened == [pr["url"]])
             await pilot.press("m")
@@ -301,15 +301,17 @@ def test_table_cells_open_their_links(setup):
             await until(pilot, lambda: "doesn't exist here" in log_text(panel))
             review = app.query_one("#review")
             await until(pilot, lambda: review.row_count == 1)
+            app.show_panel("review")
+            await pilot.pause()
             x = sum(c.get_render_width(review) for c in review.ordered_columns[:2]) + 2
             assert review.cursor_row == 0                  # the only row is highlighted, so
-            await pilot.click("#review", offset=(x, 1))    # a click on its PR cell opens the PR
+            await pilot.click("#review", offset=(x + 1, 2))    # a click on its PR cell opens the PR
             await until(pilot, lambda: opened == [pr["url"]])
-            await pilot.click("#review", offset=(2, 1))    # and its task cell opens the ticket
+            await pilot.click("#review", offset=(3, 2))    # and its task cell opens the ticket
             await until(pilot, lambda: len(opened) == 2)
             claims = app.query_one("#claims")
             await until(pilot, lambda: claims.row_count >= 1)
-            claims.focus()
+            app.show_panel("claims")
             await pilot.press("enter")                      # Enter on a claims row: its ticket
             await until(pilot, lambda: len(opened) == 3)
             key = app.selected_key(claims)
@@ -369,4 +371,65 @@ def test_share_zero_asks_for_confirmation(setup):
             await until(pilot, lambda: isinstance(app.screen, board.ConfirmScreen))
             await pilot.press("y")
             await until(pilot, lambda: any(d.get("quota_share") == 0 for d in records(a.root, "control")))
+    run(go())
+
+
+def test_board_stylesheet_and_no_css_colours():
+    import re
+    from pathlib import Path
+    tcss = Path(board.__file__).with_name("board.tcss")
+    assert tcss.exists() and "$rust" in tcss.read_text()
+    assert not re.search(r"[:\s]#[0-9a-fA-F]{6}\b", tcss.read_text())        # tokens, no literals
+    assert not getattr(board.BoardApp, "CSS", "")                        # the class holds no CSS at all
+    assert board.PALETTE["navy"] == "#15243C"
+
+
+def test_focused_panel_has_room_and_footer_fits(setup):
+    world, a, app, _ = setup
+
+    async def go():
+        async with app.run_test(size=(100, 30)) as pilot:
+            await until(pilot, lambda: isinstance(app.screen, board.ChoiceScreen))
+            await pilot.press("escape")
+            claims = app.query_one("#claims")
+            await until(pilot, lambda: claims.row_count == 1)
+            assert claims.size.height - 3 >= 12                       # rows visible, minus border + header
+            assert claims.border_title == "live claims (1)"
+            assert app.query_one("#review").has_class("collapsed")
+            await pilot.pause()
+            footer = app.query_one("Footer")
+            assert footer.size.height == 1
+            assert max(w.region.right for w in footer.query("FooterKey")) <= 100
+    run(go())
+
+
+def test_tab_cycles_panels(setup):
+    world, a, app, _ = setup
+    d = rv.index(a.root)["T1"]
+    work.choose_worker(a, d, "claude", launch=world.launch, platform="darwin")
+    work.submit_plan(a, d, "# The plan\nDo it.")
+
+    async def go():
+        async with app.run_test(size=(100, 30)) as pilot:
+            await until(pilot, lambda: app.query_one("#claims").row_count == 1)
+            await until(pilot, lambda: app.counts.get("plans") == 1)
+            await pilot.press("tab")
+            assert app.panel == "plans"                               # only panels with rows
+            await pilot.press("tab")
+            assert app.panel == "claims"
+            assert not app.query_one("#idle").display
+    run(go())
+
+
+def test_idle_block_when_nothing_is_live(world):
+    a = world.machine("mac-a")
+    app = board.BoardApp(a, refresh_s=0.2, launch=world.launch, platform="darwin",
+                         use_gh=False, run_poller=False)
+
+    async def go():
+        async with app.run_test(size=(100, 30)) as pilot:
+            await until(pilot, lambda: app.snap is not None)
+            assert app.query_one("#idle").display
+            assert not app.query_one("#claims").display
+            assert "start --quota-share 1" in shown(app.query_one("#idle"))
     run(go())

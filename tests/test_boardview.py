@@ -221,3 +221,15 @@ def test_merge_prompt_warns_about_red_and_pending_checks():
     text, over_red = boardview.merge_prompt(url, "T1", "pending")
     assert "still running" in text and not over_red
     assert boardview.merge_prompt(url, "T1", "passing") == (f"Approve and squash-merge {url} (T1)?", False)
+
+
+def test_lease_bar_carries_the_value_without_colour():
+    lease = 900
+    soon = boardview.lease_cell(lease - 90, lease)          # 90 s left
+    later = boardview.lease_cell(60, lease)                 # 14 min left
+    assert soon.endswith(" 90s") and later.endswith(" 14m") and soon != later
+    assert boardview.bar_text(0.9).count("█") > boardview.bar_text(0.07).count("█")
+    assert boardview.bar_text(1.0) == "█" * 8 and boardview.bar_text(0.0) == "░" * 8
+    assert len(boardview.bar_text(0.43)) == 8
+    assert boardview.lease_cell(None, lease) == "-"
+    assert [boardview.level_of(f) for f in (None, 0.1, 0.6, 0.95)] == ["plain", "ok", "warn", "crit"]
