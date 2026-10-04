@@ -118,6 +118,7 @@ class Snapshot:
     share: int | None = None
     machines: dict[str, dict] = field(default_factory=dict)
     takeovers: dict[str, set[str]] = field(default_factory=dict)
+    lease_s: float = 15 * 60
 
     def by_key(self, key: str) -> TaskView | None:
         low = key.lower()
@@ -174,7 +175,7 @@ def take(ctx, now: datetime | None = None, share: int | None = None) -> Snapshot
     lease = ctx.settings.lease_s
     humans = ctx.human_names
     idx = resolve.index(root)
-    snap = Snapshot(root=root, now=now, machine=ctx.identity)
+    snap = Snapshot(root=root, now=now, machine=ctx.identity, lease_s=lease)
     for key, d in sorted(idx.items(), key=lambda kv: kv[1].as_posix()):
         meta = resolve.read_meta(d)
         res = resolve.resolve(d, now, lease, humans)

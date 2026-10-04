@@ -9,15 +9,23 @@ import json
 import re
 import threading
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 from dags import daemon, feed, snapshot
 
-CLAIM_COLUMNS = ("task", "title", "machine", "human", "clock", "age", "worker", "state")
+CLAIM_COLUMNS = ("task", "title", "machine", "human", "clock", "lease", "worker", "state")
 REVIEW_COLUMNS = ("task", "title", "PR", "review", "checks")
 ARBITRATION_COLUMNS = ("task", "claimants", "why")
 PLAN_COLUMNS = ("task", "title", "machine", "plan")
 TEST_COLUMNS = ("task", "machine", "recommended", "reason", "time")
+
+# the five left-hand panels: (table id, title)
+PANELS = (("claims", "live claims"), ("review", "awaiting review"), ("arbitration", "needs arbitration"),
+          ("plans", "plans awaiting review"), ("tests", "test questions"))
+
+# secondary columns the Board dims (it never styles here: names only, board.py resolves them)
+SECONDARY_COLUMNS = ("machine", "human", "clock")
 
 # what a click (or Enter) on a table cell opens: the column's own link, else the table's default
 LINK_COLUMNS = {"task": "ticket", "PR": "pr"}
@@ -57,6 +65,57 @@ def age_text(seconds: float | None) -> str:
     return f"{seconds // 3600}h{(seconds % 3600) // 60:02d}m"
 
 
+BAR_GLYPHS = " ▏▎▍▌▋▊▉█"          # eighths of a cell: plain Unicode, no Nerd Font
+
+
+def bar_text(fraction: float | None, width: int = 8) -> str:
+    """A block-character bar, `fraction` of `width` cells full. The length alone carries
+    the value, so it reads with colour off."""
+    if fraction is None:
+        return "·" * width
+    eighths = round(min(max(fraction, 0.0), 1.0) * width * 8)
+    full, part = divmod(eighths, 8)
+    bar = "█" * full + (BAR_GLYPHS[part] if part else "")
+    return bar.ljust(width, "░")
+
+
+def level_of(fraction: float | None) -> str:
+    """Semantic name for how burnt down a lease is: ok / warn / crit (/ plain when unknown)."""
+    if fraction is None:
+        return "plain"
+    return "crit" if fraction >= 0.85 else "warn" if fraction >= 0.5 else "ok"
+
+
+def lease_elapsed_s(snap: snapshot.Snapshot, t: snapshot.TaskView) -> float | None:
+    """Seconds since the winning claim was last seen (claim or heartbeat), Ch.6.5."""
+    import resolve
+    if not t.winner:
+        return None
+    seen = resolve.last_seen(t.winner, resolve.read_heartbeats(t.dir))
+    return None if seen is None else max(0.0, (snap.now - seen).total_seconds())
+
+
+def lease_fraction(elapsed_s: float | None, lease_s: float) -> float | None:
+    """How much of the lease has burnt down: 0 just renewed, 1 expired."""
+    if elapsed_s is None or lease_s <= 0:
+        return None
+    return min(max(elapsed_s / lease_s, 0.0), 1.0)
+
+
+def lease_cell(elapsed_s: float | None, lease_s: float, width: int = 8) -> str:
+    """`█████░░░ 90s`: the bar fills as the lease burns down, then the time left."""
+    fraction = lease_fraction(elapsed_s, lease_s)
+    if fraction is None:
+        return "-"
+    left = max(0, int(lease_s - elapsed_s))
+    return f"{bar_text(fraction, width)} {f'{left}s' if left < 120 else age_text(left)}"
+
+
+def claim_leases(snap: snapshot.Snapshot) -> dict[str, float | None]:
+    """task key -> fraction of the lease burnt, for the claims table."""
+    return {t.key: lease_fraction(lease_elapsed_s(snap, t), snap.lease_s) for t in snap.live_claims}
+
+
 def short_error(text: str, width: int = 80) -> str:
     """First meaningful line of an error, cut to fit a table cell."""
     lines = [ln.strip() for ln in str(text).splitlines() if ln.strip()]
@@ -83,7 +142,7 @@ def claim_rows(snap: snapshot.Snapshot) -> list[tuple[str, tuple]]:
         elif t.plan_status == "changed since submitted":
             plan_hint = "plan changed since submitted"
         rows.append((t.key, (t.short, t.title, w.machine, w.human or "?", str(w.clock),
-                             age_text(t.claim_age_s(snap.now)), worker,
+                             lease_cell(lease_elapsed_s(snap, t), snap.lease_s), worker,
                              t.state + (" · needs human" if t.needs_human else "")
                              + (" · pausing (quota)" if t.pausing else "")
                              + (f" · {plan_hint}" if plan_hint else "")
@@ -185,6 +244,80 @@ def machine_line(snap: snapshot.Snapshot, daemon_pid: int | None, info: dict | N
               for m, s in snap.machines.items() if m != snap.machine]
     tail = f"   ·   others — {', '.join(others)}" if others else ""
     return f"{snap.machine} · {state}{tail}"
+
+
+def poller_age_s(swarm_dir: Path, now: datetime | None = None) -> float | None:
+    """Seconds since the poller last saved its state (it does so every cycle), else None."""
+    from dags import timeutil
+    try:
+        mtime = (Path(swarm_dir) / "poller-state.json").stat().st_mtime
+    except OSError:
+        return None
+    return max(0.0, (now or timeutil.now()).timestamp() - mtime)
+
+
+def machine_state(snap: snapshot.Snapshot, daemon_pid: int | None) -> tuple[str, str]:
+    """(word, style name) for this machine: running / paused / throttled / stopped."""
+    st = snap.machines.get(snap.machine, {})
+    if st.get("stopped"):
+        return "stopped", "off"
+    if not daemon_pid:
+        return "daemon not running", "off"
+    if st.get("paused"):
+        return "paused", "warn"
+    if snap.share == 0:
+        return "throttled (share 0)", "warn"
+    return "running", "ok"
+
+
+def header_rows(snap: snapshot.Snapshot, daemon_pid: int | None, info: dict | None, operator: str,
+                poller_age: float | None = None) -> list[tuple[str, str, str]]:
+    """The Board's header block as `[(label, value, style name)]`, like dags.panel's rows."""
+    word, style = machine_state(snap, daemon_pid)
+    up = daemon.uptime_text(info or {}) if daemon_pid else ""
+    state = word + (f" ({up})" if up else "")
+    if poller_age is None:
+        poller = "poller: no cycle yet"
+    else:
+        fraction = lease_fraction(poller_age, snap.lease_s)
+        poller = f"poller: {bar_text(fraction, 4)} {age_text(poller_age)} ago"
+        if style == "ok" and level_of(fraction) != "ok":
+            style = level_of(fraction)
+    others = [f"{m}: {'paused' if s.get('paused') else 'stopped' if s.get('stopped') else 'on'}"
+              for m, s in snap.machines.items() if m != snap.machine]
+    rows = [("machine", snap.machine, "plain"), ("operator", operator, "plain"),
+            ("state", f"{state} · {poller}", style)]
+    if others:
+        rows.append(("others", ", ".join(others), "dim"))
+    return rows
+
+
+def panel_summary(snap: snapshot.Snapshot, counts: dict[str, int]) -> list[tuple[str, str, int, str]]:
+    """The collapsed strip: `[(table id, title, count, style name)]`, style being "accent"
+    when the panel holds something a human must act on, "dim" when it is empty."""
+    human = {"claims": any(t.needs_human for t in snap.live_claims),
+             "arbitration": counts.get("arbitration", 0) > 0,
+             "plans": counts.get("plans", 0) > 0,
+             "tests": counts.get("tests", 0) > 0}
+    out = []
+    for tid, title in PANELS:
+        n = counts.get(tid, 0)
+        out.append((tid, title, n, "accent" if n and human.get(tid) else "dim" if n == 0 else "plain"))
+    return out
+
+
+def idle_text(snap: snapshot.Snapshot, identity: str) -> str:
+    """What the Board says when nothing is live: what is ready, what is blocked, how to start."""
+    ready = len(snap.ready)
+    blocked = sum(1 for t in snap.work if t.state == "open" and not t.ready)
+    return "\n".join([
+        "Nothing is running.",
+        "",
+        f"{ready} ready to claim · {blocked} blocked",
+        "",
+        "Start this machine:",
+        f"  ./bin/swarm.py --identity {identity} start --quota-share 1",
+    ])
 
 
 def initial_feed(root: Path, seen: set[str], limit: int = 20) -> list[str]:

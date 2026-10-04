@@ -18,6 +18,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import threading  # noqa: E402
+from functools import partial  # noqa: E402
 
 from rich.markup import escape  # noqa: E402
 from rich.style import Style  # noqa: E402
@@ -27,6 +28,7 @@ from textual.app import App, ComposeResult  # noqa: E402
 from textual.binding import Binding  # noqa: E402
 from textual.coordinate import Coordinate  # noqa: E402
 from textual.containers import Horizontal, Vertical, VerticalScroll  # noqa: E402
+from textual.command import DiscoveryHit, Hit, Provider  # noqa: E402
 from textual.screen import ModalScreen  # noqa: E402
 from textual.widgets import (Button, Checkbox, DataTable, Footer, Header, Input, Label, Markdown,  # noqa: E402
                              OptionList, ProgressBar, RichLog, Static)
@@ -36,6 +38,23 @@ import workers  # noqa: E402
 from dags import actions, boardview, daemon, feed, gh, snapshot, worktree  # noqa: E402
 from dags import work as worklib  # noqa: E402
 from dags.config import Context  # noqa: E402
+
+# ---------------------------------------------------------------------------
+# appearance as data (GH-67): board.tcss refers to these tokens by name ($navy ...) and
+# cell styling resolves boardview's semantic names through STYLES, never anywhere else.
+# ---------------------------------------------------------------------------
+
+PALETTE = {"navy": "#15243C", "slate": "#4A5A75", "mid": "#6B7C99",
+           "rust": "#B23A2F", "pale": "#EEF2F8", "line": "#CFD8E6"}
+
+# boardview's semantic style names -> Rich styles for Text.stylize
+STYLES = {
+    "plain": "", "dim": f"{PALETTE['mid']}",
+    "ok": "#5FA77A", "warn": "#D9A441", "crit": f"bold {PALETTE['rust']}",
+    "off": f"{PALETTE['mid']}", "accent": f"bold {PALETTE['rust']}",
+}
+LOG_STYLES = {"WARNING": STYLES["warn"], "ERROR": STYLES["crit"], "CRITICAL": STYLES["crit"],
+              "DEBUG": STYLES["dim"]}
 
 # ---------------------------------------------------------------------------
 # links (GH-5): Textual captures the mouse, so the terminal's own Cmd-click
@@ -78,19 +97,79 @@ class LinkTable(DataTable):
         super().action_select_cursor()
 
 
+def _key(keys: str, action: str, label: str) -> Binding:
+    return Binding(keys, f"app.{action}", label)
+
+
+# Each panel lists its own actions: the footer shows the focused panel's, not all of them.
+class ClaimsTable(LinkTable):
+    BINDINGS = [_key("w", "choose_worker", "Worker"), _key("y", "answer_question", "Answer"),
+                _key("f", "freeze", "Freeze"), _key("p", "pause", "Pause"), _key("o", "open_ticket", "Ticket")]
+
+
+class ReviewTable(LinkTable):
+    BINDINGS = [_key("m", "merge", "Merge"), _key("O,shift+o", "open_pr", "PR"), _key("o", "open_ticket", "Ticket")]
+
+
+class ArbitrationTable(LinkTable):
+    BINDINGS = [_key("a", "reassign", "Reassign"), _key("f", "freeze", "Freeze"),
+                _key("o", "open_ticket", "Ticket")]
+
+
+class PlansTable(LinkTable):
+    BINDINGS = [_key("v", "review_plan", "Review"), _key("o", "open_ticket", "Ticket")]
+
+
+class TestsTable(LinkTable):
+    BINDINGS = [_key("x", "answer_tests", "Answer"), _key("o", "open_ticket", "Ticket")]
+
+
+PANEL_TABLES = {"claims": ClaimsTable, "review": ReviewTable, "arbitration": ArbitrationTable,
+                "plans": PlansTable, "tests": TestsTable}
+
+# what the ':' command bar offers: (action, name, help)
+COMMANDS = [
+    ("pause", "Pause this machine", "p: claim nothing new, keep heartbeating"),
+    ("resume", "Resume this machine", "r"),
+    ("throttle", "Set this machine's quota share", "t: 0 takes it out of rotation"),
+    ("stop", "Stop the swarm on this machine", "s"),
+    ("choose_worker", "Choose a worker", "w"),
+    ("freeze", "Freeze or unfreeze the selected task", "f"),
+    ("reassign", "Reassign the selected task", "a"),
+    ("takeover", "Take over or release the epic", "e"),
+    ("review_plan", "Review the selected plan", "v"),
+    ("answer_tests", "Answer a test-scope question", "x"),
+    ("answer_question", "Answer a worker's question", "y"),
+    ("merge", "Approve and merge the selected PR", "m"),
+    ("open_ticket", "Open the ticket", "o"),
+    ("open_pr", "Open the PR", "O"),
+    ("set_quota", "Set the global quota N", "n"),
+    ("log_level", "Cycle the daemon log level", "l"),
+    ("refresh", "Refresh now", "ctrl+r"),
+    ("help", "Help", "?"),
+    ("quit", "Quit the Board", "q"),
+]
+
+
+class BoardCommands(Provider):
+    """Every Board action, behind ':' (k9s style)."""
+
+    async def discover(self):
+        for action, name, hint in COMMANDS:
+            yield DiscoveryHit(name, partial(self.app.run_action, action), help=hint)
+
+    async def search(self, query: str):
+        matcher = self.matcher(query)
+        for action, name, hint in COMMANDS:
+            score = matcher.match(name)
+            if score > 0:
+                yield Hit(score, matcher.highlight(name), partial(self.app.run_action, action), help=hint)
+
+
 # ---------------------------------------------------------------------------
 # modal screens
 # ---------------------------------------------------------------------------
 
-MODAL_CSS = """
-ModalScreen { align: center middle; }
-#dialog { width: 80; max-width: 95%; height: auto; max-height: 90%; border: thick $accent;
-          background: $surface; padding: 1 2; }
-#dialog Label { width: 100%; margin-bottom: 1; }
-#buttons { height: auto; align-horizontal: right; }
-#buttons Button { margin-left: 1; }
-#plan { height: 20; border: round $primary; }
-"""
 
 
 class ConfirmScreen(ModalScreen[bool]):
@@ -290,38 +369,37 @@ class ScopeQuestionScreen(ModalScreen[tuple[str, bool] | None]):
 
 class BoardApp(App):
     TITLE = "DAGS Swarm Board"
-    CSS = MODAL_CSS + """
-    #machine { height: 1; padding: 0 1; background: $boost; }
-    #quota-row { height: 3; padding: 0 1; }
-    #quota-label { width: auto; padding-right: 2; content-align: left middle; height: 3; }
-    #main { height: 1fr; }
-    #left { width: 3fr; }
-    #right { width: 2fr; }
-    .panel-title { height: 1; padding: 0 1; background: $primary-background; text-style: bold; }
-    DataTable { height: 1fr; min-height: 4; }
-    #feed { height: 1fr; border: round $primary; }
-    #daemon-log { height: 1fr; border: round $warning; }
-    """
+    CSS_PATH = "board.tcss"
+    COMMANDS = App.COMMANDS | {BoardCommands}
+
+    def get_css_variables(self) -> dict[str, str]:
+        return {**super().get_css_variables(), **PALETTE}
+
+    # The footer shows the focused panel's actions (see the *Table classes) plus these four;
+    # every other key still works from anywhere and is listed behind ':'.
     BINDINGS = [
-        Binding("p", "pause", "Pause"),
-        Binding("r", "resume", "Resume"),
-        Binding("t", "throttle", "Throttle"),
-        Binding("s", "stop", "Stop"),
-        Binding("w", "choose_worker", "Worker"),
-        Binding("f", "freeze", "Freeze/unfreeze"),
-        Binding("a", "reassign", "Reassign"),
-        Binding("e", "takeover", "Take over epic"),
-        Binding("v", "review_plan", "Review plan"),
-        Binding("x", "answer_tests", "Answer tests"),
-        Binding("y", "answer_question", "Answer worker"),
-        Binding("m", "merge", "Approve & merge"),
-        Binding("o", "open_ticket", "Ticket"),
-        Binding("O,shift+o", "open_pr", "PR"),
-        Binding("n", "set_quota", "Global N"),
-        Binding("l", "log_level", "Log level"),
-        Binding("ctrl+r", "refresh", "Refresh", show=False),
+        Binding("tab", "cycle_panel(1)", "Panel", priority=True),
+        Binding("shift+tab", "cycle_panel(-1)", "Panel", show=False, priority=True),
+        Binding("colon", "command_palette", "Commands"),
         Binding("question_mark", "help", "Help"),
         Binding("q", "quit", "Quit"),
+        Binding("p", "pause", "Pause", show=False),
+        Binding("r", "resume", "Resume", show=False),
+        Binding("t", "throttle", "Throttle", show=False),
+        Binding("s", "stop", "Stop", show=False),
+        Binding("w", "choose_worker", "Worker", show=False),
+        Binding("f", "freeze", "Freeze/unfreeze", show=False),
+        Binding("a", "reassign", "Reassign", show=False),
+        Binding("e", "takeover", "Take over epic", show=False),
+        Binding("v", "review_plan", "Review plan", show=False),
+        Binding("x", "answer_tests", "Answer tests", show=False),
+        Binding("y", "answer_question", "Answer worker", show=False),
+        Binding("m", "merge", "Approve & merge", show=False),
+        Binding("o", "open_ticket", "Ticket", show=False),
+        Binding("O,shift+o", "open_pr", "PR", show=False),
+        Binding("n", "set_quota", "Global N", show=False),
+        Binding("l", "log_level", "Log level", show=False),
+        Binding("ctrl+r", "refresh", "Refresh", show=False),
     ]
 
     def __init__(self, ctx: Context, refresh_s: float = 5.0, launch=None, platform: str | None = None,
@@ -344,28 +422,25 @@ class BoardApp(App):
         self._poller = None
         self._refresh_lock = threading.Lock()
         self.said: list[str] = []
+        self.panel = "claims"                     # the focused (expanded) left panel
+        self.counts: dict[str, int] = {}
 
     # -- layout ------------------------------------------------------------------
     def compose(self) -> ComposeResult:
         yield Header()
-        yield Static("", id="machine", markup=False)
-        with Horizontal(id="quota-row"):
-            yield Label("quota", id="quota-label", markup=False)
-            yield ProgressBar(total=1, show_eta=False, id="quota")
+        with Vertical(id="header-block"):
+            yield Static("", id="machine", markup=False)
+            with Horizontal(id="quota-row"):
+                yield Label("quota", id="quota-name", markup=False)
+                yield ProgressBar(total=1, show_eta=False, id="quota")
+                yield Label("", id="quota-label", markup=False)
         with Horizontal(id="main"):
             with Vertical(id="left"):
-                yield Static("Live claims", classes="panel-title")
-                yield LinkTable(id="claims", cursor_type="row", zebra_stripes=True)
-                yield Static("Awaiting review", classes="panel-title")
-                yield LinkTable(id="review", cursor_type="row", zebra_stripes=True)
-                yield Static("Needs arbitration", classes="panel-title")
-                yield LinkTable(id="arbitration", cursor_type="row", zebra_stripes=True)
-                yield Static("Plans awaiting review", classes="panel-title")
-                yield LinkTable(id="plans", cursor_type="row", zebra_stripes=True)
-                yield Static("Test questions", classes="panel-title")
-                yield LinkTable(id="tests", cursor_type="row", zebra_stripes=True)
+                for tid, _ in boardview.PANELS:
+                    yield PANEL_TABLES[tid](id=tid, cursor_type="row")
+                yield Static("", id="idle", markup=False, classes="hidden")
+                yield Static("", id="strip", markup=False)
             with Vertical(id="right"):
-                yield Static("Activity", classes="panel-title")
                 yield RichLog(id="feed", wrap=True, markup=False, highlight=False, max_lines=500)
                 yield Static("", id="daemon-log-title", classes="panel-title", markup=False)
                 yield RichLog(id="daemon-log", wrap=True, markup=False, highlight=False, max_lines=500)
@@ -377,6 +452,11 @@ class BoardApp(App):
                           ("arbitration", boardview.ARBITRATION_COLUMNS), ("plans", boardview.PLAN_COLUMNS),
                           ("tests", boardview.TEST_COLUMNS)):
             self.query_one(f"#{tid}", DataTable).add_columns(*cols)
+        self.query_one("#header-block").border_title = "swarm"
+        self.query_one("#feed").border_title = "activity"
+        for tid, title in boardview.PANELS:
+            self.query_one(f"#{tid}").border_title = f"{title} (0)"
+        self.show_panel("claims")
         log = self.query_one("#feed", RichLog)
         for line in boardview.initial_feed(self.ctx.root, self.seen):
             log.write(linkify(line))
@@ -433,14 +513,31 @@ class BoardApp(App):
         info = daemon.info(ctx) if pid else {}
         self.call_from_thread(self.apply, snap, new_feed, notes, flagged, pid, logged, info)
 
-    def _fill(self, tid: str, rows: list[tuple[str, tuple]]) -> None:
+    # which cells carry an accent: only what needs a human (restraint, GH-67)
+    ACCENT_COLUMN = {"arbitration": "why", "plans": "plan", "tests": "task"}
+
+    def _cell(self, tid: str, key: str, column: str, text: str, linked: bool, leases: dict) -> Text:
+        cell = Text(text, style="underline" if linked and text else "")
+        if column in boardview.SECONDARY_COLUMNS:
+            cell.stylize(STYLES["dim"])
+        elif column == "lease":
+            cell.stylize(STYLES[boardview.level_of(leases.get(key))])
+        elif column == self.ACCENT_COLUMN.get(tid):
+            cell.stylize(STYLES["accent"])
+        elif column == "state":
+            at = text.find("needs human")
+            if at >= 0:
+                cell.stylize(STYLES["accent"], at, at + len("needs human"))
+        return cell
+
+    def _fill(self, tid: str, rows: list[tuple[str, tuple]], leases: dict | None = None) -> None:
         table = self.query_one(f"#{tid}", DataTable)
         selected = self.selected_key(table)
         table.clear()
-        linked = [str(c.label) in boardview.LINK_COLUMNS for c in table.ordered_columns]
+        names = [str(c.label) for c in table.ordered_columns]
         for key, cells in rows:
-            table.add_row(*(Text(str(c), style="underline" if linked[i] and c else "")
-                            for i, c in enumerate(cells)), key=key)
+            table.add_row(*(self._cell(tid, key, names[i], str(c), names[i] in boardview.LINK_COLUMNS and bool(c),
+                                       leases or {}) for i, c in enumerate(cells)), key=key)
         if selected is not None:
             for i, (key, _) in enumerate(rows):
                 if key == selected:
@@ -450,17 +547,59 @@ class BoardApp(App):
                         pass
                     break
 
+    # -- focus-driven panels (GH-67) -----------------------------------------------------
+    def show_panel(self, tid: str) -> None:
+        """Expand one left panel to fill the column; the rest collapse into the strip."""
+        self.panel = tid
+        for pid, _ in boardview.PANELS:
+            self.query_one(f"#{pid}").set_class(pid != tid, "collapsed")
+        self.query_one(f"#{tid}").focus()
+        self.render_strip()
+
+    def render_strip(self) -> None:
+        strip = Text()
+        for tid, title, n, style in (boardview.panel_summary(self.snap, self.counts) if self.snap else []):
+            if tid == self.panel:
+                continue
+            if strip:
+                strip.append("  ")
+            strip.append(f"{title} {n}", style=STYLES[style])
+        self.query_one("#strip", Static).update(strip)
+
+    def action_cycle_panel(self, step: int = 1) -> None:
+        if self.busy():
+            (self.screen.focus_next if step > 0 else self.screen.focus_previous)()
+            return
+        ids = [t for t, _ in boardview.PANELS]
+        live = [t for t in ids if self.counts.get(t)] or ids
+        at = live.index(self.panel) if self.panel in live else -1
+        self.show_panel(live[(at + step) % len(live)])
+
+    def on_descendant_focus(self, event) -> None:
+        widget = event.widget
+        if isinstance(widget, LinkTable) and widget.id != self.panel and not widget.has_class("collapsed"):
+            self.show_panel(str(widget.id))
+
     def apply(self, snap, new_feed, notes, flagged, pid, logged, info=None) -> None:
         self.snap = snap
-        self.query_one("#machine", Static).update(boardview.machine_line(snap, pid, info))
+        header = Text()
+        for i, (label, value, style) in enumerate(boardview.header_rows(
+                snap, pid, info, self.ctx.operator, boardview.poller_age_s(self.ctx.swarm_dir, snap.now))):
+            header.append(("\n" if i else "") + label.ljust(9), style=STYLES["dim"])
+            header.append(value, style=STYLES[style])
+        self.query_one("#machine", Static).update(header)
         q = boardview.quota(snap)
         self.query_one("#quota-label", Label).update(q.text)
         self.query_one("#quota", ProgressBar).update(total=max(q.total, 1), progress=min(q.used, max(q.total, 1)))
-        self._fill("claims", boardview.claim_rows(snap))
-        self._fill("review", boardview.review_rows(snap, self.pr_status))
-        self._fill("arbitration", boardview.arbitration_rows(snap, flagged))
-        self._fill("plans", boardview.plan_rows(snap))
-        self._fill("tests", boardview.test_rows(snap))
+        tables = {"claims": boardview.claim_rows(snap), "review": boardview.review_rows(snap, self.pr_status),
+                  "arbitration": boardview.arbitration_rows(snap, flagged), "plans": boardview.plan_rows(snap),
+                  "tests": boardview.test_rows(snap)}
+        for tid, rows in tables.items():
+            self._fill(tid, rows, boardview.claim_leases(snap) if tid == "claims" else None)
+        self.counts = {tid: len(rows) for tid, rows in tables.items()}
+        for tid, title in boardview.PANELS:
+            self.query_one(f"#{tid}").border_title = f"{title} ({self.counts[tid]})"
+        self.layout_panels(snap)
         log = self.query_one("#feed", RichLog)
         for line in new_feed:
             log.write(linkify(line))
@@ -471,13 +610,27 @@ class BoardApp(App):
             self.write_daemon_log(entries)
         self.maybe_prompt_worker()
 
-    # -- the daemon's log (GH-10) --------------------------------------------------------
-    LOG_STYLES = {"WARNING": "yellow", "ERROR": "red", "CRITICAL": "bold red", "DEBUG": "dim"}
+    def layout_panels(self, snap) -> None:
+        """Idle block when every panel is empty; else make sure the expanded panel is one with rows."""
+        idle = not any(self.counts.values())
+        for pid, _ in boardview.PANELS:
+            self.query_one(f"#{pid}").set_class(idle or pid != self.panel, "collapsed")
+        self.query_one("#idle", Static).set_class(not idle, "hidden")
+        self.query_one("#strip", Static).set_class(idle, "hidden")
+        if idle:
+            self.query_one("#idle", Static).update(boardview.idle_text(snap, self.ctx.identity))
+            return
+        if not self.counts.get(self.panel):
+            nxt = next((t for t, _ in boardview.PANELS if self.counts.get(t)), self.panel)
+            self.show_panel(nxt)
+        else:
+            self.render_strip()
 
+    # -- the daemon's log (GH-10) --------------------------------------------------------
     def write_daemon_log(self, entries) -> None:
         panel = self.query_one("#daemon-log", RichLog)
         for e in entries:
-            panel.write(Text(e.line, style=self.LOG_STYLES.get(e.level, "")))
+            panel.write(Text(e.line, style=LOG_STYLES.get(e.level, "")))
 
     def load_daemon_log(self) -> None:
         """(Re)fill the panel from the file at the current level."""
