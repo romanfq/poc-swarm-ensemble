@@ -519,3 +519,105 @@ def test_share_zero_claims_nothing_and_releases_what_is_held(world):
     assert rep.claimed == [] and rep.room == 0
     assert rep.released == ["T2"] and rep.pausing == ["T1"]    # T2 had no worker; T1 checkpoints first
     assert world.scheduler(a, share=2).cycle().claimed == []
+
+
+# -- GH-73: levers driven through the CLI -----------------------------------------------------
+
+def _cli(monkeypatch, ctx, *args):
+    pytest.importorskip("typer")
+    from typer.testing import CliRunner
+    from dags import cli
+    monkeypatch.setattr(cli, "ctx", lambda: ctx)
+    return CliRunner().invoke(cli.app, list(args), catch_exceptions=False)
+
+
+def test_park_keeps_the_task_out_until_unparked(world, monkeypatch):
+    _plan(world, ("T1", {"labels": ["swarm:autonomy:auto-pr"]}))
+    a = world.machine("mac-a")
+    world.scheduler(a).cycle()
+    d = rv.index(a.root)["T1"]
+    r = _cli(monkeypatch, a, "task", "park", "T1", "--reason", "waiting on design")
+    assert r.exit_code == 0, r.output
+    w = [w for w in rv.read_withdrawals(d).values() if w["reason"] == "parked-by-human"]
+    assert len(w) == 1 and w[0]["note"] == "waiting on design" and w[0]["human"]
+    assert rv.parked(d)
+    # never passes through ready: the backend keeps its claimed status, and no machine claims it
+    assert world.backend.get_task(TaskRef("T1")).status == "claimed"
+    assert world.scheduler(a, run_plan_sync=False).cycle().claimed == []
+    assert rv.retry_count(d, timeutil.now(), 900) == 0
+    r = _cli(monkeypatch, a, "task", "unpark", "T1", "--reason", "design landed")
+    assert r.exit_code == 0, r.output
+    assert not rv.parked(d)
+    assert world.scheduler(a, run_plan_sync=False).cycle().claimed == ["T1"]
+
+
+def test_park_needs_a_reason_and_a_claim(world, monkeypatch):
+    _plan(world, ("T1", {}))
+    a = world.machine("mac-a")
+    world.scheduler(a).cycle()
+    d = rv.index(a.root)["T1"]
+    assert _cli(monkeypatch, a, "task", "park", "T1", "--reason", "  ").exit_code == 1
+    assert not rv.parked(d)
+    b = world.machine("mac-b")
+    assert _cli(monkeypatch, b, "task", "park", "T1", "--reason", "x").exit_code == 1
+    assert _cli(monkeypatch, a, "task", "unpark", "T1").exit_code == 1   # not parked
+
+
+def test_both_park_reasons_park_and_unpark_ends_either(world):
+    from dags import actions
+    _plan(world, ("T1", {}))
+    a = world.machine("mac-a")
+    world.scheduler(a).cycle()
+    d = rv.index(a.root)["T1"]
+    actions.park(a, d, "x")
+    assert rv.parked(d)
+    actions.unpark(a, d)
+    assert not rv.parked(d)
+
+
+def test_set_autonomy_is_live_without_plan_sync(world, monkeypatch):
+    _plan(world, ("T1", {"labels": ["swarm:autonomy:human-must-scope"]}))
+    a = world.machine("mac-a")
+    world.scheduler(a).cycle()
+    d = rv.index(a.root)["T1"]
+    assert "human workers only" in world.notes[-1][1]
+    r = _cli(monkeypatch, a, "task", "set-autonomy", "T1", "auto-pr", "--reason", "scoped by hand")
+    assert r.exit_code == 0, r.output
+    assert rv.read_meta(d)["autonomy"] == "auto-pr"
+    assert world.backend.get_task(TaskRef("T1")).autonomy == "auto-pr"
+    work.release(a, d)
+    world.scheduler(a, run_plan_sync=False).cycle()
+    assert "human workers only" not in world.notes[-1][1]
+    # same tier again: nothing to write, and it says so
+    r = _cli(monkeypatch, a, "task", "set-autonomy", "T1", "auto-pr")
+    assert r.exit_code == 0 and "already auto-pr" in r.output
+
+
+def test_set_autonomy_rejects_unknown_tier_and_reports_a_ledger_failure(world, monkeypatch):
+    from dags import actions
+    _plan(world, ("T1", {}))
+    a = world.machine("mac-a")
+    world.scheduler(a).cycle()
+    d = rv.index(a.root)["T1"]
+    assert _cli(monkeypatch, a, "task", "set-autonomy", "T1", "yolo").exit_code == 1
+
+    def boom(*args, **kw):
+        raise RuntimeError("push rejected")
+    monkeypatch.setattr(L, "set_autonomy", boom)
+    with pytest.raises(actions.ActionError) as e:
+        actions.set_autonomy(a, d, "human-must-review")
+    assert "backend was updated" in str(e.value) and "ledger was not" in str(e.value)
+    assert "safe" in str(e.value)
+
+
+def test_feed_names_parks_and_tier_changes(world):
+    from dags import actions, feed
+    _plan(world, ("T1", {}))
+    a = world.machine("mac-a")
+    world.scheduler(a).cycle()
+    d = rv.index(a.root)["T1"]
+    actions.set_autonomy(a, d, "auto-pr", "scoped")
+    actions.park(a, d, "waiting")
+    actions.unpark(a, d)
+    text = "\n".join(e.text for e in feed.all_events(a.root))
+    assert "changed the autonomy of" in text and "parked" in text and "unparked" in text

@@ -428,7 +428,8 @@ def backend_adopt(key: str,
     t = b.get_task(ref)
     in_plan = getattr(b, "in_plan", None)
     if in_plan is None or in_plan(ref):
-        fail(f"{plan.short_of(b, ref)} is already in the plan")
+        fail(f"{plan.short_of(b, ref)} is already in the plan"
+             + ("; change its tier with `swarm.py task set-autonomy`" if autonomy else ""))
     if t.closed:
         fail(f"{plan.short_of(b, ref)} is closed; reopen it first")
     kinds = getattr(b, "uses_type_labels", False)
@@ -619,6 +620,30 @@ def task_freeze(key: str, reason: str = typer.Option(..., "--reason")):
 def task_unfreeze(key: str, reason: str = typer.Option("unfrozen", "--reason")):
     actions.unfreeze(ctx(), task_dir(key), reason)
     console.print(f"{key} unfrozen")
+
+
+@task_app.command("park")
+@guarded
+def task_park(key: str, reason: str = typer.Option(..., "--reason")):
+    """Give back this machine's claim and keep the task out of the queue until `task unpark`."""
+    actions.park(ctx(), task_dir(key), reason)
+    console.print(f"{key} parked; `swarm.py task unpark {key}` ends it")
+
+
+@task_app.command("unpark")
+@guarded
+def task_unpark(key: str, reason: str = typer.Option("unparked", "--reason")):
+    """Let machines claim a parked task again."""
+    actions.unpark(ctx(), task_dir(key), reason)
+    console.print(f"{key} unparked")
+
+
+@task_app.command("set-autonomy")
+@guarded
+def task_set_autonomy(key: str, tier: str = typer.Argument(..., help=", ".join(AUTONOMY_TIERS)),
+                      reason: str = typer.Option("", "--reason")):
+    """Change a task's autonomy tier in the backend and the ledger together."""
+    console.print(escape(actions.set_autonomy(ctx(), task_dir(key), tier, reason)))
 
 
 @task_app.command("reassign")

@@ -212,6 +212,14 @@ def release(ctx, task_dir: Path, reason: str = "released") -> None:
     _try_backend(ctx, ctx.backend.set_status, _ref(task_dir), "ready")
 
 
+def park(ctx, task_dir: Path, reason: str, human: str) -> None:
+    """Give this machine's claim back and park the task in one ledger step. Unlike
+    ``release`` it never sets the backend status to ``ready``: the task stays out of the
+    queue until a human unparks it (GH-73)."""
+    claim_id = my_claim(ctx, task_dir)
+    L.withdraw(ctx, task_dir, claim_id, "parked-by-human", human=human, note=reason)
+
+
 # ---------------------------------------------------------------------------
 # test scope (GH-50): ask the human before the worker runs tests
 # ---------------------------------------------------------------------------
