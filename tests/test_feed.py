@@ -161,3 +161,9 @@ def test_select_by_task_and_machine_and_heartbeats_collapse(ledger):
     beats = feed.heartbeat_summary(ledger.root)
     assert len(beats) == 1 and beats[0].task == "T1" and beats[0].machine == "mac-a"
     assert at(3).isoformat() in beats[0].text
+
+
+def test_feed_keeps_the_whole_question_for_the_log():
+    long = "Why? " * 100
+    text = feed._describe_event("T1", "Jane", "mac-a", {"kind": "needs-human", "question": long})
+    assert text.endswith(f"'{long}'")

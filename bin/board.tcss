@@ -11,6 +11,7 @@ ModalScreen { align: center middle; }
 #dialog { width: 80; max-width: 95%; height: auto; max-height: 90%; border: thick $rust;
           background: $navy; padding: 1 2; }
 #dialog Label { width: 100%; margin-bottom: 1; }
+#prompt-scroll { height: auto; max-height: 20; }
 #buttons { height: auto; align-horizontal: right; }
 #buttons Button { margin-left: 1; }
 #plan { height: 20; border: round $mid; }
