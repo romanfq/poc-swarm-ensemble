@@ -14,6 +14,9 @@ from pathlib import Path
 
 from dags import daemon, feed, snapshot
 
+# a PR whose state could not be read this many polls in a row is shown as unconfirmed (GH-56)
+UNCONFIRMED_AFTER = 3
+
 CLAIM_COLUMNS = ("task", "title", "machine", "human", "clock", "lease", "worker", "state")
 REVIEW_COLUMNS = ("task", "title", "PR", "review", "checks")
 ARBITRATION_COLUMNS = ("task", "claimants", "why")
@@ -162,8 +165,21 @@ def review_rows(snap: snapshot.Snapshot, pr_status: dict[str, dict]) -> list[tup
     for t in snap.awaiting_review:
         st = pr_status.get(t.key) or {}
         review = (st.get("review") or "pending").replace("_", " ").lower()
-        rows.append((t.key, (t.short, t.title, t.pr_url or "", review, st.get("checks") or "?")))
+        checks = st.get("checks") or "?"
+        if st.get("unconfirmed"):
+            checks = f"unconfirmed ({st['unconfirmed']})"
+        rows.append((t.key, (t.short, t.title, t.pr_url or "", review, checks)))
     return rows
+
+
+def unconfirmed_prs(swarm_dir: Path, after: int = UNCONFIRMED_AFTER) -> list[tuple[str, dict]]:
+    """[(task key, {polls, since, error, url})] for PRs the poller has failed to read `after` polls running (GH-56)."""
+    try:
+        data = json.loads((Path(swarm_dir) / "poller-state.json").read_text())
+    except (FileNotFoundError, ValueError):
+        return []
+    miss = data.get("pr_unconfirmed") or {}
+    return sorted((k, v) for k, v in miss.items() if (v.get("polls") or 0) >= after)
 
 
 def poller_flags(swarm_dir: Path) -> list[str]:

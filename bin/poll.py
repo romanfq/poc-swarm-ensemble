@@ -27,13 +27,16 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import resolve  # noqa: E402
-from dags import actions, feed, gh, snapshot, worktree  # noqa: E402
+from dags import actions, boardview, feed, gh, snapshot, worktree  # noqa: E402
 from dags import ledger as L  # noqa: E402
 from dags import records as R  # noqa: E402
+from dags import timeutil  # noqa: E402
 
 log = logging.getLogger("dags.poll")
 
 STATE_FILE = "poller-state.json"
+# outcomes that still have a live PR to watch; done (merged), rejected and replanned do not
+WATCHED_OUTCOMES = ("pr-opened", "reopened")
 # feed events this machine's scheduler already sends to notify when it writes them
 SCHEDULER_ANNOUNCES = {"event:worker-dispatched", "event:awaiting-worker",
                        "event:pause-requested", "event:pause-lifted"}
@@ -74,6 +77,7 @@ class Poller:
         data.setdefault("reviews_seen", {})       # key -> [review ids acted on]
         data.setdefault("overlaps", [])
         data.setdefault("announced", [])
+        data.setdefault("pr_unconfirmed", {})     # key -> {polls, since, error}: PR state never read (GH-56)
         data.setdefault("checks_red", [])         # task keys whose PR checks are failing (alerted once)
         data.setdefault("first_run", True)
         return data
@@ -172,8 +176,10 @@ class Poller:
 
     def _prs(self, snap: snapshot.Snapshot, rep: PollReport) -> None:
         open_prs: list[tuple[snapshot.TaskView, str, str]] = []
+        unconfirmed = self.state["pr_unconfirmed"]
         for t in snap.work:
-            if t.state not in ("awaiting-review",) or not t.pr_url:
+            if t.res.outcome.kind not in WATCHED_OUTCOMES or not t.pr_url:
+                unconfirmed.pop(t.key, None)
                 continue
             found = gh.repo_from_pr_url(t.pr_url)
             if not found:
@@ -183,12 +189,26 @@ class Poller:
                 pr = gh.pr_view(repo, number)
             except (gh.GhError, FileNotFoundError) as e:
                 log.warning("gh pr view %s failed: %s", t.pr_url, e)
+                # not yet checked, not checked: count it, and try again next cycle
+                miss = unconfirmed.setdefault(t.key, {"polls": 0, "since": timeutil.iso()})
+                miss["polls"] += 1
+                miss["error"] = str(e)[:200]
+                miss["url"] = t.pr_url
+                rep.pr_status[t.key] = {"state": None, "unconfirmed": miss["polls"], "error": miss["error"],
+                                        "url": t.pr_url}
+                if miss["polls"] == boardview.UNCONFIRMED_AFTER:
+                    rep.add("pr-unconfirmed",
+                            f"{t.short}: the state of {t.pr_url} could not be read for {miss['polls']} polls "
+                            f"in a row; a merge would go unnoticed until it can")
                 continue
+            unconfirmed.pop(t.key, None)
             rep.pr_status[t.key] = {"state": pr.get("state"), "review": pr.get("reviewDecision"),
                                     "checks": gh.checks_summary(pr), "url": t.pr_url}
             state = pr.get("state")
             red = self.state["checks_red"]
-            if state == "OPEN" and rep.pr_status[t.key]["checks"] == "failing":
+            if t.state != "awaiting-review":
+                pass                       # only a merge or a close matters while it isn't in review
+            elif state == "OPEN" and rep.pr_status[t.key]["checks"] == "failing":
                 if t.key not in red:
                     red.append(t.key)
                     rep.add("checks-failing", f"Checks are failing on {t.short}: {t.pr_url}")
@@ -207,6 +227,8 @@ class Poller:
                               f"add the lesson to CONVENTIONS.md, then set swarm:status:ready.")
                 rep.add("rejected", f"{t.short}: approach rejected (PR closed); waiting for re-planning")
                 self._cleanup_worktree(t)
+                continue
+            if t.state != "awaiting-review":
                 continue
             open_prs.append((t, repo, number))
             seen = set(self.state["reviews_seen"].get(t.key, []))
