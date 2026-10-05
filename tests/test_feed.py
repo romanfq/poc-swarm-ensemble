@@ -171,3 +171,7 @@ def test_a_relayed_answer_reads_as_the_workers_report(world):
     work.block(a, d, "raise the floor?")
     work.relay_answer(a, d, "yes", by="roman")
     assert "the worker reports roman answered T1's question — 'yes'" in _lines(a)
+def test_feed_keeps_the_whole_question_for_the_log():
+    long = "Why? " * 100
+    text = feed._describe_event("T1", "Jane", "mac-a", {"kind": "needs-human", "question": long})
+    assert text.endswith(f"'{long}'")

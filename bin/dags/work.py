@@ -214,7 +214,8 @@ def worker_events(ctx, task_dir: Path, claim_id: str) -> dict:
         task_dir, claim_id, ctx.identity, timeutil.now(), ctx.settings.lease_s, ctx.human_names,
         control=L.machine_control(ctx.root, ctx.identity), idle_limit_s=ctx.settings.human_idle_s)
     return {"events": events, "plan_status": resolve.plan_status(task_dir, ctx.human_names),
-            "open_question": resolve.open_question(task_dir)}
+            "open_question": resolve.open_question(task_dir),
+            "open_tests": (resolve.test_scope_status(task_dir, ctx.human_names) or {}).get("status") == "pending"}
 
 
 def still_working(ctx, task_dir: Path) -> None:
@@ -227,6 +228,14 @@ def release(ctx, task_dir: Path, reason: str = "released") -> None:
     claim_id = my_claim(ctx, task_dir)
     L.withdraw(ctx, task_dir, claim_id, reason)
     _try_backend(ctx, ctx.backend.set_status, _ref(task_dir), "ready")
+
+
+def park(ctx, task_dir: Path, reason: str, human: str) -> None:
+    """Give this machine's claim back and park the task in one ledger step. Unlike
+    ``release`` it never sets the backend status to ``ready``: the task stays out of the
+    queue until a human unparks it (GH-73)."""
+    claim_id = my_claim(ctx, task_dir)
+    L.withdraw(ctx, task_dir, claim_id, "parked-by-human", human=human, note=reason)
 
 
 # ---------------------------------------------------------------------------

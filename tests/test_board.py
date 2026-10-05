@@ -1,5 +1,6 @@
 """Swarm Board pilot tests (Ch.10). Need textual — run on the Mac via bin/dev-setup.sh."""
 import asyncio
+from pathlib import Path
 import time
 
 import pytest
@@ -374,14 +375,40 @@ def test_share_zero_asks_for_confirmation(setup):
     run(go())
 
 
-def test_board_stylesheet_and_no_css_colours():
+def test_stylesheet_uses_only_theme_tokens(setup):
     import re
     from pathlib import Path
-    tcss = Path(board.__file__).with_name("board.tcss")
-    assert tcss.exists() and "$rust" in tcss.read_text()
-    assert not re.search(r"[:\s]#[0-9a-fA-F]{6}\b", tcss.read_text())        # tokens, no literals
-    assert not getattr(board.BoardApp, "CSS", "")                        # the class holds no CSS at all
-    assert board.PALETTE["navy"] == "#15243C"
+    world, a, app, _ = setup
+    text = re.sub(r"/\*.*?\*/", "", Path(board.__file__).with_name("board.tcss").read_text(), flags=re.S)
+    assert not re.search(r":[^;{}]*(#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\()", text)  # no literal colours
+    assert not getattr(board.BoardApp, "CSS", "")                              # the class holds no CSS at all
+    used = set(re.findall(r"\$([a-z][a-z-]*)", text))
+    assert used
+    assert not used & {"navy", "slate", "mid", "pale", "line", "rust"}
+    assert used <= set(app.get_css_variables())                                 # every token is theme-supplied
+    assert app.theme == "dags" and "dags" in app.available_themes
+    for name in ("primary", "secondary", "accent", "success", "warning", "error"):
+        assert getattr(board.DAGS_THEME, name)
+
+
+def test_switching_theme_recolours_the_board(setup):
+    world, a, app, _ = setup
+
+    async def go():
+        async with app.run_test(size=(100, 30)) as pilot:
+            await until(pilot, lambda: isinstance(app.screen, board.ChoiceScreen))
+            await pilot.press("escape")
+            await pilot.pause()
+            dark_bg = app.screen.styles.background
+            dark_cells = dict(app.cell_styles)
+            app.theme = "textual-light"
+            await pilot.pause()
+            assert app.screen.styles.background != dark_bg
+            assert app.cell_styles != dark_cells
+            app.theme = "dags"
+            await pilot.pause()
+            assert app.screen.styles.background == dark_bg
+    run(go())
 
 
 def test_focused_panel_has_room_and_footer_fits(setup):
@@ -432,4 +459,26 @@ def test_idle_block_when_nothing_is_live(world):
             assert app.query_one("#idle").display
             assert not app.query_one("#claims").display
             assert "start --quota-share 1" in shown(app.query_one("#idle"))
+    run(go())
+
+
+def test_input_dialog_scrolls_a_long_prompt():
+    from textual.app import App
+    from textual.containers import VerticalScroll
+    long = "\n\n".join(f"Paragraph {i}: " + "word " * 60 for i in range(12))
+
+    class Host(App):                                    # the real stylesheet, without the Board's panels
+        CSS_PATH = str(Path(board.__file__).with_name("board.tcss"))
+
+        def get_css_variables(self):
+            return {**super().get_css_variables(), **board.PALETTE}
+
+    async def go():
+        app = Host()
+        async with app.run_test(size=(100, 30)) as pilot:
+            app.push_screen(board.InputScreen(long))
+            await pilot.pause()
+            scroll = app.screen.query_one("#prompt-scroll", VerticalScroll)
+            assert scroll.virtual_size.height > scroll.size.height     # overflows, but scrolls
+            assert app.screen.query_one("#answer").region.bottom <= 30   # the Input stays on screen
     run(go())

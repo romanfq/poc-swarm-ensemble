@@ -236,15 +236,19 @@ def cmd_wait(args):
                 if not any(e["kind"] == "plan-approved" for e in fresh):
                     print("[swarm] The plan is approved. Next: `swarm-task implement`.")
                 return 0
-            if want == "answer":
-                if any(e["kind"] == "answered" for e in fresh):
+            if want in ("answer", "tests"):
+                kinds = {"answer": {"answered", "tests-answered"}, "tests": {"tests-answered"}}[want]
+                if any(e["kind"] in kinds for e in fresh):
                     show(fresh)
                     return 0
-                if not info.get("open_question"):
+                open_now = {"answer": info.get("open_question") or info.get("open_tests"),
+                            "tests": info.get("open_tests")}[want]
+                if not open_now:
                     show(fresh)
-                    print("[swarm] There is no open question.")
+                    print("[swarm] There is no open question." if want == "answer"
+                          else "[swarm] There is no open test-scope question.")
                     return 0
-            if want == "any" and [e for e in fresh if e["kind"] != "idle"]:
+            if want == "any" and [e for e in fresh if e["kind"] not in ("idle", "tests-asked")]:
                 show(fresh)
                 return 0
         if deadline is not None and time.monotonic() >= deadline:
@@ -322,7 +326,7 @@ def main(argv=None):
     sub.add_parser("status", help="plan/review status").set_defaults(fn=cmd_status)
     sub.add_parser("implement", help="print the approved plan, checkpoint and feedback").set_defaults(fn=cmd_implement)
     sw = sub.add_parser("wait", help="block until the plan is approved, a human answers, or the task changes")
-    sw.add_argument("--for", dest="wait_for", choices=("approved", "answer", "any"), default="any")
+    sw.add_argument("--for", dest="wait_for", choices=("approved", "answer", "tests", "any"), default="any")
     sw.add_argument("--timeout", type=float, default=1500, help="seconds; 0 waits forever (default 1500)")
     sw.add_argument("--interval", type=float, default=30, help="seconds between checks (default 30)")
     sw.set_defaults(fn=cmd_wait)

@@ -1,26 +1,28 @@
-/* The Swarm Board's appearance (GH-67). The palette is named tokens: $navy $slate $mid
-   $rust $pale $line, defined once in board.py (PALETTE) because the Rich styles applied
-   to table cells need the same values. Nothing below hard-codes a colour. */
+/* The Swarm Board's appearance (GH-67, GH-72). Every colour is a token the active Textual
+   theme defines ($background $surface $panel $foreground $primary $secondary $accent), so
+   any theme re-colours the whole Board. The DAGS palette is the default "dags" theme in
+   board.py; nothing below hard-codes a colour. */
 
-Screen { background: $navy; color: $pale; }
-Header { background: $slate; color: $pale; }
-Footer { background: $slate; color: $pale; }
+Screen { background: $background; color: $foreground; }
+Header { background: $panel; color: $foreground; }
+Footer { background: $panel; color: $foreground; }
 
 /* modal dialogs */
 ModalScreen { align: center middle; }
-#dialog { width: 80; max-width: 95%; height: auto; max-height: 90%; border: thick $rust;
-          background: $navy; padding: 1 2; }
+#dialog { width: 80; max-width: 95%; height: auto; max-height: 90%; border: thick $accent;
+          background: $surface; padding: 1 2; }
 #dialog Label { width: 100%; margin-bottom: 1; }
+#prompt-scroll { height: auto; max-height: 20; }
 #buttons { height: auto; align-horizontal: right; }
 #buttons Button { margin-left: 1; }
-#plan { height: 20; border: round $mid; }
+#plan { height: 20; border: round $secondary; }
 
 /* header block */
-#header-block { height: auto; border: round $mid; border-title-color: $line; padding: 0 1; }
+#header-block { height: auto; border: round $secondary; border-title-color: $foreground; padding: 0 1; }
 #machine { height: auto; }
 #quota-row { height: 1; }
 #quota-label { width: auto; padding-right: 2; }
-#quota-name { width: 9; color: $mid; }
+#quota-name { width: 9; color: $secondary; }
 
 /* columns */
 #main { height: 1fr; }
@@ -28,15 +30,15 @@ ModalScreen { align: center middle; }
 #right { width: 2fr; }
 
 /* focus-driven panels: the focused table fills the column, the others hide behind #strip */
-DataTable { height: 1fr; border: round $mid; border-title-color: $line; background: $navy; }
-DataTable:focus { border: round $pale; border-title-color: $pale; }
-DataTable > .datatable--header { background: $slate; color: $pale; text-style: bold; }
-DataTable > .datatable--cursor { background: $slate; color: $pale; }
+DataTable { height: 1fr; border: round $secondary; border-title-color: $foreground; background: $surface; }
+DataTable:focus { border: round $foreground; border-title-color: $foreground; }
+DataTable > .datatable--header { background: $panel; color: $foreground; text-style: bold; }
+DataTable > .datatable--cursor { background: $panel; color: $foreground; }
 DataTable.collapsed { display: none; }
 #strip { height: 1; padding: 0 1; }
-#idle { height: 1fr; content-align: center middle; text-align: center; border: round $mid; }
+#idle { height: 1fr; content-align: center middle; text-align: center; border: round $secondary; }
 
 .hidden { display: none; }
 
-#feed { height: 1fr; border: round $mid; border-title-color: $line; background: $navy; }
-#daemon-log { height: 1fr; border: round $mid; border-title-color: $line; background: $navy; }
+#feed { height: 1fr; border: round $secondary; border-title-color: $foreground; background: $surface; }
+#daemon-log { height: 1fr; border: round $secondary; border-title-color: $foreground; background: $surface; }

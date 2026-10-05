@@ -123,6 +123,13 @@ def short_error(text: str, width: int = 80) -> str:
     return line if len(line) <= width else line[:width - 1] + "…"
 
 
+def feed_line(text: str) -> str:
+    """An event line for the Activity panel: free text a human or worker wrote (a question,
+    an answer, a note) is left out, so one event stays one line. feed.py keeps the whole text
+    for notifications.log and `swarm.py log`; the `y` dialog shows the full question."""
+    return text.split(feed.QUOTE_SEP, 1)[0]
+
+
 def dispatch_failed_text(t: snapshot.TaskView) -> str:
     f = t.dispatch_failed
     if not f:
@@ -322,7 +329,7 @@ def idle_text(snap: snapshot.Snapshot, identity: str) -> str:
 
 def initial_feed(root: Path, seen: set[str], limit: int = 20) -> list[str]:
     events = feed.new_events(root, seen)
-    return [e.text for e in events[-limit:]]
+    return [feed_line(e.text) for e in events[-limit:]]
 
 
 def epic_of(snap: snapshot.Snapshot, key: str) -> str | None:

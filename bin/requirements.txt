@@ -1,4 +1,6 @@
+# Floors are the oldest version the suite is run against (GH-70). Raise one only
+# to a version you have run; never declare a floor nobody has tested.
 typer>=0.16     # command-line interface (>=0.16 for click 8.2+; >=0.17 vendors click)
 rich>=13.7      # formatted terminal output
-textual>=0.58   # the Swarm Board UI (Ch.10)
+textual>=8.2.8  # the Swarm Board UI (Ch.10); Theme/register_theme (0.86+) and App.COMMANDS, last run on 8.2.8
 pyyaml>=6.0     # every claim, checkpoint, and arbitration file

@@ -233,3 +233,25 @@ def test_lease_bar_carries_the_value_without_colour():
     assert len(boardview.bar_text(0.43)) == 8
     assert boardview.lease_cell(None, lease) == "-"
     assert [boardview.level_of(f) for f in (None, 0.1, 0.6, 0.95)] == ["plain", "ok", "warn", "crit"]
+
+
+def test_feed_line_leaves_free_text_out_of_the_panel():
+    from dags import feed
+    long = "Should cancelled matches be stored? " * 15      # ~540 chars
+    cases = [
+        feed._describe_event("T1", "Jane", "mac-a", {"kind": "needs-human", "question": long}),
+        feed._describe_event("T1", "Jane", "mac-a", {"kind": "human-answered", "answer": long}),
+        feed._describe_event("T1", "Jane", "mac-a", {"kind": "unparked", "reason": long}),
+        feed._describe_event("T1", "Jane", "mac-a",
+                             {"kind": "autonomy-changed", "old": "a", "new": "b", "reason": long}),
+    ]
+    for full in cases:
+        assert long.strip() in full                       # feed.py keeps the whole record
+        line = boardview.feed_line(full)
+        assert "\n" not in line and len(line) < 60 and "Should cancelled" not in line
+    assert boardview.feed_line(cases[0]) == "T1 needs a human decision"
+
+
+def test_feed_line_passes_unquoted_lines_through():
+    url = "claude finished T1. The PR can be found at https://github.com/o/r/pull/1"
+    assert boardview.feed_line(url) == url
