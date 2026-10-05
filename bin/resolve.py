@@ -583,16 +583,16 @@ def test_scope_status(task_dir, humans: set[str] | None = None) -> dict | None:
     "answer"}`` for the latest question. An answer counts when it names that question and comes
     from a known human, or, on an auto-pr task, is the worker accepting its own recommendation."""
     records = _sorted_records(Path(task_dir) / "test-scope")
-    question = None
-    for _, d in records:
+    question = qname = None
+    for path, d in records:
         if d.get("kind") == "question":
-            question = d
+            question, qname = d, path.name
     if question is None:
         return None
     pid = question.get("proposal_id")
     auto = read_meta(task_dir).get("autonomy") == "auto-pr"
-    answer = None
-    for _, d in records:
+    answer = aname = None
+    for path, d in records:
         if d.get("kind") != "answer" or d.get("proposal_id") != pid:
             continue
         if d.get("self_accepted"):
@@ -600,9 +600,10 @@ def test_scope_status(task_dir, humans: set[str] | None = None) -> dict | None:
                 continue
         elif humans is not None and d.get("human") not in humans:
             continue
-        answer = d
+        answer, aname = d, path.name
     return {"status": "answered" if answer else "pending", "proposal_id": pid,
-            "proposal": question.get("proposal") or {}, "answer": answer}
+            "proposal": question.get("proposal") or {}, "answer": answer,
+            "question_name": qname, "answer_name": aname}
 
 
 # ---------------------------------------------------------------------------
@@ -613,6 +614,8 @@ def test_scope_status(task_dir, humans: set[str] | None = None) -> dict | None:
 STICKY_EVENTS = {"claim-lost", "pause-requested", "machine-paused", "machine-stopped"}
 # Events that make `swarm-task wait` stop and hand control back to the worker.
 STOP_EVENTS = STICKY_EVENTS | {"plan-changes-requested"}
+# News that never ends `swarm-task wait --for any`: the worker's own doing, or idle nagging.
+QUIET_EVENTS = {"idle", "tests-asked"}
 
 
 def open_question(task_dir) -> str | None:
@@ -703,6 +706,18 @@ def worker_events(task_dir, claim_id: str, machine: str, now: datetime, lease_s:
         if d.get("kind") == "human-answered" and d.get("claim_id") == claim_id:
             add("answered", path.name, f"{d.get('human') or 'A human'} answered your question "
                 f"\"{d.get('question')}\": {d.get('answer')}")
+    ts = test_scope_status(task_dir, humans)
+    if ts:
+        if ts["status"] == "pending":
+            add("tests-asked", ts["question_name"], "Your test-scope question is waiting for a human "
+                "(`swarm-task wait --for answer`).")
+        else:
+            a = ts["answer"]
+            who = "You accepted your own recommendation" if a.get("self_accepted") else \
+                f"{a.get('human') or 'A human'} answered your test-scope question"
+            enough = "; targeted is enough" if a.get("targeted_enough") else ""
+            note = f" Note: {a['note']}" if a.get("note") else ""
+            add("tests-answered", ts["answer_name"], f"{who}: scope {a.get('scope')}{enough}.{note}")
     outcome = res.outcome
     if outcome.kind == "reopened" and outcome.record:
         add("pr-feedback", str(R.clock_of(outcome.record)),
