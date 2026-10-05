@@ -1,5 +1,6 @@
 """Swarm Board pilot tests (Ch.10). Need textual — run on the Mac via bin/dev-setup.sh."""
 import asyncio
+from pathlib import Path
 import time
 
 import pytest
@@ -432,4 +433,26 @@ def test_idle_block_when_nothing_is_live(world):
             assert app.query_one("#idle").display
             assert not app.query_one("#claims").display
             assert "start --quota-share 1" in shown(app.query_one("#idle"))
+    run(go())
+
+
+def test_input_dialog_scrolls_a_long_prompt():
+    from textual.app import App
+    from textual.containers import VerticalScroll
+    long = "\n\n".join(f"Paragraph {i}: " + "word " * 60 for i in range(12))
+
+    class Host(App):                                    # the real stylesheet, without the Board's panels
+        CSS_PATH = str(Path(board.__file__).with_name("board.tcss"))
+
+        def get_css_variables(self):
+            return {**super().get_css_variables(), **board.PALETTE}
+
+    async def go():
+        app = Host()
+        async with app.run_test(size=(100, 30)) as pilot:
+            app.push_screen(board.InputScreen(long))
+            await pilot.pause()
+            scroll = app.screen.query_one("#prompt-scroll", VerticalScroll)
+            assert scroll.virtual_size.height > scroll.size.height     # overflows, but scrolls
+            assert app.screen.query_one("#answer").region.bottom <= 30   # the Input stays on screen
     run(go())

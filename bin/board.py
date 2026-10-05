@@ -214,7 +214,8 @@ class InputScreen(ModalScreen[str | None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
-            yield Label(self.prompt, markup=False)
+            with VerticalScroll(id="prompt-scroll"):
+                yield Label(self.prompt, markup=False)
             yield Input(value=self.value, placeholder=self.placeholder, id="answer",
                         type="integer" if self.numeric else "text")
 
@@ -508,7 +509,7 @@ class BoardApp(App):
                                              "checks": gh.checks_summary(pr), "url": t.pr_url}
                 except Exception:  # noqa: BLE001
                     pass
-        new_feed = [e.text for e in feed.new_events(ctx.root, self.seen)]
+        new_feed = [boardview.feed_line(e.text) for e in feed.new_events(ctx.root, self.seen)]
         notes = self.tail.read()
         logged = self.daemon_log.read_tagged()
         flagged = boardview.poller_flags(ctx.swarm_dir)

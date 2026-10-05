@@ -34,8 +34,11 @@ def _task_label(path: Path) -> str:
     return task_dir.name
 
 
+QUOTE_SEP = " — '"      # what _quote() puts before free text; the Board's panel cuts the line here
+
+
 def _quote(text) -> str:
-    return f" — '{text}'" if text else ""
+    return f"{QUOTE_SEP}{text}'" if text else ""
 
 
 def _describe_event(task: str, who: str, machine: str, data: dict) -> str | None:
