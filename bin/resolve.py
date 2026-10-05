@@ -609,6 +609,10 @@ STICKY_EVENTS = {"claim-lost", "pause-requested", "machine-paused", "machine-sto
 STOP_EVENTS = STICKY_EVENTS | {"plan-changes-requested"}
 
 
+# A human's answer, or the worker's report of one given out of band (GH-71).
+ANSWER_KINDS = ("human-answered", "human-answered-relayed")
+
+
 def open_question(task_dir) -> str | None:
     """The worker's ``needs_human`` question, unless a human answered it since."""
     cp = R.load_yaml(Path(task_dir) / "checkpoint.yaml")
@@ -618,7 +622,7 @@ def open_question(task_dir) -> str | None:
     asked = max([R.clock_of(d) for _, d in _sorted_records(Path(task_dir) / "events")
                  if d.get("kind") == "needs-human" and d.get("question") == question] or [0])
     for _, d in _sorted_records(Path(task_dir) / "events"):
-        if d.get("kind") == "human-answered" and d.get("question") == question and R.clock_of(d) >= asked:
+        if d.get("kind") in ANSWER_KINDS and d.get("question") == question and R.clock_of(d) >= asked:
             return None
     return str(question)
 
@@ -696,6 +700,9 @@ def worker_events(task_dir, claim_id: str, machine: str, now: datetime, lease_s:
     for path, d in _sorted_records(task_dir / "events"):
         if d.get("kind") == "human-answered" and d.get("claim_id") == claim_id:
             add("answered", path.name, f"{d.get('human') or 'A human'} answered your question "
+                f"\"{d.get('question')}\": {d.get('answer')}")
+        elif d.get("kind") == "human-answered-relayed" and d.get("claim_id") == claim_id:
+            add("answered", path.name, f"You recorded that {d.get('human') or 'a human'} answered "
                 f"\"{d.get('question')}\": {d.get('answer')}")
     outcome = res.outcome
     if outcome.kind == "reopened" and outcome.record:

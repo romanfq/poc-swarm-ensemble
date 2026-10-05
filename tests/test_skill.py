@@ -9,7 +9,7 @@ import sys
 import pytest
 
 import resolve as rv
-from dags import timeutil, worktree
+from dags import feed, timeutil, worktree
 
 FAKE_GH = r'''#!/usr/bin/env python3
 import json, sys, os
@@ -111,6 +111,13 @@ def test_wait_and_news_via_the_skill(world, monkeypatch):
     work.approve_plan(jane, jd)
     r = skill("wait", "--for", "approved", "--timeout", "5", "--interval", "0.2")
     assert r.returncode == 0 and "approved the plan" in r.stdout
+    r = skill("block", "keep cancelled matches?")
+    assert r.returncode == 0 and "swarm.py task answer" in r.stdout and "swarm-task answered" in r.stdout
+    r = skill("wait", "--for", "answer", "--timeout", "0.3", "--interval", "0.1")
+    assert r.returncode == 3 and "swarm.py task answer" in r.stdout
+    assert skill("answered", "yes, keep them", "--by", "jane").returncode == 0
+    jane.coord.pull()
+    assert any("the worker reports jane answered" in e.text for e in feed.all_events(jane.root))
     assert skill("block", "keep cancelled matches?").returncode == 0
     work.answer_question(jane, jd, "yes")
     r = skill("wait", "--for", "answer", "--timeout", "5", "--interval", "0.2")

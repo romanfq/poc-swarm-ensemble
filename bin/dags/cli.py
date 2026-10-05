@@ -657,6 +657,14 @@ def task_answer(key: str, answer: str):
     console.print(f"answered {key}")
 
 
+@task_app.command("answered")
+@guarded
+def task_answered(key: str, answer: str, by: str = typer.Option("", "--by", help="Who gave the answer.")):
+    """Record an answer the worker was given out of band, as relayed (swarm-task answered, GH-71)."""
+    work.relay_answer(ctx(), task_dir(key), answer, by or None)
+    console.print(f"recorded the relayed answer for {key}")
+
+
 @task_app.command("merge")
 @guarded
 def task_merge(key: str, force: bool = typer.Option(False, "--force", help="Merge even with failing checks.")):

@@ -189,6 +189,23 @@ def answer_question(ctx, task_dir: Path, answer: str) -> None:
     _try_backend(ctx, ctx.backend.post_comment, _ref(task_dir), f"DAGS: {human} answered: {answer.strip()}")
 
 
+def relay_answer(ctx, task_dir: Path, answer: str, by: str | None = None) -> None:
+    """The worker records an answer it was given out of band (`swarm-task answered`). Written as
+    its own event kind, never as `human-answered`: the worker's word is not a human's entry."""
+    claim_id = my_claim(ctx, task_dir)
+    if not answer.strip():
+        raise WorkError("an answer can't be empty")
+    ctx.coord.pull()
+    question = resolve.open_question(task_dir)
+    if not question:
+        raise WorkError(f"{resolve.label(task_dir)} has no open question")
+    who = (by or "").strip() or None
+    L.record_event(ctx, task_dir, "human-answered-relayed", claim_id=claim_id, relayed_by=ctx.identity,
+                   human=who, question=question, answer=answer.strip())
+    _try_backend(ctx, ctx.backend.post_comment, _ref(task_dir),
+                 f"DAGS: the worker reports {who or 'a human'} answered: {answer.strip()}")
+
+
 def worker_events(ctx, task_dir: Path, claim_id: str) -> dict:
     """What `swarm-task` prints first, and what `swarm-task wait` blocks on (GH-2). Reads the
     ledger after a pull; never raises on a lost claim, that is one of the events."""

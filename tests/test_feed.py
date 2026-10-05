@@ -161,3 +161,13 @@ def test_select_by_task_and_machine_and_heartbeats_collapse(ledger):
     beats = feed.heartbeat_summary(ledger.root)
     assert len(beats) == 1 and beats[0].task == "T1" and beats[0].machine == "mac-a"
     assert at(3).isoformat() in beats[0].text
+
+
+def test_a_relayed_answer_reads_as_the_workers_report(world):
+    _task(world)
+    a = world.machine("mac-a")
+    world.scheduler(a, worker="claude").cycle()
+    d = rv.index(a.root)["T1"]
+    work.block(a, d, "raise the floor?")
+    work.relay_answer(a, d, "yes", by="roman")
+    assert "the worker reports roman answered T1's question — 'yes'" in _lines(a)

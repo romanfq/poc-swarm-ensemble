@@ -7,6 +7,7 @@ import resolve as rv
 from backends.base import TaskRef
 from conftest import sh
 from dags import ledger as L
+from dags import records as R
 from dags import timeutil, work, worktree
 
 OK = lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, "", "")  # noqa: E731
@@ -392,6 +393,23 @@ def test_a_human_answers_a_blocked_worker(claimed):
     from dags import snapshot
     assert snapshot.take(a).by_key("T1").needs_human is None
     work.block(a, d, "store cancelled matches?")        # the same question asked again is open again
+    assert _events(a, d)["open_question"] == "store cancelled matches?"
+
+
+def test_a_worker_relays_an_answer_it_was_given_out_of_band(claimed):
+    world, a, d, wt = claimed
+    with pytest.raises(work.WorkError, match="no open question"):
+        work.relay_answer(a, d, "yes")
+    work.block(a, d, "store cancelled matches?")
+    with pytest.raises(work.WorkError):
+        work.relay_answer(a, d, "  ")
+    work.relay_answer(a, d, "yes, with a status flag", by="roman")
+    assert _events(a, d)["open_question"] is None
+    kinds = [x.get("kind") for _, x in R.read_dir(d / "events")]
+    assert "human-answered-relayed" in kinds and "human-answered" not in kinds
+    from dags import snapshot
+    assert snapshot.take(a).by_key("T1").needs_human is None
+    work.block(a, d, "store cancelled matches?")        # asked again is open again
     assert _events(a, d)["open_question"] == "store cancelled matches?"
 
 

@@ -60,6 +60,9 @@ def _describe_event(task: str, who: str, machine: str, data: dict) -> str | None
                 f"({machine})")
     if k == "human-answered":
         return f"{who} answered {task}'s question{_quote(data.get('answer'))}"
+    if k == "human-answered-relayed":
+        return (f"the worker reports {data.get('human') or 'a human'} answered {task}'s question"
+                f"{_quote(data.get('answer'))}")
     if k == "pause-lifted":
         return f"The quota was raised again: {task} can carry on ({machine})"
     return None

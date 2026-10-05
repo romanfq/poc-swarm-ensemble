@@ -210,6 +210,10 @@ def cmd_implement(args):
     print("\nRecord progress with `swarm-task note ...`; finish with `swarm-task done`.")
 
 
+def want_answer_hint(args) -> bool:
+    return args.wait_for in ("answer", "any")
+
+
 def cmd_wait(args):
     """Block until something happens to the task. Exit 0: what you waited for happened;
     2: stop and read the message (plan sent back, pause, claim lost); 3: timed out."""
@@ -245,6 +249,8 @@ def cmd_wait(args):
                 return 0
         if deadline is not None and time.monotonic() >= deadline:
             print(f"[swarm] nothing yet after {args.timeout}s; run `swarm-task wait` again to keep waiting.")
+            if want_answer_hint(args):
+                print(f"A human answers with `swarm.py task answer {CTX['short']} \"<text>\"`, or `y` on the Board.")
             return 3
         time.sleep(args.interval)
 
@@ -272,6 +278,16 @@ def cmd_block(args):
     pending(needs_claim=True)
     swarm("block", CTX["short"], args.question)
     print("Recorded. A human has been asked. Run `swarm-task wait --for answer` and carry on when it returns.")
+    print(f"A human answers with `swarm.py task answer {CTX['short']} \"<text>\"`, or `y` on the Board. "
+          "If they answer you here in the terminal instead, record it with "
+          "`swarm-task answered \"<their answer>\" --by <name>`.")
+
+
+def cmd_answered(args):
+    pending(needs_claim=True)
+    extra = ["--by", args.by] if args.by else []
+    swarm("answered", CTX["short"], args.answer, *extra)
+    print("Recorded as relayed: the ledger shows you reported the answer. Carry on.")
 
 
 def cmd_test(args):
@@ -317,6 +333,10 @@ def main(argv=None):
     sn.add_argument("--question", nargs="*")
     sn.add_argument("--risk", nargs="*")
     sn.set_defaults(fn=cmd_note)
+    sa = sub.add_parser("answered", help="record an answer a human gave you in the terminal (as relayed)")
+    sa.add_argument("answer")
+    sa.add_argument("--by", default="", help="who answered")
+    sa.set_defaults(fn=cmd_answered)
     sb = sub.add_parser("block", help="ask a human and stop")
     sb.add_argument("question")
     sb.set_defaults(fn=cmd_block)
