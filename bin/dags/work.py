@@ -197,7 +197,8 @@ def worker_events(ctx, task_dir: Path, claim_id: str) -> dict:
         task_dir, claim_id, ctx.identity, timeutil.now(), ctx.settings.lease_s, ctx.human_names,
         control=L.machine_control(ctx.root, ctx.identity), idle_limit_s=ctx.settings.human_idle_s)
     return {"events": events, "plan_status": resolve.plan_status(task_dir, ctx.human_names),
-            "open_question": resolve.open_question(task_dir)}
+            "open_question": resolve.open_question(task_dir),
+            "open_tests": (resolve.test_scope_status(task_dir, ctx.human_names) or {}).get("status") == "pending"}
 
 
 def still_working(ctx, task_dir: Path) -> None:
