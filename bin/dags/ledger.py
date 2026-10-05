@@ -44,14 +44,14 @@ def claim(ctx: Context, task_dir: Path, worker: str | None = None) -> str:
 
 
 def withdraw(ctx: Context, task_dir: Path, claim_id: str, reason: str, winner: str | None = None,
-             push: bool = True) -> None:
+             push: bool = True, **extra) -> None:
     def build():
         existing = resolve.read_withdrawals(task_dir)
         if claim_id in existing:
             return []
         clock = resolve.next_clock(ctx.root)
         return [R.write_new(task_dir / "withdrawals" / R.withdrawal_name(ctx.identity, clock),
-                            _stamp(ctx, clock, claim_id=claim_id, reason=reason, winner=winner))]
+                            _stamp(ctx, clock, claim_id=claim_id, reason=reason, winner=winner, **extra))]
 
     _tx(ctx, f"withdraw {claim_id} ({reason})", build, push=push)
 
@@ -142,6 +142,28 @@ def update_checkpoint(ctx: Context, task_dir: Path, claim_id: str, *, append: di
 def _write_event(ctx: Context, task_dir: Path, clock: int, kind: str, **fields) -> Path:
     return R.write_new(task_dir / "events" / R.event_name(ctx.identity, kind, clock),
                        _stamp(ctx, clock, kind=kind, **fields))
+
+
+def set_autonomy(ctx: Context, task_dir: Path, tier: str, reason: str, human: str,
+                 push: bool = True) -> str | None:
+    """A human changes the autonomy tier (D30: the ledger is authoritative for it). One
+    commit: a meta revision, which is what the scheduler reads, and an ``autonomy-changed``
+    event, which is what ``swarm log`` shows. Returns the old tier, or None if unchanged."""
+    old = []
+
+    def build():
+        current = resolve.read_meta(task_dir).get("autonomy")
+        if current == tier:
+            return []
+        old.append(current)
+        clock = resolve.next_clock(ctx.root)
+        return [R.write_new(task_dir / "meta" / R.meta_revision_name(ctx.identity, clock),
+                            _stamp(ctx, clock, autonomy=tier)),
+                _write_event(ctx, task_dir, clock + 1, "autonomy-changed", human=human,
+                             old=current, new=tier, reason=reason)]
+
+    _tx(ctx, f"autonomy {task_dir.name} -> {tier}", build, push=push)
+    return old[0] if old else None
 
 
 def record_event(ctx: Context, task_dir: Path, kind: str, once_per_claim: bool = False,

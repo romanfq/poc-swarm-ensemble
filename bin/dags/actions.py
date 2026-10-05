@@ -68,6 +68,40 @@ def unpark(ctx, task_dir: Path, reason: str = "unparked") -> None:
     L.record_event(ctx, task_dir, "unparked", reason=reason, human=human)
 
 
+def park(ctx, task_dir: Path, reason: str) -> None:
+    """Withdraw this machine's claim and park the task in one step, without passing through
+    ``ready`` (GH-73). Ended by ``unpark``."""
+    from dags import work
+    human = require_known_human(ctx)
+    if not reason.strip():
+        raise ActionError("a reason is required to park a task")
+    try:
+        work.park(ctx, task_dir, reason, human)
+    except L.LostClaim as e:
+        raise ActionError(f"{e}; park works on a task this machine has claimed") from e
+
+
+def set_autonomy(ctx, task_dir: Path, tier: str, reason: str = "") -> str:
+    """Change a task's autonomy tier through the backend and the ledger together (D30), so
+    the next scheduler cycle sees it without a ``plan sync``. Safe to re-run."""
+    from backends.base import AUTONOMY_TIERS
+    human = require_known_human(ctx)
+    if tier not in AUTONOMY_TIERS:
+        raise ActionError(f"autonomy must be one of {', '.join(AUTONOMY_TIERS)}")
+    label = resolve.label(task_dir)
+    ref = TaskRef(str(resolve.read_meta(task_dir)["key"]))
+    try:
+        ctx.backend.set_autonomy(ref, tier)
+    except Exception as e:  # noqa: BLE001
+        raise ActionError(f"{label}: the backend refused the change, so nothing was changed: {e}") from e
+    try:
+        old = L.set_autonomy(ctx, task_dir, tier, reason, human)
+    except Exception as e:  # noqa: BLE001
+        raise ActionError(f"{label}: the backend was updated to {tier} but the ledger was not ({e}). "
+                          f"Re-running the same command is safe.") from e
+    return f"{label} is already {tier}" if old is None else f"{label}: autonomy {old} -> {tier}"
+
+
 def reassign(ctx, task_dir: Path, winner: str, reason: str) -> None:
     claims = {c.id: c for c in resolve.read_claims(task_dir)}
     if winner not in claims:

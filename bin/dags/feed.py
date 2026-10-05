@@ -60,6 +60,11 @@ def _describe_event(task: str, who: str, machine: str, data: dict) -> str | None
                 f"({machine})")
     if k == "human-answered":
         return f"{who} answered {task}'s question{_quote(data.get('answer'))}"
+    if k == "autonomy-changed":
+        return (f"{who} changed the autonomy of {task} from {data.get('old')} to {data.get('new')}"
+                f"{_quote(data.get('reason'))}")
+    if k == "unparked":
+        return f"{who} unparked {task}{_quote(data.get('reason'))}"
     if k == "pause-lifted":
         return f"The quota was raised again: {task} can carry on ({machine})"
     return None
@@ -115,6 +120,9 @@ def _describe(root: Path, path: Path, data: dict) -> Event | None:
             text = f"{machine} lost the race for {task} to {data.get('winner')} and withdrew"
         elif reason == "released":
             text = f"{machine} released {task}"
+        elif reason == "parked-by-human":
+            why = f" — '{data['note']}'" if data.get("note") else ""
+            text = f"{data.get('human') or machine} parked {task}{why}; it stays out of the queue until unparked"
         elif reason == "quota":
             text = f"{machine} paused {task} because the quota was lowered; it resumes from its checkpoint"
         else:

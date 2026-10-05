@@ -391,13 +391,19 @@ def ledger_ready(root, task_dir, now: datetime, lease_s: float, humans: set[str]
     return deps_done(root, meta, idx)
 
 
+# A claim given back for one of these reasons parks the task. ``no-worker-chosen`` is the
+# GH-12 fuse; ``parked-by-human`` is `swarm.py task park`. They stay distinct in the ledger.
+PARK_REASONS = ("no-worker-chosen", "parked-by-human")
+
+
 def parked(task_dir) -> bool:
     """A claim was given back because nobody chose a worker (``no-worker-chosen``)
-    and no human has acted since: no machine re-claims the task (GH-12). A later
-    claim or an ``unparked`` event ends the park."""
+    or a human parked the task (``parked-by-human``), and nothing has acted since:
+    no machine re-claims the task (GH-12). A later claim or an ``unparked`` event
+    ends the park."""
     task_dir = Path(task_dir)
     last = max([R.clock_of(w) for w in read_withdrawals(task_dir).values()
-                if w.get("reason") == "no-worker-chosen"], default=0)
+                if w.get("reason") in PARK_REASONS], default=0)
     if not last or any(c.clock > last for c in read_claims(task_dir)):
         return False
     return not any(d.get("kind") == "unparked" and R.clock_of(d) > last
@@ -497,7 +503,7 @@ def order_candidates(candidates: Iterable[tuple[str, dict]], machine: str,
 # ---------------------------------------------------------------------------
 
 NON_FAILURE_WITHDRAWALS = {"lost-race", "released", "arbitration", "quota", "dispatch-failed",
-                        "no-worker-chosen"}
+                        "no-worker-chosen", "parked-by-human"}
 
 
 def retry_count(task_dir, now: datetime, lease_s: float) -> int:

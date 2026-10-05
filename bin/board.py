@@ -104,7 +104,8 @@ def _key(keys: str, action: str, label: str) -> Binding:
 # Each panel lists its own actions: the footer shows the focused panel's, not all of them.
 class ClaimsTable(LinkTable):
     BINDINGS = [_key("w", "choose_worker", "Worker"), _key("y", "answer_question", "Answer"),
-                _key("f", "freeze", "Freeze"), _key("p", "pause", "Pause"), _key("o", "open_ticket", "Ticket")]
+                _key("f", "freeze", "Freeze"), _key("u", "unpark", "Unpark"),
+                _key("p", "pause", "Pause"), _key("o", "open_ticket", "Ticket")]
 
 
 class ReviewTable(LinkTable):
@@ -135,6 +136,7 @@ COMMANDS = [
     ("stop", "Stop the swarm on this machine", "s"),
     ("choose_worker", "Choose a worker", "w"),
     ("freeze", "Freeze or unfreeze the selected task", "f"),
+    ("unpark", "Unpark the selected task", "u"),
     ("reassign", "Reassign the selected task", "a"),
     ("takeover", "Take over or release the epic", "e"),
     ("review_plan", "Review the selected plan", "v"),
@@ -389,6 +391,7 @@ class BoardApp(App):
         Binding("s", "stop", "Stop", show=False),
         Binding("w", "choose_worker", "Worker", show=False),
         Binding("f", "freeze", "Freeze/unfreeze", show=False),
+        Binding("u", "unpark", "Unpark", show=False),
         Binding("a", "reassign", "Reassign", show=False),
         Binding("e", "takeover", "Take over epic", show=False),
         Binding("v", "review_plan", "Review plan", show=False),
@@ -781,6 +784,19 @@ class BoardApp(App):
             if reason:
                 self.run_job(f"{view.short} frozen", actions.freeze, self.ctx, view.dir, reason)
         self.push_screen(InputScreen(f"Freeze {view.short} — reason (required):"), done)
+
+    def action_unpark(self) -> None:
+        if self.busy():
+            return
+        key = self.selected_task()
+        if not key or not self.snap:
+            return
+        view = self.snap.by_key(key)
+        if view is None:
+            self.notify(f"{key} is gone — refreshing", severity="warning")
+            self.refresh_data()
+            return
+        self.run_job(f"{view.short} unparked", actions.unpark, self.ctx, view.dir, "unparked on the Board")
 
     def action_reassign(self) -> None:
         if self.busy():
