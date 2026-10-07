@@ -470,8 +470,9 @@ def test_input_dialog_scrolls_a_long_prompt():
     class Host(App):                                    # the real stylesheet, without the Board's panels
         CSS_PATH = str(Path(board.__file__).with_name("board.tcss"))
 
-        def get_css_variables(self):
-            return {**super().get_css_variables(), **board.PALETTE}
+        def on_mount(self):                             # the theme, as BoardApp takes it
+            self.register_theme(board.DAGS_THEME)
+            self.theme = board.DAGS_THEME.name
 
     async def go():
         app = Host()

@@ -82,6 +82,14 @@ def sh(args, cwd):
     return subprocess.run(args, cwd=str(cwd), check=True, capture_output=True, text=True, env=env).stdout
 
 
+def quiet(repo) -> None:
+    """Switch off git's background gc/maintenance in a template repo. A detached repack leaves
+    .tmp-<pid>-pack-*.pack files that vanish while copy_template is copying the repo, which made
+    the first test to use a template error at setup (shutil.Error, [Errno 2])."""
+    for key, val in (("gc.auto", "0"), ("maintenance.auto", "false"), ("receive.autogc", "false")):
+        sh(["git", "config", key, val], repo)
+
+
 BACKEND_YAML = """\
 backend: fake
 fake:
@@ -136,6 +144,8 @@ class Swarm:
         sh(["git", "init", "-q", "--bare", "-b", "main", str(remote)], base)
         seed = base / "seed"
         sh(["git", "init", "-q", "-b", "main", str(seed)], base)
+        quiet(remote)
+        quiet(seed)
         (seed / "backend.yaml").write_text(BACKEND_YAML)
         (seed / "humans.yaml").write_text(HUMANS_YAML)
         (seed / ".gitignore").write_text(".swarm/\n.worktrees/\n__pycache__/\n")
@@ -234,6 +244,8 @@ class CodeWorld:
         sh(["git", "init", "-q", "--bare", "-b", "main", str(remote)], base)
         seed = base / "app-seed"
         sh(["git", "init", "-q", "-b", "main", str(seed)], base)
+        quiet(remote)
+        quiet(seed)
         (seed / "README.md").write_text("app\n")
         sh(["git", "add", "-A"], seed)
         sh(["git", "commit", "-qm", "seed"], seed)
