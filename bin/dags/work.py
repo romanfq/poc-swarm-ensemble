@@ -168,7 +168,12 @@ def implement_gate(ctx, task_dir: Path) -> dict:
 
 def block(ctx, task_dir: Path, question: str) -> None:
     claim_id = my_claim(ctx, task_dir)
-    L.update_checkpoint(ctx, task_dir, claim_id, needs_human=question, append={"open_questions": [question]},
+    meta = resolve.read_meta(task_dir)
+    if meta.get("autonomy") == "auto-pr":
+        _try_backend(ctx, ctx.backend.set_autonomy, _ref(task_dir), "human-must-review")
+        L.set_autonomy(ctx, task_dir, "human-must-review", f"plan question: {question}", human=str(ctx.operator))
+    L.update_checkpoint(ctx, task_dir, claim_id, needs_human=question, plan_self_approved=None,
+                        append={"open_questions": [question]},
                         event={"kind": "needs-human", "question": question})
     _try_backend(ctx, ctx.backend.post_comment, _ref(task_dir), f"DAGS: worker needs a human decision:\n\n{question}")
 
