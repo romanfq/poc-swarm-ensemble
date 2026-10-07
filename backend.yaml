@@ -1,0 +1,18 @@
+backend: github
+github:
+  repo: romanfq/poc-swarm-ensemble
+  use_issue_types: false
+repos:
+  romanfq/poc-swarm-ensemble:
+    base: main
+    test_command: ./bin/dev-setup.sh
+    checks_timeout: 0
+default_repo: romanfq/poc-swarm-ensemble
+plan_scope: labelled
+swarm:
+  default_quota: 3
+  lease_minutes: 15
+  heartbeat_minutes: 3
+  max_retries: 3
+  human_idle_hours: 8
+  thrash_threshold: 2
