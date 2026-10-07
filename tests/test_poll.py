@@ -8,7 +8,7 @@ import resolve as rv
 from dags import records as R
 from dags import timeutil
 from backends.base import TaskRef
-from dags import feed, work, worktree
+from dags import feed, snapshot, work, worktree
 from dags import ledger as L
 from dags.notify import Notifier
 from poll import Poller
@@ -270,3 +270,66 @@ def test_red_checks_after_release_alert_once_per_episode(pr_open):
     assert texts(poller.cycle(), "checks-failing") == []
     pr["statusCheckRollup"] = [{"conclusion": "FAILURE"}]
     assert len(texts(poller.cycle(), "checks-failing")) == 1
+
+
+# -- GH-56: a failed `gh pr view` is "not yet checked", and an unwatched PR is not lost ------
+
+def _fail_pr_view(monkeypatch, calls=None):
+    from dags import gh
+
+    def boom(repo, number):
+        if calls is not None:
+            calls.append(number)
+        raise gh.GhError(["pr", "view"], 1, "error connecting to api.github.com")
+    real = gh.pr_view
+    monkeypatch.setattr(gh, "pr_view", boom)
+    return lambda: monkeypatch.setattr(gh, "pr_view", real)
+
+
+def test_failed_fetch_is_retried_and_the_merge_still_recorded(pr_open, monkeypatch):
+    world, a, d, wt, url, poller = pr_open
+    restore = _fail_pr_view(monkeypatch)
+    world.prs.get(url)["state"] = "MERGED"
+    rep = poller.cycle()
+    assert not rv.is_done(d)
+    assert rep.pr_status[rv.read_meta(d)["key"]]["unconfirmed"] == 1
+    restore()
+    assert "merged" in kinds(poller.cycle())
+    assert rv.is_done(d)
+    assert poller.state["pr_unconfirmed"] == {}
+
+
+def test_unconfirmed_pr_is_flagged_once_after_n_polls_and_shown(pr_open, monkeypatch):
+    from dags import boardview, panel
+    world, a, d, wt, url, poller = pr_open
+    key = rv.read_meta(d)["key"]
+    _fail_pr_view(monkeypatch)
+    flagged = []
+    for _ in range(boardview.UNCONFIRMED_AFTER + 2):
+        flagged += texts(poller.cycle(), "pr-unconfirmed")
+    assert len(flagged) == 1 and url in flagged[0]
+    assert [k for k, _ in boardview.unconfirmed_prs(a.swarm_dir)] == [key]
+    rows = boardview.review_rows(snapshot.take(a), {key: {"state": None, "unconfirmed": 4}})
+    assert rows[0][1][4] == "unconfirmed (4)"
+    assert any(label == "unconfirmed" and url in value for label, value, _ in panel.status_rows(a))
+
+
+def test_frozen_task_with_a_live_pr_is_still_watched(pr_open):
+    from dags import actions
+    world, a, d, wt, url, poller = pr_open
+    poller.cycle()
+    actions.freeze(a, d, "hold")
+    assert rv.task_state(d, timeutil.now(), 900) == "frozen"
+    world.prs.get(url)["state"] = "MERGED"
+    poller.cycle()
+    assert rv.is_done(d)
+
+
+def test_finished_tasks_are_not_queried(pr_open, monkeypatch):
+    world, a, d, wt, url, poller = pr_open
+    world.prs.get(url)["state"] = "CLOSED"
+    poller.cycle()                                    # rejected
+    calls = []
+    _fail_pr_view(monkeypatch, calls)
+    poller.cycle()
+    assert calls == []
