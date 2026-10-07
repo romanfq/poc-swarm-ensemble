@@ -58,6 +58,23 @@ def test_auto_pr_self_approves(world):
     assert world.backend.comments(TaskRef("T9")) == []
 
 
+def test_auto_pr_drops_to_human_review_when_plan_question_is_raised(world):
+    world.backend.add("T9", title="x", labels=["repo:OWNER/app", "swarm:autonomy:auto-pr"])
+    a = world.machine("mac-a")
+    world.scheduler(a, worker="claude").cycle()
+    d = rv.index(a.root)["T9"]
+    assert work.submit_plan(a, d, "plan") == "approved"
+
+    work.block(a, d, "store cancelled matches?")
+
+    cp = L.read_checkpoint(d)
+    assert cp["needs_human"] == "store cancelled matches?"
+    assert cp.get("plan_self_approved") is None
+    assert rv.read_meta(d)["autonomy"] == "human-must-review"
+    assert world.backend.get_task(TaskRef("T9")).autonomy == "human-must-review"
+    assert rv.plan_status(d, a.human_names) == "pending-review"
+
+
 def test_unknown_human_cannot_approve(claimed):
     world, a, d, wt = claimed
     work.submit_plan(a, d, "plan")

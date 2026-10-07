@@ -562,7 +562,7 @@ def plan_status(task_dir, humans: set[str] | None = None) -> str | None:
     sha = cp.get("plan_sha")
     if not sha:
         return None
-    if cp.get("plan_self_approved") == sha:
+    if cp.get("plan_self_approved") == sha and not cp.get("needs_human"):
         return "approved"
     status = "pending-review"
     for _, d in _sorted_records(Path(task_dir) / "plan-reviews"):
@@ -693,7 +693,7 @@ def worker_events(task_dir, claim_id: str, machine: str, now: datetime, lease_s:
                     "`swarm-task plan --submit` again; don't implement.")
             elif d.get("decision") == "approved":
                 add("plan-approved", path.name, f"{who} approved the plan.{note} Next: `swarm-task implement`.")
-        if cp.get("plan_self_approved") == sha:
+        if cp.get("plan_self_approved") == sha and not cp.get("needs_human"):
             add("plan-approved", sha, "The plan is approved (auto-pr). Next: `swarm-task implement`.")
         # only the latest decision counts
         decided = [e for e in out if e["kind"].startswith("plan-")]
