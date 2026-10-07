@@ -117,7 +117,8 @@ The change you'll make, file by file or component by component.
 How you'll prove it works (the repo's test command is `{test_command}`).
 
 ## Risks / open questions
-Anything a reviewer should decide now.
+Anything a reviewer should decide now. The reviewer answers in a comment on the issue;
+`swarm-task status` and `swarm-task implement` print those answers.
 
 ---
 ### Context from earlier attempts
@@ -169,6 +170,18 @@ def pause_note(cp):
     return None
 
 
+def print_replies(info):
+    """What the reviewer said on the issue since the latest plan / question comment (GH-33)."""
+    if info.get("replies_error"):
+        print(f"\n({info['replies_error']})")
+    said = info.get("replies") or []
+    if not said:
+        return
+    print("\n# Reviewer says (on the issue; answer every point in your plan or your work)\n")
+    for r in said:
+        print(f"@{r.get('author')} ({r.get('created_at')}):\n{(r.get('body') or '').strip()}\n")
+
+
 def cmd_status(args):
     pending()
     info = task_context()
@@ -181,6 +194,10 @@ def cmd_status(args):
     print(f"summary:     {cp.get('summary') or '(none yet)'}")
     if cp.get("needs_human"):
         print(f"waiting on a human: {cp['needs_human']}")
+    print_replies(info)
+    if info.get("plan_status") == "changes-requested":
+        print("\nThe reviewer asked for changes; the reason is on the issue (see above). Edit plan.md and "
+              "run `swarm-task plan --submit` again.")
 
 
 def cmd_implement(args):
@@ -189,6 +206,7 @@ def cmd_implement(args):
     if pause_note(info.get("checkpoint") or {}):
         sys.exit("swarm-task: " + pause_note(info["checkpoint"]))
     if not info.get("allowed"):
+        print_replies(info)
         sys.exit(f"swarm-task: the plan is '{info.get('plan_status') or 'missing'}', not approved — "
                  f"run `swarm-task plan` / wait for review before implementing.")
     cp = info.get("checkpoint") or {}
@@ -199,6 +217,7 @@ def cmd_implement(args):
     print("Tried:\n" + bullet(cp.get("tried")))
     print("Remaining:\n" + bullet(cp.get("remaining")))
     print("Open questions:\n" + bullet(cp.get("open_questions")))
+    print_replies(info)
     fb = info.get("feedback") or []
     if fb:
         print("\n# Reviewer feedback (address every item)\n")

@@ -102,6 +102,37 @@ def note(ctx, task_dir: Path, *, summary=None, tried=(), remaining=None, questio
     return L.update_checkpoint(ctx, task_dir, claim_id, append=append, **fields)
 
 
+def _post(ctx, task_dir: Path, text: str) -> str | None:
+    """Post on the task's issue; the comment's URL, or None when the backend is down or has no URL."""
+    try:
+        return ctx.backend.post_comment(_ref(task_dir), text)
+    except Exception as e:  # noqa: BLE001 - the backend is a mirror; never fail the ledger step
+        log.warning("backend update failed: %s", e)
+        return None
+
+
+# What marks the comment a reviewer's replies are counted after. The legacy texts keep tasks
+# that were started before the markers existed working.
+PLAN_MARKER = "<!-- dags-plan: {sha} -->"
+BLOCK_MARKER = "<!-- dags-block: {claim} -->"
+_MARKER_RE = re.compile(r"<!-- dags-(?:plan|block): [^>]*-->|^DAGS: (?:plan for review|worker needs a human decision)",
+                        re.M)
+
+
+def replies(ctx, task_dir: Path) -> list[dict]:
+    """What the listed humans said on the issue since the latest plan or question comment (GH-33).
+    Free text; nothing parses it. Raises whatever the backend raises."""
+    comments = ctx.backend.list_comments(_ref(task_dir))
+    last = max((i for i, c in enumerate(comments) if _MARKER_RE.search(c.body or "")), default=-1)
+    out = []
+    for c in comments[last + 1:]:
+        human = ctx.human_by_github(c.author)
+        if human:
+            out.append({"human": human, "author": c.author, "body": c.body, "created_at": c.created_at,
+                        "url": c.url})
+    return out
+
+
 def plan_sha(text: str) -> str:
     return hashlib.sha256(text.strip().encode()).hexdigest()[:12]
 
@@ -122,9 +153,11 @@ def submit_plan(ctx, task_dir: Path, plan_md: str) -> str:
     L.update_checkpoint(ctx, task_dir, claim_id, event=event, **fields)
     status = resolve.plan_status(task_dir, ctx.human_names)
     if status != "approved":
-        _try_backend(ctx, ctx.backend.post_comment, _ref(task_dir),
-                     f"DAGS: plan for review (approve on the Swarm Board or with "
-                     f"`swarm.py task approve-plan {resolve.label(task_dir)}`)\n\n{plan_md}")
+        url = _post(ctx, task_dir, f"{PLAN_MARKER.format(sha=sha)}\n"
+                    f"DAGS: plan for review. Answer the questions below in a comment here; approve on the "
+                    f"Swarm Board or with `swarm.py task approve-plan {resolve.label(task_dir)}`.\n\n{plan_md}")
+        if url:
+            L.update_checkpoint(ctx, task_dir, claim_id, plan_comment_url=url)
     return status
 
 
@@ -163,7 +196,12 @@ def implement_gate(ctx, task_dir: Path) -> dict:
         fb = feedback(ctx, task_dir)
     except (gh.GhError, FileNotFoundError) as e:
         fb = [{"tag": "error", "text": f"could not read PR feedback: {e}"}]
-    return {"allowed": status == "approved", "plan_status": status, "checkpoint": cp, "feedback": fb}
+    try:
+        said, said_error = replies(ctx, task_dir), None
+    except Exception as e:  # noqa: BLE001 - one API read; the worker can still go on without it
+        said, said_error = [], f"could not read the issue's comments: {e}"
+    return {"allowed": status == "approved", "plan_status": status, "checkpoint": cp, "feedback": fb,
+            "replies": said, "replies_error": said_error}
 
 
 def block(ctx, task_dir: Path, question: str) -> None:
@@ -172,10 +210,12 @@ def block(ctx, task_dir: Path, question: str) -> None:
     if meta.get("autonomy") == "auto-pr":
         _try_backend(ctx, ctx.backend.set_autonomy, _ref(task_dir), "human-must-review")
         L.set_autonomy(ctx, task_dir, "human-must-review", f"plan question: {question}", human=str(ctx.operator))
+    url = _post(ctx, task_dir, f"{BLOCK_MARKER.format(claim=claim_id)}\n"
+                f"DAGS: worker needs a human decision. Answer in a comment here:\n\n{question}")
+    fields = {"question_comment_url": url} if url else {}
     L.update_checkpoint(ctx, task_dir, claim_id, needs_human=question, plan_self_approved=None,
                         append={"open_questions": [question]},
-                        event={"kind": "needs-human", "question": question})
-    _try_backend(ctx, ctx.backend.post_comment, _ref(task_dir), f"DAGS: worker needs a human decision:\n\n{question}")
+                        event={"kind": "needs-human", "question": question}, **fields)
 
 
 def answer_question(ctx, task_dir: Path, answer: str) -> None:

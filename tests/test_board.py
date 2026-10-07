@@ -483,3 +483,41 @@ def test_input_dialog_scrolls_a_long_prompt():
             assert scroll.virtual_size.height > scroll.size.height     # overflows, but scrolls
             assert app.screen.query_one("#answer").region.bottom <= 30   # the Input stays on screen
     run(go())
+
+
+def test_answer_on_github_opens_the_recorded_comment(setup):
+    world, a, app, opened = setup
+    d = rv.index(a.root)["T1"]
+    work.choose_worker(a, d, "claude", launch=world.launch, platform="darwin")
+    work.submit_plan(a, d, "# The plan\nDo it.")
+    from dags import ledger as L
+    url = L.read_checkpoint(d)["plan_comment_url"]
+    assert url
+
+    async def go():
+        async with app.run_test(size=(160, 50)) as pilot:
+            app.selected_task = lambda *args, **kwargs: "T1"
+            await until(pilot, lambda: app.snap and app.snap.by_key("T1").plan_status == "pending-review")
+            await pilot.press("v")
+            await until(pilot, lambda: isinstance(app.screen, board.PlanScreen))
+            await pilot.click("#answer-on-github")
+            await until(pilot, lambda: opened == [url])
+            assert rv.plan_status(d, a.human_names) == "pending-review"      # opening the thread decides nothing
+    run(go())
+
+
+def test_open_ticket_on_a_blocked_task_opens_its_question(setup):
+    world, a, app, opened = setup
+    d = rv.index(a.root)["T1"]
+    work.choose_worker(a, d, "claude", launch=world.launch, platform="darwin")
+    work.block(a, d, "keep cancelled matches?")
+    from dags import ledger as L
+    url = L.read_checkpoint(d)["question_comment_url"]
+
+    async def go():
+        async with app.run_test(size=(160, 50)) as pilot:
+            app.selected_task = lambda *args, **kwargs: "T1"
+            await until(pilot, lambda: app.snap and app.snap.by_key("T1") is not None)
+            app.action_open_ticket()
+            await until(pilot, lambda: opened == [url])
+    run(go())

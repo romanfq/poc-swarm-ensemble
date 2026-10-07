@@ -22,7 +22,7 @@ import threading
 import time
 
 from backends.base import (AUTONOMY_PREFIX, AUTONOMY_TIERS, DEFAULT_AUTONOMY, DEFAULT_PLAN_SCOPE,
-                           REPO_PREFIX, STATUS_PREFIX, SWARM_STATUSES, PlanScoped, Task, TaskRef,
+                           REPO_PREFIX, STATUS_PREFIX, SWARM_STATUSES, Comment, PlanScoped, Task, TaskRef,
                            parse_labels, plan_scope_of)
 from dags import gh
 
@@ -269,9 +269,17 @@ class GitHubBackend(PlanScoped):
             raise ValueError(f"unknown autonomy tier {tier!r}")
         self._swap_label(ref, AUTONOMY_PREFIX, tier)
 
-    def post_comment(self, ref: TaskRef, text: str) -> None:
+    def post_comment(self, ref: TaskRef, text: str) -> str | None:
         repo, num = self._split(ref)
-        gh.gh(["issue", "comment", str(num), "--repo", repo, "--body-file", "-"], input=text)
+        out = gh.gh(["issue", "comment", str(num), "--repo", repo, "--body-file", "-"], input=text)
+        m = re.search(r"https://\S+", out or "")       # `gh issue comment` prints the comment's URL
+        return m.group(0) if m else None
+
+    def list_comments(self, ref: TaskRef) -> list[Comment]:
+        repo, num = self._split(ref)
+        data = gh.gh_json(["issue", "view", str(num), "--repo", repo, "--json", "comments"]) or {}
+        return [Comment((c.get("author") or {}).get("login"), c.get("body") or "", c.get("createdAt") or "",
+                        c.get("url")) for c in data.get("comments") or []]
 
     # -- one-time setup, run by a human (`swarm.py backend init`) -----------------------
     def required_labels(self, code_repos: list[str]) -> list[tuple[str, str]]:

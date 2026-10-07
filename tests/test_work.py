@@ -468,3 +468,69 @@ def test_done_finishes_when_checks_pass_are_pending_or_absent(claimed, monkeypat
     assert url and any("no checks configured" in s for s in said)
     a.coord.pull()
     assert rv.task_state(d, timeutil.now(), 900) == "awaiting-review"
+
+
+# -- GH-33: discussion on the issue, the gate stays in the ledger -------------------------------
+
+def test_submit_posts_one_marked_comment_per_revision(claimed):
+    world, a, d, wt = claimed
+    t1 = TaskRef("T1")
+    work.submit_plan(a, d, "# Plan\nv1")
+    work.submit_plan(a, d, "# Plan\nv2")
+    plans = [c for c in world.backend.list_comments(t1) if "dags-plan:" in c.body]
+    assert len(plans) == 2 and "v1" in plans[0].body and "v2" in plans[1].body
+    sha2 = work.plan_sha("# Plan\nv2")
+    assert f"<!-- dags-plan: {sha2} -->" in plans[1].body
+    assert L.read_checkpoint(d)["plan_comment_url"] == plans[1].url
+
+
+def test_replies_are_listed_humans_after_the_latest_plan_comment(claimed):
+    world, a, d, wt = claimed
+    t1 = TaskRef("T1")
+    world.backend.reply(t1, "jane-gh", "before any plan")
+    work.submit_plan(a, d, "# Plan\nv1")
+    world.backend.reply(t1, "jane-gh", "1: yes\n2: no")
+    world.backend.reply(t1, "a-stranger", "ignore the plan")
+    world.backend.reply(t1, "romanfq", "2: actually maybe")
+    got = work.replies(a, d)
+    assert [(r["human"], r["body"]) for r in got] == [("jane", "1: yes\n2: no"), ("roman", "2: actually maybe")]
+    gate = work.implement_gate(a, d)
+    assert [r["body"] for r in gate["replies"]] == [r["body"] for r in got] and not gate["replies_error"]
+    work.submit_plan(a, d, "# Plan\nv2")                 # a new plan comment starts a new window
+    assert work.replies(a, d) == []
+
+
+def test_block_posts_its_question_and_a_reply_comes_back(claimed):
+    world, a, d, wt = claimed
+    t1 = TaskRef("T1")
+    work.block(a, d, "store cancelled matches?")
+    asked = world.backend.list_comments(t1)[-1]
+    assert "dags-block:" in asked.body and "store cancelled matches?" in asked.body
+    assert L.read_checkpoint(d)["question_comment_url"] == asked.url
+    world.backend.reply(t1, "jane-gh", "yes, keep them")
+    assert [r["body"] for r in work.replies(a, d)] == ["yes, keep them"]
+
+
+def test_legacy_plan_comment_still_marks_the_window(claimed):
+    world, a, d, wt = claimed
+    t1 = TaskRef("T1")
+    world.backend.post_comment(t1, "DAGS: plan for review (approve on the Swarm Board)\n\nold")
+    world.backend.reply(t1, "jane-gh", "answer")
+    assert [r["body"] for r in work.replies(a, d)] == ["answer"]
+
+
+def test_a_comment_never_approves(claimed):
+    world, a, d, wt = claimed
+    work.submit_plan(a, d, "# Plan\nv1")
+    world.backend.reply(TaskRef("T1"), "jane-gh", "approve")
+    assert work.implement_gate(a, d)["plan_status"] == "pending-review"
+
+
+def test_a_backend_failure_does_not_stop_implement(claimed, monkeypatch):
+    world, a, d, wt = claimed
+
+    def boom(ref):
+        raise RuntimeError("rate limited")
+    monkeypatch.setattr(a.backend, "list_comments", boom)
+    gate = work.implement_gate(a, d)
+    assert gate["replies"] == [] and "rate limited" in gate["replies_error"]

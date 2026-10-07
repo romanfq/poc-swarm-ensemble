@@ -29,6 +29,12 @@ change and how you'll test it. Then submit it:
   or taken from you. Don't build a watcher of your own. If it times out (exit 3),
   run it again.
 
+Your plan is posted as a comment on the task's issue. The reviewer answers your
+**Risks / open questions** there, in that thread. `swarm-task status` and
+`swarm-task implement` print what listed humans said after your latest plan or
+`block` comment, under "Reviewer says". A comment never approves the plan: that
+stays a Board / `approve-plan` action.
+
 Nothing reaches the reviewer until `.swarm-task/swarm-task plan --submit` runs.
 If the Board notices a draft plan in the worktree, it can submit and review it
 for you.
@@ -49,6 +55,9 @@ If you need a decision from a human, ask and then **wait** for the answer. Don't
 
     .swarm-task/swarm-task block "Should cancelled matches be stored?"
     .swarm-task/swarm-task wait --for answer
+
+The question is posted on the issue too. If the human replies there, the reply
+shows up under "Reviewer says" in `swarm-task status`.
 
 Every `swarm-task` command starts by printing news about your task (`[swarm] ...`):
 a human's answer, a plan sent back, a pause request, or a lost claim. If it says the
