@@ -36,6 +36,7 @@ from textual.widgets import (Button, Checkbox, DataTable, Footer, Header, Input,
                              OptionList, ProgressBar, RichLog, Static)
 from textual.widgets.option_list import Option  # noqa: E402
 
+import resolve  # noqa: E402
 import workers  # noqa: E402
 from dags import actions, boardview, daemon, feed, gh, snapshot, worktree  # noqa: E402
 from dags import work as worklib  # noqa: E402
@@ -345,6 +346,7 @@ class PlanScreen(ModalScreen[str | None]):
                 else:
                     yield Button("Approve", id="approved", variant="success")
                     yield Button("Request changes", id="changes-requested", variant="warning")
+                yield Button("Answer on GitHub", id="answer-on-github")
                 yield Button("Cancel", id="cancel")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -912,12 +914,17 @@ class BoardApp(App):
             return
         self.notify(escape(f"opened {url}"))
 
+    def has_open_question(self, key: str) -> bool:
+        return bool(resolve.open_question(self.task_dir(key)))
+
     def open_task_link(self, key: str, kind: str) -> None:
         if kind == "pr":
             url = actions.pr_url(self.task_dir(key))
             missing = "no PR yet"
         else:
-            url = actions.ticket_url(self.ctx, self.task_dir(key))
+            # a blocked task's link goes to the comment with its question (GH-33)
+            url = actions.answer_url(self.ctx, self.task_dir(key)) if self.has_open_question(key) \
+                else actions.ticket_url(self.ctx, self.task_dir(key))
             missing = "no ticket link"
         if url:
             self.open_link(url)
@@ -968,6 +975,13 @@ class BoardApp(App):
         def done(decision):
             if not decision:
                 return
+            if decision == "answer-on-github":
+                url = actions.answer_url(self.ctx, view.dir)
+                if url:
+                    self.open_link(url)
+                else:
+                    self.notify(f"{view.short} has no issue link", severity="warning")
+                return
             if decision == "submit-changes-requested":
                 def note_done(note):
                     if note is None:
@@ -978,7 +992,7 @@ class BoardApp(App):
                         return f"plan for {view.short}: submitted and changes requested"
                     self.run_job(f"plan for {view.short}: submitted and changes requested",
                                 submit_then_request)
-                self.push_screen(InputScreen(f"Why should {view.short} change the plan?"), note_done)
+                self.push_screen(InputScreen(f"Why should {view.short} change the plan? (the discussion belongs on the issue: use Answer on GitHub)"), note_done)
                 return
             if decision == "submit-approved":
                 def submit_then_approve():

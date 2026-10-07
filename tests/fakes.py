@@ -139,8 +139,18 @@ class FakeGitHub:
             self.issues[int(args[2])]["state"] = "CLOSED"
             return ""
         if args[:2] == ["issue", "comment"]:
-            self.issues[int(args[2])]["comments"].append(input)
-            return ""
+            comments = self.issues[int(args[2])]["comments"]
+            comments.append(input)
+            return f"https://github.com/{args[args.index('--repo') + 1]}/issues/{args[2]}#issuecomment-{len(comments)}\n"
+        if args[:2] == ["issue", "view"] and "comments" in args:
+            n = int(args[2])
+            repo = args[args.index("--repo") + 1]
+            posted = [{"author": {"login": (c.get("author") if isinstance(c, dict) else "dags-bot")},
+                       "body": c.get("body") if isinstance(c, dict) else c,
+                       "createdAt": f"t{i:04d}",
+                       "url": f"https://github.com/{repo}/issues/{n}#issuecomment-{i + 1}"}
+                      for i, c in enumerate(self.issues[n]["comments"])]
+            return json.dumps({"comments": posted})
         if args[:2] == ["label", "create"]:
             self.labels.add(args[2])
             return ""
@@ -164,7 +174,11 @@ class FakeGitHub:
         return out
 
     def comments(self, key):
-        return self.issues[int(key.split("#")[1])]["comments"]
+        return [c["body"] if isinstance(c, dict) else c for c in self.issues[int(key.split("#")[1])]["comments"]]
+
+    def reply(self, key, author, text):
+        """A person's comment on the issue."""
+        self.issues[int(key.split("#")[1])]["comments"].append({"author": author, "body": text})
 
 
 # ---------------------------------------------------------------------------

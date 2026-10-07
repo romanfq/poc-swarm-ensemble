@@ -20,10 +20,15 @@ import threading
 from pathlib import Path
 
 from backends.base import (AUTONOMY_PREFIX, DEFAULT_AUTONOMY, DEFAULT_PLAN_SCOPE, STATUS_PREFIX,
-                           PlanScoped, Task, TaskRef, parse_labels, plan_scope_of)
+                           Comment, PlanScoped, Task, TaskRef, parse_labels, plan_scope_of)
 from dags import records as R
 
 _lock = threading.Lock()
+
+
+def _as_record(c) -> dict:
+    """Comments written before the fake kept authors are bare strings."""
+    return c if isinstance(c, dict) else {"author": "dags-bot", "body": str(c), "created_at": "", "url": None}
 
 
 class FakeBackend(PlanScoped):
@@ -107,11 +112,19 @@ class FakeBackend(PlanScoped):
     def epic_children(self, ref: TaskRef) -> list[TaskRef]:
         return [TaskRef(k) for k, v in self._load().items() if v.get("epic_of") == ref.key]
 
-    def post_comment(self, ref: TaskRef, text: str) -> None:
+    def post_comment(self, ref: TaskRef, text: str, author: str = "dags-bot") -> str | None:
         with _lock:
             issues = self._load()
-            issues[ref.key].setdefault("comments", []).append(text)
+            comments = issues[ref.key].setdefault("comments", [])
+            url = f"fake://{ref.key}/comments/{len(comments) + 1}"
+            comments.append({"author": author, "body": text, "created_at": f"c{len(comments) + 1:06d}",
+                             "url": url})
             self._save(issues)
+            return url
+
+    def list_comments(self, ref: TaskRef) -> list[Comment]:
+        return [Comment(c.get("author"), c.get("body", ""), c.get("created_at", ""), c.get("url"))
+                for c in map(_as_record, self._issue(ref).get("comments") or [])]
 
     def coordination_ref(self, ref: TaskRef) -> str:
         return ref.key
@@ -124,7 +137,11 @@ class FakeBackend(PlanScoped):
 
     # -- test/demo helpers (not part of the port) ------------------------------------
     def comments(self, ref: TaskRef) -> list[str]:
-        return list(self._issue(ref).get("comments") or [])
+        return [c["body"] for c in map(_as_record, self._issue(ref).get("comments") or [])]
+
+    def reply(self, ref: TaskRef, author: str, text: str) -> str | None:
+        """A person's comment on the issue (the bot's are posted through the port)."""
+        return self.post_comment(ref, text, author=author)
 
     def add(self, key: str, **fields) -> None:
         with _lock:
