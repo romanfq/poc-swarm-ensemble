@@ -24,7 +24,7 @@ except ImportError:  # pragma: no cover - typer < 0.17
 
 import resolve
 from backends.base import AUTONOMY_TIERS, SWARM_STATUSES, TaskRef
-from dags import actions, daemon, feed, gh, panel, plan, prereqs, repos, snapshot, timeutil, work
+from dags import actions, boardview, daemon, feed, gh, panel, plan, prereqs, repos, snapshot, timeutil, work
 from dags import ledger as L
 from dags.config import ConfigError, Context
 from dags.gitsync import GitError
@@ -164,6 +164,10 @@ def start(
     for repo, result in repos.ensure_all(c).items():
         if isinstance(result, Exception):
             console.print(f"[yellow]{escape(repo)}:[/]", escape(str(result)))
+    was_paused = L.machine_control(c.root, c.identity)
+    if was_paused["paused"]:
+        console.print(f"[yellow]{c.identity} was paused{escape(boardview.pause_text(was_paused))}; start resumed it[/]")
+        actions.resume(c)
     L.control(c, "start", quota_share=quota_share, default_worker=default_worker)
     opts = daemon.Options(quota_share=quota_share, poll_interval=daemon.parse_interval(poll_interval),
                           cycle_interval=daemon.parse_interval(cycle_interval),
@@ -236,15 +240,18 @@ def throttle(share: int, machine: Optional[str] = typer.Option(None)):
 
 @app.command()
 @guarded
-def status(as_json: bool = typer.Option(False, "--json")):
+def status(as_json: bool = typer.Option(False, "--json"),
+           ledger_only: bool = typer.Option(False, "--ledger", help="Answer from the local ledger; don't sync.")):
     """Print the status panel (Ch.5.4)."""
     c = ctx()
-    try:
-        c.coord.pull()
-        synced = True
-    except GitError:
-        synced = False
-    rows = panel.status_rows(c, synced=synced)
+    reason = "local ledger only" if ledger_only else None
+    if not ledger_only:
+        try:
+            c.coord.pull()
+        except GitError as e:
+            lines = (e.stderr or "").strip().splitlines()
+            reason = lines[-1] if lines else "sync failed"
+    rows = panel.status_rows(c, synced=reason is None, sync_note=reason)
     if as_json:
         typer.echo(json.dumps([{"label": a, "value": b, "style": s} for a, b, s in rows], indent=2))
     else:

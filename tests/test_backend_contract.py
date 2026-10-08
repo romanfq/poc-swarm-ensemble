@@ -26,6 +26,9 @@ class FakeAdapter:
     def comments(self, ref):
         return self.b.comments(ref)
 
+    def reply(self, ref, author, text):
+        self.b.reply(ref, author, text)
+
     def add_unlabelled(self, name, title, parent=None, closed=False):
         """An issue somebody filed by hand: no swarm or type label."""
         fields = {"title": title, "closed": closed}
@@ -54,6 +57,9 @@ class GitHubAdapter:
 
     def comments(self, ref):
         return self.fake.comments(ref.key)
+
+    def reply(self, ref, author, text):
+        self.fake.reply(ref.key, author, text)
 
     def add_unlabelled(self, name, title, parent=None, closed=False):
         n = max(self.fake.issues) + 1
@@ -161,6 +167,25 @@ def test_post_comment(adapter):
     r = adapter.refs
     adapter.b.post_comment(r["T1"], "## Summary\nhello")
     assert adapter.comments(r["T1"])[-1] == "## Summary\nhello"
+
+
+def test_post_comment_returns_the_url(adapter):
+    r = adapter.refs
+    url = adapter.b.post_comment(r["T1"], "first")
+    assert url and url.startswith(("http", "fake://"))
+    assert adapter.b.list_comments(r["T1"])[-1].url == url
+
+
+def test_list_comments_oldest_first_with_authors(adapter):
+    r = adapter.refs
+    assert adapter.b.list_comments(r["T1"]) == []
+    adapter.b.post_comment(r["T1"], "one")
+    adapter.reply(r["T1"], "roman", "two")
+    got = adapter.b.list_comments(r["T1"])
+    assert [c.body for c in got] == ["one", "two"]
+    assert got[1].author == "roman"
+    assert got[0].created_at < got[1].created_at
+    assert adapter.b.list_comments(r["T2"]) == []
 
 
 def test_coordination_ref_is_stable(adapter):

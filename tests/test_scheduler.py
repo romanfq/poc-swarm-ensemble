@@ -162,6 +162,33 @@ def test_pause_resume_and_stop(world):
     assert not later.cycle().stop_requested
 
 
+def test_machine_control_orderings(world):
+    a = world.machine("mac-a")
+    L.control(a, "pause")
+    L.control(a, "stop")
+    L.control(a, "start", quota_share=2)
+    st = L.machine_control(a.root, "mac-a")
+    assert st["paused"] and not st["stopped"]         # the ledger alone: start leaves a pause alone
+    assert st["paused_since"] and st["paused_by"]
+    L.control(a, "resume")
+    st = L.machine_control(a.root, "mac-a")
+    assert not st["paused"] and st["paused_since"] is None
+    L.control(a, "start", quota_share=1)              # pause -> resume -> start
+    assert not L.machine_control(a.root, "mac-a")["paused"]
+
+
+def test_paused_machine_claims_nothing_despite_room(world):
+    _plan(world, ("T1", {}), ("T2", {}))
+    a = world.machine("mac-a")
+    L.control(a, "pause")
+    s = world.scheduler(a, share=2)
+    assert s.cycle().claimed == []
+    L.control(a, "start", quota_share=2)              # start alone doesn't resume
+    assert s.cycle().paused
+    L.control(a, "resume")
+    assert len(s.cycle().claimed) == 2
+
+
 def test_takeover_is_soft_priority(world):
     world.backend.add("E1", title="E1", epic=True)
     world.backend.add("E2", title="E2", epic=True)
@@ -455,8 +482,8 @@ def test_failed_dispatch_is_notified_recorded_and_released(world, monkeypatch):
     view = snapshot.take(b).by_key("T1")
     assert view.dispatch_failed["attempts"] == 1
     row = dict(boardview.claim_rows(snapshot.take(b)))["T1"]
-    assert row[6] == "not started"
-    assert row[7] == "claimed · dispatch failed ×1: fatal: 'swarm/T1' is already used by worktree at '.../T1'"
+    assert row[3] == "not started"
+    assert row[1] == "claimed · dispatch failed ×1: fatal: 'swarm/T1' is already used by worktree at '.../T1'"
     rows = {label: value for label, value, _ in panel.status_rows(b)}
     assert rows["not started"].startswith("T1 on mac-a: dispatch failed ×1")
     assert "needs you" not in rows

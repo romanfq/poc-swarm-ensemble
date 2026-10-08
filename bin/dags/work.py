@@ -102,6 +102,37 @@ def note(ctx, task_dir: Path, *, summary=None, tried=(), remaining=None, questio
     return L.update_checkpoint(ctx, task_dir, claim_id, append=append, **fields)
 
 
+def _post(ctx, task_dir: Path, text: str) -> str | None:
+    """Post on the task's issue; the comment's URL, or None when the backend is down or has no URL."""
+    try:
+        return ctx.backend.post_comment(_ref(task_dir), text)
+    except Exception as e:  # noqa: BLE001 - the backend is a mirror; never fail the ledger step
+        log.warning("backend update failed: %s", e)
+        return None
+
+
+# What marks the comment a reviewer's replies are counted after. The legacy texts keep tasks
+# that were started before the markers existed working.
+PLAN_MARKER = "<!-- dags-plan: {sha} -->"
+BLOCK_MARKER = "<!-- dags-block: {claim} -->"
+_MARKER_RE = re.compile(r"<!-- dags-(?:plan|block): [^>]*-->|^DAGS: (?:plan for review|worker needs a human decision)",
+                        re.M)
+
+
+def replies(ctx, task_dir: Path) -> list[dict]:
+    """What the listed humans said on the issue since the latest plan or question comment (GH-33).
+    Free text; nothing parses it. Raises whatever the backend raises."""
+    comments = ctx.backend.list_comments(_ref(task_dir))
+    last = max((i for i, c in enumerate(comments) if _MARKER_RE.search(c.body or "")), default=-1)
+    out = []
+    for c in comments[last + 1:]:
+        human = ctx.human_by_github(c.author)
+        if human:
+            out.append({"human": human, "author": c.author, "body": c.body, "created_at": c.created_at,
+                        "url": c.url})
+    return out
+
+
 def plan_sha(text: str) -> str:
     return hashlib.sha256(text.strip().encode()).hexdigest()[:12]
 
@@ -122,9 +153,11 @@ def submit_plan(ctx, task_dir: Path, plan_md: str) -> str:
     L.update_checkpoint(ctx, task_dir, claim_id, event=event, **fields)
     status = resolve.plan_status(task_dir, ctx.human_names)
     if status != "approved":
-        _try_backend(ctx, ctx.backend.post_comment, _ref(task_dir),
-                     f"DAGS: plan for review (approve on the Swarm Board or with "
-                     f"`swarm.py task approve-plan {resolve.label(task_dir)}`)\n\n{plan_md}")
+        url = _post(ctx, task_dir, f"{PLAN_MARKER.format(sha=sha)}\n"
+                    f"DAGS: plan for review. Answer the questions below in a comment here; approve on the "
+                    f"Swarm Board or with `swarm.py task approve-plan {resolve.label(task_dir)}`.\n\n{plan_md}")
+        if url:
+            L.update_checkpoint(ctx, task_dir, claim_id, plan_comment_url=url)
     return status
 
 
@@ -163,14 +196,26 @@ def implement_gate(ctx, task_dir: Path) -> dict:
         fb = feedback(ctx, task_dir)
     except (gh.GhError, FileNotFoundError) as e:
         fb = [{"tag": "error", "text": f"could not read PR feedback: {e}"}]
-    return {"allowed": status == "approved", "plan_status": status, "checkpoint": cp, "feedback": fb}
+    try:
+        said, said_error = replies(ctx, task_dir), None
+    except Exception as e:  # noqa: BLE001 - one API read; the worker can still go on without it
+        said, said_error = [], f"could not read the issue's comments: {e}"
+    return {"allowed": status == "approved", "plan_status": status, "checkpoint": cp, "feedback": fb,
+            "replies": said, "replies_error": said_error}
 
 
 def block(ctx, task_dir: Path, question: str) -> None:
     claim_id = my_claim(ctx, task_dir)
-    L.update_checkpoint(ctx, task_dir, claim_id, needs_human=question, append={"open_questions": [question]},
-                        event={"kind": "needs-human", "question": question})
-    _try_backend(ctx, ctx.backend.post_comment, _ref(task_dir), f"DAGS: worker needs a human decision:\n\n{question}")
+    meta = resolve.read_meta(task_dir)
+    if meta.get("autonomy") == "auto-pr":
+        _try_backend(ctx, ctx.backend.set_autonomy, _ref(task_dir), "human-must-review")
+        L.set_autonomy(ctx, task_dir, "human-must-review", f"plan question: {question}", human=str(ctx.operator))
+    url = _post(ctx, task_dir, f"{BLOCK_MARKER.format(claim=claim_id)}\n"
+                f"DAGS: worker needs a human decision. Answer in a comment here:\n\n{question}")
+    fields = {"question_comment_url": url} if url else {}
+    L.update_checkpoint(ctx, task_dir, claim_id, needs_human=question, plan_self_approved=None,
+                        append={"open_questions": [question]},
+                        event={"kind": "needs-human", "question": question}, **fields)
 
 
 def answer_question(ctx, task_dir: Path, answer: str) -> None:
@@ -197,7 +242,8 @@ def worker_events(ctx, task_dir: Path, claim_id: str) -> dict:
         task_dir, claim_id, ctx.identity, timeutil.now(), ctx.settings.lease_s, ctx.human_names,
         control=L.machine_control(ctx.root, ctx.identity), idle_limit_s=ctx.settings.human_idle_s)
     return {"events": events, "plan_status": resolve.plan_status(task_dir, ctx.human_names),
-            "open_question": resolve.open_question(task_dir)}
+            "open_question": resolve.open_question(task_dir),
+            "open_tests": (resolve.test_scope_status(task_dir, ctx.human_names) or {}).get("status") == "pending"}
 
 
 def still_working(ctx, task_dir: Path) -> None:
@@ -378,6 +424,59 @@ def _await_checks(ctx, task_dir, claim_id, rcfg, url, token, say, sleep, clock) 
          "no checks": "no checks configured on this PR; finishing as usual"}[summary])
 
 
+CONFLICT_QUESTION = "Updating {branch} with origin/{base} conflicts in:"
+
+
+def _block_conflict(ctx, task_dir: Path, wt: Path, text: str) -> None:
+    block(ctx, task_dir, text)
+    raise WorkError(f"{text}\nThe merge is left in progress; touch nothing and "
+                    "`swarm-task wait --for answer`, then run `swarm-task done` again.")
+
+
+def _check_resolution(ctx, task_dir: Path, wt: Path, base: str, branch: str, cp: dict, label: str) -> None:
+    """Before anything is staged: a half-finished merge must not be committed with its markers."""
+    prefix = CONFLICT_QUESTION.format(branch=branch, base=base)
+    resuming = str(cp.get("needs_human") or "").startswith(prefix)
+    problems = []
+    if worktree.merge_in_progress(wt):
+        problems.append("a merge is still in progress (git commit it)")
+    unmerged = worktree.unmerged_paths(wt)
+    if unmerged:
+        problems.append("unmerged paths: " + ", ".join(unmerged))
+    if resuming:
+        marked = worktree.conflict_markers(wt, base)
+        if marked:
+            problems.append("conflict markers committed in: " + ", ".join(marked))
+    if problems:
+        _block_conflict(ctx, task_dir, wt, f"{prefix} the resolution isn't finished: "
+                        + "; ".join(problems) + f".\nIn {wt}: resolve, git add, git commit; "
+                        f'then: swarm.py task answer {label} "resolved"')
+
+
+def _bring_up_to_date(ctx, task_dir: Path, wt: Path, repo: str, base: str, branch: str, label: str) -> None:
+    """Fetch the base and bring the branch up to date with it before the tests (GH-91).
+    First push: rebase. PR already open: merge, never a force-push. A conflict is left as a
+    merge in progress and handed to a human with `block`; the re-run checks the resolution."""
+    prefix = CONFLICT_QUESTION.format(branch=branch, base=base)
+    worktree.fetch_base(wt, base)
+    if worktree.behind(wt, base) == 0:
+        return
+    try:
+        published = (resolve.last_submitted_commit(task_dir) is not None
+                     or worktree.remote_has_branch(wt, branch)
+                     or gh.pr_for_branch(repo, branch) is not None)
+    except Exception:  # noqa: BLE001 - can't tell: assume published, merge is the safe direction
+        published = True
+    try:
+        files = worktree.update_to_base(wt, base, rebase=not published)
+    except RuntimeError as e:
+        raise WorkError(f"{label}: {e}") from e
+    if files:
+        _block_conflict(ctx, task_dir, wt, f"{prefix} " + ", ".join(files)
+                        + f".\nIn {wt}: resolve the files, git add, git commit; "
+                        f'then: swarm.py task answer {label} "resolved" (or y on the Board)')
+
+
 def finish(ctx, task_dir: Path, wt: Path, *, skip_tests: bool = False, test_runner=subprocess.run,
            say=lambda text: None, wait_sleep=None, wait_clock=None) -> str:
     from dags.gitsync import git
@@ -401,6 +500,18 @@ def finish(ctx, task_dir: Path, wt: Path, *, skip_tests: bool = False, test_runn
     branch = worktree.branch_name(task_dir)
     durations: list[dict] = []
     scoped_note = ""
+    commit_msg, body = render(ctx, task_dir, cp)
+    _check_resolution(ctx, task_dir, wt, base, branch, cp, label)
+    git(["add", "-A"], wt)
+    if git(["diff", "--cached", "--quiet"], wt, check=False).returncode != 0:
+        cmd = ["commit", "-q", "-F", "-"]
+        bot = ctx.bot_identity()
+        if bot:
+            cmd.insert(1, f"--author={bot[0]} <{bot[1]}>")
+        git(cmd, wt, input=commit_msg)
+    _bring_up_to_date(ctx, task_dir, wt, repo, base, branch, label)
+    if worktree.commits_ahead(wt, base) == 0:
+        raise WorkError(f"{label}: no changes to submit on {branch}")
     if not skip_tests:
         scope, answer = _done_scope(ctx, task_dir, wt)
         if scope:
@@ -413,18 +524,7 @@ def finish(ctx, task_dir: Path, wt: Path, *, skip_tests: bool = False, test_runn
                            f"'{scope}' scope ({ran}) as enough.\n")
         else:
             durations = parse_durations(run_tests(rcfg.get("test_command"), wt, test_runner))
-
-    commit_msg, body = render(ctx, task_dir, cp)
     body += scoped_note
-    git(["add", "-A"], wt)
-    if git(["diff", "--cached", "--quiet"], wt, check=False).returncode != 0:
-        cmd = ["commit", "-q", "-F", "-"]
-        bot = ctx.bot_identity()
-        if bot:
-            cmd.insert(1, f"--author={bot[0]} <{bot[1]}>")
-        git(cmd, wt, input=commit_msg)
-    if worktree.commits_ahead(wt, base) == 0:
-        raise WorkError(f"{label}: no changes to submit on {branch}")
     submitted = resolve.last_submitted_commit(task_dir)
     if submitted and worktree.head(wt) == submitted:
         raise WorkError(f"{label}: nothing new since the PR was opened ({submitted[:7]}); "

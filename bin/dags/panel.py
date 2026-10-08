@@ -8,7 +8,7 @@ from __future__ import annotations
 from dags import boardview, daemon, snapshot
 
 
-def status_rows(ctx, identity_new: bool = False, synced: bool = True, share: int | None = None,
+def status_rows(ctx, identity_new: bool = False, synced: bool = True, sync_note: str | None = None, share: int | None = None,
                 poll_interval: float | None = None, snap=None) -> list[tuple[str, str, str]]:
     """[(label, value, style)] — style is one of ok / warn / off / plain."""
     snap = snap or snapshot.take(ctx, share=share)
@@ -22,7 +22,7 @@ def status_rows(ctx, identity_new: bool = False, synced: bool = True, share: int
 
     rows = [("identity", f"{ctx.identity}{' (new)' if identity_new else ''}  ·  operator {ctx.operator}", "plain")]
     ready = len(snap.ready)
-    rows.append(("coordination", f"{'synced' if synced else 'NOT synced'} -- {ready} task{'s' if ready != 1 else ''} ready",
+    rows.append(("coordination", f"{'synced' if synced else 'NOT synced' + (f' ({sync_note}; showing the local ledger)' if sync_note else '')} -- {ready} task{'s' if ready != 1 else ''} ready",
                  "ok" if synced else "warn"))
 
     def thread_row(name: str, extra: str) -> tuple[str, str, str]:
@@ -33,7 +33,10 @@ def status_rows(ctx, identity_new: bool = False, synced: bool = True, share: int
             return (name, f"✗ dead      {extra}", "warn")
         err = f"  (last error: {t['error']})" if t and t.get("error") else ""
         paused = name == "scheduler" and machine.get("paused")
-        return (name, f"● {'paused ' if paused else 'running'}   {extra}{err}", "warn" if paused or err else "ok")
+        if paused:
+            return (name, f"● paused{boardview.pause_text(machine)} — claiming nothing ({ready} ready)   {extra}{err}",
+                    "warn")
+        return (name, f"● running   {extra}{err}", "warn" if err else "ok")
 
     rows.append(thread_row("scheduler", f"quota-share {share if share is not None else '?'}"
                                         f"  ·  default worker {opts.get('default_worker') or 'ask on Board'}"))
@@ -55,6 +58,9 @@ def status_rows(ctx, identity_new: bool = False, synced: bool = True, share: int
         rows.append(("tests", "which tests may run: " + ", ".join(t.short for t in asking), "warn"))
     if snap.awaiting_review:
         rows.append(("review", ", ".join(f"{t.short} {t.pr_url}" for t in snap.awaiting_review), "warn"))
+    for key, miss in boardview.unconfirmed_prs(ctx.swarm_dir):
+        rows.append(("unconfirmed", f"{key} {miss.get('url', '')}: state not read for {miss['polls']} polls "
+                                    f"since {miss.get('since', '?')}", "warn"))
     if pid:
         up = daemon.uptime_text(inf)
         rows.append(("daemon", f"pid {pid}  ·  {up + '  ·  ' if up else ''}log .swarm/swarm.log", "plain"))

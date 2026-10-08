@@ -137,6 +137,62 @@ def head(wt: Path) -> str:
     return git_out(["rev-parse", "HEAD"], wt)
 
 
+def fetch_base(wt: Path, base: str) -> None:
+    git(["fetch", "-q", "origin", base], wt)
+
+
+def behind(wt: Path, base: str) -> int:
+    r = git(["rev-list", "--count", f"HEAD..origin/{base}"], wt, check=False)
+    try:
+        return int(r.stdout.strip())
+    except ValueError:
+        return 0
+
+
+def merge_in_progress(wt: Path) -> bool:
+    return git(["rev-parse", "-q", "--verify", "MERGE_HEAD"], wt, check=False).returncode == 0
+
+
+def unmerged_paths(wt: Path) -> list[str]:
+    out = git_out(["ls-files", "-u"], wt)
+    return sorted({line.split("\t", 1)[1] for line in out.splitlines() if "\t" in line})
+
+
+def conflict_markers(wt: Path, base: str) -> list[str]:
+    """Files whose lines this branch adds (against the base) start a conflict marker."""
+    out = git(["diff", "-U0", f"origin/{base}...HEAD"], wt, check=False).stdout
+    files, current = set(), None
+    for line in out.splitlines():
+        if line.startswith("+++ b/"):
+            current = line[6:]
+        elif line.startswith(("+<<<<<<< ", "+>>>>>>> ")) and current:
+            files.add(current)
+    return sorted(files)
+
+
+def update_to_base(wt: Path, base: str, *, rebase: bool) -> list[str]:
+    """Bring the branch up to date with ``origin/<base>`` (fetched already). Returns the
+    conflicted files, with the merge left in progress, or [] when the update is done.
+    A conflicting rebase is aborted and redone as a merge: one conflict set to resolve."""
+    ref = f"origin/{base}"
+    if rebase and git(["rebase", "-q", ref], wt, check=False).returncode == 0:
+        return []
+    if rebase:
+        git(["rebase", "--abort"], wt, check=False)
+    r = git(["merge", "-q", "--no-edit", ref], wt, check=False)
+    if r.returncode == 0:
+        return []
+    files = git_out(["diff", "--name-only", "--diff-filter=U"], wt, check=False).splitlines()
+    if not files:
+        git(["merge", "--abort"], wt, check=False)
+        raise RuntimeError(f"git merge {ref} failed: {r.stderr.strip() or r.stdout.strip()}")
+    return sorted(files)
+
+
+def remote_has_branch(wt: Path, branch: str) -> bool:
+    return git(["ls-remote", "--exit-code", "--heads", "origin", branch], wt, check=False).returncode == 0
+
+
 
 def cleanup(ctx, task_dir: Path) -> bool:
     """Remove this machine's worktree for a finished task (merged or rejected).

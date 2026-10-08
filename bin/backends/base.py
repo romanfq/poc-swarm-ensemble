@@ -6,7 +6,7 @@ depends only on this interface (Ports and Adapters).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Protocol, runtime_checkable
+from typing import NamedTuple, Protocol, runtime_checkable
 
 SWARM_STATUSES = ("ready", "claimed", "in-progress", "awaiting-review", "blocked", "done")
 AUTONOMY_TIERS = ("auto-pr", "human-must-review", "human-must-scope")
@@ -30,6 +30,14 @@ class TaskRef:
 
     def __str__(self) -> str:
         return self.key
+
+
+class Comment(NamedTuple):
+    """One comment on a task's issue, as ``list_comments`` returns it (oldest first)."""
+    author: str | None
+    body: str
+    created_at: str
+    url: str | None = None
 
 
 @dataclass
@@ -88,7 +96,14 @@ class IssueBackend(Protocol):
     def set_status(self, ref: TaskRef, status: str) -> None: ...
     def dependencies(self, ref: TaskRef) -> list[TaskRef]: ...
     def epic_children(self, ref: TaskRef) -> list[TaskRef]: ...
-    def post_comment(self, ref: TaskRef, text: str) -> None: ...
+    def post_comment(self, ref: TaskRef, text: str) -> str | None:
+        """Post ``text`` on the task's issue; returns the new comment's URL when the tracker has one."""
+        ...
+
+    def list_comments(self, ref: TaskRef) -> list[Comment]:
+        """Every comment on the task's issue, oldest first. Never cached: replies are read live."""
+        ...
+
     def coordination_ref(self, ref: TaskRef) -> str: ...
 
     # Helpers every shipped adapter provides (used by plan sync and the Board).

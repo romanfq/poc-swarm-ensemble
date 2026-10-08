@@ -30,8 +30,8 @@ def test_panels_from_a_live_ledger(world):
     claims = dict(boardview.claim_rows(snap))
     assert set(claims) == {"T1", "T2"}
     t1 = claims["T1"]
-    assert t1[:4] == ("T1", "Poll", "mac-a", "roman") and t1[6] == "vscode" and t1[7] == "in-progress"
-    assert claims["T2"][6] == "awaiting worker"
+    assert t1[:3] == ("T1", "in-progress", "Poll") and t1[3] == "vscode" and t1[5:7] == ("mac-a", "roman")
+    assert claims["T2"][3] == "awaiting worker"
 
     assert [k for k, _ in boardview.plan_rows(snap)] == ["T1"]
     assert boardview.plan_rows(snap)[0][1][3] == "pending-review"
@@ -70,9 +70,9 @@ def test_review_rows_use_live_pr_status(world):
     L.complete(a, d, "pr-opened", claim_id=cid, pr_url="https://github.com/OWNER/app/pull/9")
     snap = snapshot.take(a)
     assert boardview.review_rows(snap, {}) == [
-        ("T1", ("T1", "Poll", "https://github.com/OWNER/app/pull/9", "pending", "?"))]
+        ("T1", ("T1", "pending", "?", "#9", "Poll"))]
     rows = boardview.review_rows(snap, {"T1": {"review": "CHANGES_REQUESTED", "checks": "passing"}})
-    assert rows[0][1][3:] == ("changes requested", "passing")
+    assert rows[0][1][1:3] == ("changes requested", "passing")
 
 
 def test_plan_rows_detect_unsubmitted_and_changed_plans(world):
@@ -86,7 +86,7 @@ def test_plan_rows_detect_unsubmitted_and_changed_plans(world):
     (wt / ".swarm-task" / "plan.md").write_text("# Draft\nKeep it short.\n")
     snap = snapshot.take(a)
     assert boardview.plan_rows(snap) == [("T1", ("T1", "Poll", "mac-a", "not submitted"))]
-    assert "not submitted" in boardview.claim_rows(snap)[0][1][7]
+    assert "not submitted" in boardview.claim_rows(snap)[0][1][1]
 
     (wt / ".swarm-task" / "plan.md").write_text("<!-- Replace the guidance below. Keep it short. -->\n")
     snap = snapshot.take(a)
@@ -188,7 +188,9 @@ def test_machine_line_says_when_out_of_rotation(world):
     snap = snapshot.take(a)
     assert "running" in boardview.machine_line(snap, 1)
     snap.machines["mac-a"] = {"paused": True}
-    assert "paused — claiming nothing (r resumes)" in boardview.machine_line(snap, 1)
+    assert "paused — claiming nothing (0 ready, r resumes)" in boardview.machine_line(snap, 1)
+    snap.machines["mac-a"] = {"paused": True, "paused_since": "2026-09-19T13:11:56Z", "paused_by": "roman"}
+    assert "paused since 2026-09-19 13:11:56 by roman — claiming nothing" in boardview.machine_line(snap, 1)
     snap.machines["mac-a"] = {}
     snap.share = 0
     assert "share 0 — out of rotation (t sets a share)" in boardview.machine_line(snap, 1)
@@ -233,3 +235,94 @@ def test_lease_bar_carries_the_value_without_colour():
     assert len(boardview.bar_text(0.43)) == 8
     assert boardview.lease_cell(None, lease) == "-"
     assert [boardview.level_of(f) for f in (None, 0.1, 0.6, 0.95)] == ["plain", "ok", "warn", "crit"]
+
+
+def test_feed_line_leaves_free_text_out_of_the_panel():
+    from dags import feed
+    long = "Should cancelled matches be stored? " * 15      # ~540 chars
+    cases = [
+        feed._describe_event("T1", "Jane", "mac-a", {"kind": "needs-human", "question": long}),
+        feed._describe_event("T1", "Jane", "mac-a", {"kind": "human-answered", "answer": long}),
+        feed._describe_event("T1", "Jane", "mac-a", {"kind": "unparked", "reason": long}),
+        feed._describe_event("T1", "Jane", "mac-a",
+                             {"kind": "autonomy-changed", "old": "a", "new": "b", "reason": long}),
+    ]
+    for full in cases:
+        assert long.strip() in full                       # feed.py keeps the whole record
+        line = boardview.feed_line(full)
+        assert "\n" not in line and len(line) < 60 and "Should cancelled" not in line
+    assert boardview.feed_line(cases[0]) == "T1 needs a human decision"
+
+
+def test_feed_line_passes_unquoted_lines_through():
+    url = "claude finished T1. The PR can be found at https://github.com/o/r/pull/1"
+    assert boardview.feed_line(url) == url
+
+
+def test_claim_columns_lead_with_task_and_state():
+    assert boardview.CLAIM_COLUMNS[:3] == ("task", "state", "title")
+    assert boardview.REVIEW_COLUMNS == ("task", "review", "checks", "PR", "title")
+
+
+def test_pr_label():
+    assert boardview.pr_label("https://github.com/OWNER/app/pull/97") == "#97"
+    assert boardview.pr_label("https://example.com/x") == "https://example.com/x"
+    assert boardview.pr_label(None) == ""
+
+
+def test_question_cell_is_clipped_to_one_line():
+    assert boardview.question_cell("keep cancelled matches?") == "? keep cancelled matches?"
+    assert boardview.question_cell("first\nsecond") == "? first"
+    long = boardview.question_cell("x" * 200)
+    assert len(long) == 2 + boardview.QUESTION_WIDTH and long.endswith("…")
+
+
+class _T:
+    """Just the TaskView fields state_kind reads."""
+    def __init__(self, state="in-progress", worker="claude", needs_human=None, plan_status=None,
+                 test_scope=None, pausing=False, dispatch_failed=None):
+        self.state, self.worker, self.needs_human, self.plan_status = state, worker, needs_human, plan_status
+        self.test_scope, self.pausing, self.dispatch_failed = test_scope, pausing, dispatch_failed
+
+
+import pytest  # noqa: E402
+
+
+@pytest.mark.parametrize("task, lease, kind", [
+    (_T(needs_human="q?"), None, "accent"),
+    (_T(plan_status="pending-review"), None, "accent"),
+    (_T(test_scope={"status": "pending"}), None, "accent"),
+    (_T(state="awaiting-review"), None, "accent"),
+    (_T(needs_human="q?", pausing=True), None, "accent"),            # the most severe part wins
+    (_T(needs_human="q?"), 0.95, "accent"),
+    (_T(dispatch_failed={"attempts": 1}, state="claimed", worker=None), None, "crit"),
+    (_T(state="claim-lost"), None, "crit"),
+    (_T(state="machine-stopped"), None, "crit"),
+    (_T(), 0.9, "crit"),
+    (_T(pausing=True), None, "warn"),
+    (_T(plan_status="not submitted"), None, "warn"),
+    (_T(plan_status="changed since submitted"), None, "warn"),
+    (_T(), 0.5, "warn"),
+    (_T(), 0.1, "ok"),
+    (_T(), None, "ok"),
+    (_T(state="claimed", worker="claude"), None, "ok"),
+    (_T(state="claimed", worker=None), None, "dim"),
+    (_T(state="parked", worker=None), None, "dim"),
+])
+def test_state_kind(task, lease, kind):
+    assert boardview.state_kind(task, lease) == kind
+
+
+def test_needs_human_leads_the_state_cell_and_the_question_replaces_the_title(world):
+    world.backend.add("T1", title="A title long enough to push the state cell off a narrow terminal",
+                      labels=["repo:OWNER/app", "type:task"])
+    a = world.machine("mac-a")
+    world.scheduler(a, share=1).cycle()
+    d = rv.index(a.root)["T1"]
+    work.choose_worker(a, d, "claude", launch=world.launch, platform="darwin")
+    work.block(a, d, "keep cancelled matches?")
+    snap = snapshot.take(a)
+    _, cells = boardview.claim_rows(snap)[0]
+    assert cells[0] == "T1" and cells[1].split(" · ")[0] == "needs human"
+    assert cells[2] == "? keep cancelled matches?"
+    assert boardview.claim_kinds(snap) == {"T1": "accent"}
