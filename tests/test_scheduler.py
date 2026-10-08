@@ -482,8 +482,8 @@ def test_failed_dispatch_is_notified_recorded_and_released(world, monkeypatch):
     view = snapshot.take(b).by_key("T1")
     assert view.dispatch_failed["attempts"] == 1
     row = dict(boardview.claim_rows(snapshot.take(b)))["T1"]
-    assert row[6] == "not started"
-    assert row[7] == "claimed · dispatch failed ×1: fatal: 'swarm/T1' is already used by worktree at '.../T1'"
+    assert row[3] == "not started"
+    assert row[1] == "claimed · dispatch failed ×1: fatal: 'swarm/T1' is already used by worktree at '.../T1'"
     rows = {label: value for label, value, _ in panel.status_rows(b)}
     assert rows["not started"].startswith("T1 on mac-a: dispatch failed ×1")
     assert "needs you" not in rows

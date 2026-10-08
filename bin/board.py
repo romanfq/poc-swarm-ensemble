@@ -554,7 +554,8 @@ class BoardApp(App):
     # which cells carry an accent: only what needs a human (restraint, GH-67)
     ACCENT_COLUMN = {"arbitration": "why", "plans": "plan", "tests": "task"}
 
-    def _cell(self, tid: str, key: str, column: str, text: str, linked: bool, leases: dict) -> Text:
+    def _cell(self, tid: str, key: str, column: str, text: str, linked: bool, leases: dict,
+              kinds: dict | None = None) -> Text:
         cell = Text(text, style="underline" if linked and text else "")
         if column in boardview.SECONDARY_COLUMNS:
             cell.stylize(self.cell_styles["dim"])
@@ -562,20 +563,21 @@ class BoardApp(App):
             cell.stylize(self.cell_styles[boardview.level_of(leases.get(key))])
         elif column == self.ACCENT_COLUMN.get(tid):
             cell.stylize(self.cell_styles["accent"])
-        elif column == "state":
-            at = text.find("needs human")
-            if at >= 0:
-                cell.stylize(self.cell_styles["accent"], at, at + len("needs human"))
+        elif tid == "claims" and column == "state":
+            cell.stylize(self.cell_styles[(kinds or {}).get(key, "plain")])
+        elif tid == "claims" and column == "task" and (kinds or {}).get(key) == "accent":
+            cell.stylize(self.cell_styles["accent"])      # findable at a glance in a long list (GH-102)
         return cell
 
-    def _fill(self, tid: str, rows: list[tuple[str, tuple]], leases: dict | None = None) -> None:
+    def _fill(self, tid: str, rows: list[tuple[str, tuple]], leases: dict | None = None,
+              kinds: dict | None = None) -> None:
         table = self.query_one(f"#{tid}", DataTable)
         selected = self.selected_key(table)
         table.clear()
         names = [str(c.label) for c in table.ordered_columns]
         for key, cells in rows:
             table.add_row(*(self._cell(tid, key, names[i], str(c), names[i] in boardview.LINK_COLUMNS and bool(c),
-                                       leases or {}) for i, c in enumerate(cells)), key=key)
+                                       leases or {}, kinds) for i, c in enumerate(cells)), key=key)
         if selected is not None:
             for i, (key, _) in enumerate(rows):
                 if key == selected:
@@ -633,7 +635,9 @@ class BoardApp(App):
                   "arbitration": boardview.arbitration_rows(snap, flagged), "plans": boardview.plan_rows(snap),
                   "tests": boardview.test_rows(snap)}
         for tid, rows in tables.items():
-            self._fill(tid, rows, boardview.claim_leases(snap) if tid == "claims" else None)
+            claims = tid == "claims"
+            self._fill(tid, rows, boardview.claim_leases(snap) if claims else None,
+                       boardview.claim_kinds(snap) if claims else None)
         self.counts = {tid: len(rows) for tid, rows in tables.items()}
         for tid, title in boardview.PANELS:
             self.query_one(f"#{tid}").border_title = f"{title} ({self.counts[tid]})"
