@@ -17,6 +17,16 @@ ModalScreen { align: center middle; }
 #buttons Button { margin-left: 1; }
 #plan { height: 20; border: round $secondary; }
 
+/* issue composer */
+#composer { width: 100; max-width: 98%; height: 95%; border: thick $accent; background: $surface; padding: 1 2; }
+#composer-form { height: 1fr; }
+#composer Label { margin-bottom: 0; color: $secondary; }
+#f-body { height: 8; }
+#f-labels, #f-depends { height: 6; }
+.problem { color: $error; height: auto; }
+#preview { height: auto; margin-top: 1; }
+#composer-status { height: auto; }
+
 /* header block */
 #header-block { height: auto; border: round $secondary; border-title-color: $foreground; padding: 0 1; }
 #machine { height: auto; }

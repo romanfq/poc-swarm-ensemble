@@ -135,7 +135,7 @@ def test_freeze_unfreeze_and_takeover(setup):
             app.selected_task = lambda *a_, **k: "T1"
             await pilot.press("f")
             await until(pilot, lambda: rv.active_arbitration(d) is None)
-            await pilot.press("e")
+            await pilot.press("k")
             await until(pilot, lambda: rv.active_takeovers(a.root).get("E1") == {"mac-a"})
     run(go())
 
@@ -415,7 +415,7 @@ def test_focused_panel_has_room_and_footer_fits(setup):
     world, a, app, _ = setup
 
     async def go():
-        async with app.run_test(size=(100, 30)) as pilot:
+        async with app.run_test(size=(120, 30)) as pilot:       # 100 before the i (File issue) key joined the footer
             await until(pilot, lambda: isinstance(app.screen, board.ChoiceScreen))
             await pilot.press("escape")
             claims = app.query_one("#claims")
@@ -426,7 +426,7 @@ def test_focused_panel_has_room_and_footer_fits(setup):
             await pilot.pause()
             footer = app.query_one("Footer")
             assert footer.size.height == 1
-            assert max(w.region.right for w in footer.query("FooterKey")) <= 100
+            assert max(w.region.right for w in footer.query("FooterKey")) <= 120
     run(go())
 
 
@@ -542,3 +542,296 @@ def test_needs_human_is_visible_in_a_narrow_claims_table(setup):
             assert state.plain.startswith("needs human")
             assert app.cell_styles["accent"] in {str(sp.style) for sp in state.spans}
     run(go())
+
+
+# ---------------------------------------------------------------------------
+# the issue composer (GH-110): a form in front of dags/draft.py
+# ---------------------------------------------------------------------------
+
+DRAFT_TEXT = """---
+labels: [next-version]
+autonomy: human-must-review
+repo: OWNER/app
+epic: 1
+depends_on: [4]
+status: blocked
+---
+# Pasted title
+
+The real body.
+
+## Detail
+"""
+EPIC = "acme/plan#1"
+
+
+@pytest.fixture
+def composing(swarm, monkeypatch):
+    from backends.github import GitHubBackend
+    from conftest import FakeGh
+    from dags import gh
+    from fakes import FakeGitHub
+    fake = FakeGitHub(repo="acme/plan")
+    fake.seed()
+    fake.labels.update({"next-version", "bug", "swarm:autonomy:human-must-review", "swarm:status:blocked",
+                        "repo:OWNER/app"})
+    gh.set_runner(FakeGh(fake))
+    a = swarm.clone("mac-a")
+    a.set_backend(GitHubBackend("acme/plan", cache_seconds=0))
+    monkeypatch.setattr(a, "require_human", lambda: "roman")
+    (a.root / "drafts").mkdir(exist_ok=True)
+    app = board.BoardApp(a, refresh_s=0.5, use_gh=False, run_poller=False, open_url=[].append)
+    yield a, fake, app
+    gh.set_runner(None)
+
+
+async def open_composer(app, pilot):
+    await pilot.press("i")
+    await until(pilot, lambda: isinstance(app.screen, board.IssueComposer) and app.screen.loaded)
+    return app.screen
+
+
+def option_values(widget):
+    return [widget.get_option_at_index(i).value for i in range(widget.option_count)]
+
+
+def drafts_in(a, sub=""):
+    return sorted(p.name for p in (a.root / "drafts" / sub).glob("*.md"))
+
+
+def test_composer_opens_and_populates_from_the_backend(composing):
+    a, fake, app = composing
+
+    async def go():
+        async with app.run_test(size=(140, 60)) as pilot:
+            c = await open_composer(app, pilot)
+            assert option_values(c.query_one("#f-labels")) == ["bug", "next-version"]   # no swarm:*, repo:*, type:*
+            assert c.choices["f-epic"] == {"acme/plan#1", "acme/plan#2"}                  # epics, nothing else
+            deps = option_values(c.query_one("#f-depends"))
+            assert "acme/plan#4" in deps and "acme/plan#1" not in deps and "acme/plan#3" not in deps  # open tasks
+            assert c.choices["f-autonomy"] == set(board.AUTONOMY_TIERS)
+            assert c.query_one("#f-repo").value == "OWNER/app"        # the only repo in backend.yaml
+            assert "swarm:autonomy:" in shown(c.query_one("#preview"))
+    run(go())
+
+
+def test_preview_follows_every_change(composing):
+    a, fake, app = composing
+
+    async def go():
+        async with app.run_test(size=(140, 60)) as pilot:
+            c = await open_composer(app, pilot)
+            c.query_one("#f-autonomy").value = "human-must-review"
+            await until(pilot, lambda: "swarm:autonomy:human-must-review" in shown(c.query_one("#preview")))
+            c.query_one("#f-labels").select("bug")
+            await until(pilot, lambda: shown(c.query_one("#preview")).split(": ", 1)[1].startswith("bug,"))
+            c.query_one("#f-blocked").value = True
+            await until(pilot, lambda: "swarm:status:blocked" in shown(c.query_one("#preview")))
+            from dags import draft
+            assert shown(c.query_one("#preview")) == "Labels on the issue: " + ", ".join(
+                draft.resolved_labels(a.backend, c.current_draft()))
+    run(go())
+
+
+def test_pasting_a_draft_fills_the_other_fields(composing):
+    a, fake, app = composing
+
+    async def go():
+        async with app.run_test(size=(140, 60)) as pilot:
+            c = await open_composer(app, pilot)
+            c.query_one("#f-body").load_text(DRAFT_TEXT)
+            await until(pilot, lambda: c.query_one("#f-title").value == "Pasted title")
+            assert c.query_one("#f-body").text == "The real body.\n\n## Detail\n"
+            assert c.query_one("#f-epic").value == EPIC
+            assert c.query_one("#f-autonomy").value == "human-must-review"
+            assert c.query_one("#f-blocked").value is True
+            assert list(c.query_one("#f-labels").selected) == ["next-version"]
+            assert list(c.query_one("#f-depends").selected) == ["acme/plan#4"]
+    run(go())
+
+
+def test_typing_a_heading_is_not_a_paste(composing):
+    a, fake, app = composing
+
+    async def go():
+        async with app.run_test(size=(140, 60)) as pilot:
+            c = await open_composer(app, pilot)
+            c.query_one("#f-body").focus()
+            await pilot.press("#", " ", "x")
+            await pilot.pause(0.2)
+            assert c.query_one("#f-body").text == "# x" and c.query_one("#f-title").value == ""
+    run(go())
+
+
+def test_invalid_form_stays_open_names_the_fields_and_files_nothing(composing):
+    a, fake, app = composing
+
+    async def go():
+        async with app.run_test(size=(140, 60)) as pilot:
+            c = await open_composer(app, pilot)
+            c.query_one("#f-title").value = "No epic"
+            await pilot.click("#file")
+            await until(pilot, lambda: shown(c.query_one("#err-epic")))
+            assert isinstance(app.screen, board.IssueComposer)
+            assert "missing" in shown(c.query_one("#err-epic"))
+            assert not shown(c.query_one("#err-title"))
+    run(go())
+    assert len(fake.issues) == 8 and drafts_in(a) == [] and drafts_in(a, "filed") == []
+
+
+def test_ready_status_in_a_pasted_draft_is_refused(composing):
+    a, fake, app = composing
+
+    async def go():
+        async with app.run_test(size=(140, 60)) as pilot:
+            c = await open_composer(app, pilot)
+            c.query_one("#f-body").load_text(DRAFT_TEXT.replace("status: blocked", "status: ready"))
+            await until(pilot, lambda: c.query_one("#f-title").value == "Pasted title")
+            await pilot.click("#file")
+            await until(pilot, lambda: shown(c.query_one("#err-status")))
+            assert "ready" in shown(c.query_one("#err-status")) and len(fake.issues) == 8
+    run(go())
+
+
+def test_submit_goes_through_confirm_then_files_syncs_and_moves(composing):
+    a, fake, app = composing
+
+    async def go():
+        async with app.run_test(size=(140, 60)) as pilot:
+            c = await open_composer(app, pilot)
+            c.query_one("#f-body").load_text(DRAFT_TEXT)
+            await until(pilot, lambda: c.query_one("#f-title").value == "Pasted title")
+            await pilot.click("#file")
+            await until(pilot, lambda: isinstance(app.screen, board.ConfirmScreen))
+            assert "create  task: Pasted title" in app.screen.message and len(fake.issues) == 8
+            await pilot.press("n")                                    # No: the form stays, nothing filed
+            await until(pilot, lambda: isinstance(app.screen, board.IssueComposer))
+            assert len(fake.issues) == 8 and drafts_in(a) == []
+            await pilot.click("#file")
+            await until(pilot, lambda: isinstance(app.screen, board.ConfirmScreen))
+            await pilot.press("y")
+            await until(pilot, lambda: len(fake.issues) == 9)
+            await until(pilot, lambda: any("filed https://github.com/acme/plan/issues/9" in s for s in app.said))
+            assert not isinstance(app.screen, board.IssueComposer)
+    run(go())
+    assert "swarm:status:ready" not in fake.issues[9]["labels"]
+    assert fake.issues[9]["parent"] == 1 and fake.issues[9]["blockedBy"] == [4]
+    assert drafts_in(a) == [] and drafts_in(a, "filed") == ["pasted-title.md"]
+    assert "issues/9" in (a.root / "drafts" / "filed" / "pasted-title.md").read_text()
+    assert any("the ledger has it" in s for s in app.said)
+
+
+def test_plan_sync_failure_is_reported_on_the_feed(composing, monkeypatch):
+    a, fake, app = composing
+    from dags import plan
+
+    def boom(ctx):
+        raise RuntimeError("offline")
+    monkeypatch.setattr(plan, "sync", boom)
+
+    async def go():
+        async with app.run_test(size=(140, 60)) as pilot:
+            c = await open_composer(app, pilot)
+            c.query_one("#f-body").load_text(DRAFT_TEXT)
+            await until(pilot, lambda: c.query_one("#f-title").value == "Pasted title")
+            await pilot.click("#file")
+            await until(pilot, lambda: isinstance(app.screen, board.ConfirmScreen))
+            await pilot.press("y")
+            await until(pilot, lambda: any("plan sync failed (offline)" in s for s in app.said))
+    run(go())
+    assert len(fake.issues) == 9
+
+
+def test_save_writes_a_draft_without_filing(composing):
+    a, fake, app = composing
+    from dags import draft
+
+    async def go():
+        async with app.run_test(size=(140, 60)) as pilot:
+            c = await open_composer(app, pilot)
+            c.query_one("#f-title").value = "Saved for later"
+            c.query_one("#f-body").load_text("Some body\n")
+            c.query_one("#f-labels").select("bug")
+            await pilot.click("#save")
+            await until(pilot, lambda: drafts_in(a) == ["saved-for-later.md"])
+            assert isinstance(app.screen, board.IssueComposer)
+    run(go())
+    d = draft.load(a.root / "drafts" / "saved-for-later.md")
+    assert (d.title, d.body, d.labels) == ("Saved for later", "Some body\n", ["bug"])
+    assert len(fake.issues) == 8
+
+
+def test_d_loads_a_draft_and_filing_it_moves_that_file(composing):
+    a, fake, app = composing
+    (a.root / "drafts" / "mine.md").write_text(DRAFT_TEXT)
+    (a.root / "drafts" / "README.md").write_text("# not a draft\n")
+    (a.root / "drafts" / "filed").mkdir()
+    (a.root / "drafts" / "filed" / "old.md").write_text("# Old\n")
+
+    async def go():
+        async with app.run_test(size=(140, 60)) as pilot:
+            c = await open_composer(app, pilot)
+            c.set_focus(c.query_one("#f-blocked"))                    # a text field would take the 'd'
+            await pilot.press("d")
+            await until(pilot, lambda: isinstance(app.screen, board.ChoiceScreen))
+            assert [o for o, _ in app.screen.options] == ["mine.md"]   # not filed/, not README
+            await pilot.press("enter")
+            await until(pilot, lambda: c.query_one("#f-title").value == "Pasted title")
+            assert c.path == a.root / "drafts" / "mine.md" and c.query_one("#f-epic").value == EPIC
+            await pilot.click("#file")
+            await until(pilot, lambda: isinstance(app.screen, board.ConfirmScreen))
+            await pilot.press("y")
+            await until(pilot, lambda: len(fake.issues) == 9)
+            await until(pilot, lambda: "mine.md" in drafts_in(a, "filed"))
+    run(go())
+    assert drafts_in(a) == ["README.md"]
+
+
+def test_partly_failed_filing_leaves_the_stamped_draft(composing, monkeypatch):
+    a, fake, app = composing
+    from backends.github import GitHubBackend
+    from dags import gh
+
+    def refuse(self, ref, parent):
+        raise gh.GhError(["issue", "edit"], 1, "no permission")
+    monkeypatch.setattr(GitHubBackend, "set_parent", refuse)
+    (a.root / "drafts" / "mine.md").write_text(DRAFT_TEXT)
+
+    async def go():
+        async with app.run_test(size=(140, 60)) as pilot:
+            c = await open_composer(app, pilot)
+            c.set_focus(c.query_one("#f-blocked"))
+            await pilot.press("d")
+            await until(pilot, lambda: isinstance(app.screen, board.ChoiceScreen))
+            await pilot.press("enter")
+            await until(pilot, lambda: c.query_one("#f-title").value == "Pasted title")
+            await pilot.click("#file")
+            await until(pilot, lambda: isinstance(app.screen, board.ConfirmScreen))
+            await pilot.press("y")
+            await until(pilot, lambda: any("stopped" in s for s in app.said))
+    run(go())
+    assert drafts_in(a) == ["mine.md"] and drafts_in(a, "filed") == []
+    assert "url: https://github.com/acme/plan/issues/9" in (a.root / "drafts" / "mine.md").read_text()
+
+
+def test_e_edits_the_body_in_the_editor(composing, monkeypatch):
+    a, fake, app = composing
+    import contextlib
+    seen = []
+
+    def fake_editor(cmd, check=False):
+        seen.append(cmd)
+        Path(cmd[-1]).write_text("Edited in the editor\n")
+    monkeypatch.setenv("EDITOR", "myedit --wait")
+    monkeypatch.setattr(board.subprocess, "run", fake_editor)
+    monkeypatch.setattr(app, "suspend", contextlib.nullcontext)
+
+    async def go():
+        async with app.run_test(size=(140, 60)) as pilot:
+            c = await open_composer(app, pilot)
+            c.query_one("#f-body").load_text("first draft")
+            c.set_focus(c.query_one("#f-blocked"))
+            await pilot.press("e")
+            await until(pilot, lambda: c.query_one("#f-body").text == "Edited in the editor\n")
+    run(go())
+    assert seen[0][:2] == ["myedit", "--wait"]
