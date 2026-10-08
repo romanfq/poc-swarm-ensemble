@@ -17,8 +17,8 @@ from dags import daemon, feed, snapshot
 # a PR whose state could not be read this many polls in a row is shown as unconfirmed (GH-56)
 UNCONFIRMED_AFTER = 3
 
-CLAIM_COLUMNS = ("task", "title", "machine", "human", "clock", "lease", "worker", "state")
-REVIEW_COLUMNS = ("task", "title", "PR", "review", "checks")
+CLAIM_COLUMNS = ("task", "state", "title", "worker", "lease", "machine", "human", "clock")
+REVIEW_COLUMNS = ("task", "review", "checks", "PR", "title")
 ARBITRATION_COLUMNS = ("task", "claimants", "why")
 PLAN_COLUMNS = ("task", "title", "machine", "plan")
 TEST_COLUMNS = ("task", "machine", "recommended", "reason", "time")
@@ -140,24 +140,73 @@ def dispatch_failed_text(t: snapshot.TaskView) -> str:
     return f"dispatch failed ×{f.get('attempts') or 1}: {short_error(f.get('error') or '')}"
 
 
+QUESTION_WIDTH = 60
+# states that are broken or idle by name (the ledger's own states never produce the first two today)
+CRIT_STATES = ("claim-lost", "machine-stopped")
+DIM_STATES = ("parked",)
+# most severe first
+KIND_ORDER = ("accent", "crit", "warn", "ok", "dim")
+
+
+def state_kind(t: snapshot.TaskView, lease: float | None = None) -> str:
+    """Semantic style of a claim's whole state cell: accent (a human must act) > crit (broken)
+    > warn (attention soon) > ok (working) > dim (waiting on the machine). `lease` is the
+    fraction of the lease burnt. Names only; board.py resolves them (GH-102)."""
+    kinds = set()
+    if t.needs_human or t.plan_status == "pending-review" or t.state == "awaiting-review" \
+            or (t.test_scope and t.test_scope.get("status") == "pending"):
+        kinds.add("accent")
+    if t.dispatch_failed or t.state in CRIT_STATES or level_of(lease) == "crit":
+        kinds.add("crit")
+    if t.pausing or t.plan_status in ("not submitted", "changed since submitted") or level_of(lease) == "warn":
+        kinds.add("warn")
+    if t.state == "in-progress" or (t.state == "claimed" and t.worker):
+        kinds.add("ok")
+    if t.state in DIM_STATES or (t.state == "claimed" and not t.worker):
+        kinds.add("dim")
+    return next((k for k in KIND_ORDER if k in kinds), "plain")
+
+
+def question_cell(question: str, width: int = QUESTION_WIDTH) -> str:
+    """`? <first line of the question>`, clipped; the full text is in the `y` dialog."""
+    lines = [ln.strip() for ln in str(question).splitlines() if ln.strip()]
+    line = lines[0] if lines else ""
+    return "? " + (line if len(line) <= width else line[:width - 1] + "…")
+
+
+def state_text(t: snapshot.TaskView) -> str:
+    """The state cell: the most severe flag leads, so truncation cuts the least important part."""
+    failed = dispatch_failed_text(t)
+    plan_hint = {"not submitted": "plan not submitted",
+                 "changed since submitted": "plan changed since submitted"}.get(t.plan_status or "")
+    parts = (["needs human"] if t.needs_human else []) + [t.state] \
+        + (["pausing (quota)"] if t.pausing else []) + ([plan_hint] if plan_hint else []) \
+        + ([failed] if failed else [])
+    return " · ".join(parts)
+
+
 def claim_rows(snap: snapshot.Snapshot) -> list[tuple[str, tuple]]:
     rows = []
     for t in snap.live_claims:
         w = t.winner
-        failed = dispatch_failed_text(t)
-        worker = t.worker or ("not started" if failed else "awaiting worker")
-        plan_hint = None
-        if t.plan_status == "not submitted":
-            plan_hint = "plan not submitted"
-        elif t.plan_status == "changed since submitted":
-            plan_hint = "plan changed since submitted"
-        rows.append((t.key, (t.short, t.title, w.machine, w.human or "?", str(w.clock),
-                             lease_cell(lease_elapsed_s(snap, t), snap.lease_s), worker,
-                             t.state + (" · needs human" if t.needs_human else "")
-                             + (" · pausing (quota)" if t.pausing else "")
-                             + (f" · {plan_hint}" if plan_hint else "")
-                             + (f" · {failed}" if failed else ""))))
+        worker = t.worker or ("not started" if t.dispatch_failed else "awaiting worker")
+        question = t.needs_human
+        rows.append((t.key, (t.short, state_text(t), question_cell(question) if question else t.title, worker,
+                             lease_cell(lease_elapsed_s(snap, t), snap.lease_s),
+                             w.machine, w.human or "?", str(w.clock))))
     return rows
+
+
+def claim_kinds(snap: snapshot.Snapshot) -> dict[str, str]:
+    """task key -> semantic style of its state cell, for the claims table."""
+    leases = claim_leases(snap)
+    return {t.key: state_kind(t, leases.get(t.key)) for t in snap.live_claims}
+
+
+def pr_label(url: str | None) -> str:
+    """`#97` for a PR url (the link opens from the row, not the cell text); the url if no number."""
+    m = re.search(r"/pull/(\d+)", url or "")
+    return f"#{m.group(1)}" if m else (url or "")
 
 
 def review_rows(snap: snapshot.Snapshot, pr_status: dict[str, dict]) -> list[tuple[str, tuple]]:
@@ -168,7 +217,7 @@ def review_rows(snap: snapshot.Snapshot, pr_status: dict[str, dict]) -> list[tup
         checks = st.get("checks") or "?"
         if st.get("unconfirmed"):
             checks = f"unconfirmed ({st['unconfirmed']})"
-        rows.append((t.key, (t.short, t.title, t.pr_url or "", review, checks)))
+        rows.append((t.key, (t.short, review, checks, pr_label(t.pr_url), t.title)))
     return rows
 
 

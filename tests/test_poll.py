@@ -310,7 +310,7 @@ def test_unconfirmed_pr_is_flagged_once_after_n_polls_and_shown(pr_open, monkeyp
     assert len(flagged) == 1 and url in flagged[0]
     assert [k for k, _ in boardview.unconfirmed_prs(a.swarm_dir)] == [key]
     rows = boardview.review_rows(snapshot.take(a), {key: {"state": None, "unconfirmed": 4}})
-    assert rows[0][1][4] == "unconfirmed (4)"
+    assert rows[0][1][2] == "unconfirmed (4)"
     assert any(label == "unconfirmed" and url in value for label, value, _ in panel.status_rows(a))
 
 

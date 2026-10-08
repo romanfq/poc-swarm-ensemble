@@ -521,3 +521,24 @@ def test_open_ticket_on_a_blocked_task_opens_its_question(setup):
             app.action_open_ticket()
             await until(pilot, lambda: opened == [url])
     run(go())
+
+
+def test_needs_human_is_visible_in_a_narrow_claims_table(setup):
+    """GH-102: a long title no longer pushes the signal off a 100-column terminal."""
+    world, a, app, _ = setup
+    d = rv.index(a.root)["T1"]
+    work.choose_worker(a, d, "claude", launch=world.launch, platform="darwin")
+    work.block(a, d, "keep cancelled matches?")
+
+    async def go():
+        async with app.run_test(size=(100, 40)) as pilot:
+            claims = app.query_one("#claims")
+            await until(pilot, lambda: claims.row_count == 1)
+            width = claims.size.width
+            first = claims.ordered_columns[0].get_render_width(claims) + claims.ordered_columns[1].get_render_width(claims)
+            assert first < width                          # task and state both fit on screen
+            row = claims.get_row_at(0)
+            state = row[1]
+            assert state.plain.startswith("needs human")
+            assert app.cell_styles["accent"] in {str(sp.style) for sp in state.spans}
+    run(go())
