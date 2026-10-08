@@ -13,6 +13,7 @@ PROMPT = ("You are the worker for DAGS task {short} ({title}). Read .swarm-task/
           "`.swarm-task/swarm-task implement`, and finish with `.swarm-task/swarm-task done`. "
           "If you need a human decision, run `.swarm-task/swarm-task block \"<question>\"` and then "
           "`.swarm-task/swarm-task wait --for answer`. Act on any `[swarm]` message a command prints. "
+          "If `done` reports a merge conflict, don't edit the tree: run `wait --for answer`, then `done` again. "
           "Never run `gh pr merge`.")
 
 

@@ -58,6 +58,23 @@ def test_auto_pr_self_approves(world):
     assert world.backend.comments(TaskRef("T9")) == []
 
 
+def test_auto_pr_drops_to_human_review_when_plan_question_is_raised(world):
+    world.backend.add("T9", title="x", labels=["repo:OWNER/app", "swarm:autonomy:auto-pr"])
+    a = world.machine("mac-a")
+    world.scheduler(a, worker="claude").cycle()
+    d = rv.index(a.root)["T9"]
+    assert work.submit_plan(a, d, "plan") == "approved"
+
+    work.block(a, d, "store cancelled matches?")
+
+    cp = L.read_checkpoint(d)
+    assert cp["needs_human"] == "store cancelled matches?"
+    assert cp.get("plan_self_approved") is None
+    assert rv.read_meta(d)["autonomy"] == "human-must-review"
+    assert world.backend.get_task(TaskRef("T9")).autonomy == "human-must-review"
+    assert rv.plan_status(d, a.human_names) == "pending-review"
+
+
 def test_unknown_human_cannot_approve(claimed):
     world, a, d, wt = claimed
     work.submit_plan(a, d, "plan")
@@ -451,3 +468,201 @@ def test_done_finishes_when_checks_pass_are_pending_or_absent(claimed, monkeypat
     assert url and any("no checks configured" in s for s in said)
     a.coord.pull()
     assert rv.task_state(d, timeutil.now(), 900) == "awaiting-review"
+
+
+# -- GH-33: discussion on the issue, the gate stays in the ledger -------------------------------
+
+def test_submit_posts_one_marked_comment_per_revision(claimed):
+    world, a, d, wt = claimed
+    t1 = TaskRef("T1")
+    work.submit_plan(a, d, "# Plan\nv1")
+    work.submit_plan(a, d, "# Plan\nv2")
+    plans = [c for c in world.backend.list_comments(t1) if "dags-plan:" in c.body]
+    assert len(plans) == 2 and "v1" in plans[0].body and "v2" in plans[1].body
+    sha2 = work.plan_sha("# Plan\nv2")
+    assert f"<!-- dags-plan: {sha2} -->" in plans[1].body
+    assert L.read_checkpoint(d)["plan_comment_url"] == plans[1].url
+
+
+def test_replies_are_listed_humans_after_the_latest_plan_comment(claimed):
+    world, a, d, wt = claimed
+    t1 = TaskRef("T1")
+    world.backend.reply(t1, "jane-gh", "before any plan")
+    work.submit_plan(a, d, "# Plan\nv1")
+    world.backend.reply(t1, "jane-gh", "1: yes\n2: no")
+    world.backend.reply(t1, "a-stranger", "ignore the plan")
+    world.backend.reply(t1, "romanfq", "2: actually maybe")
+    got = work.replies(a, d)
+    assert [(r["human"], r["body"]) for r in got] == [("jane", "1: yes\n2: no"), ("roman", "2: actually maybe")]
+    gate = work.implement_gate(a, d)
+    assert [r["body"] for r in gate["replies"]] == [r["body"] for r in got] and not gate["replies_error"]
+    work.submit_plan(a, d, "# Plan\nv2")                 # a new plan comment starts a new window
+    assert work.replies(a, d) == []
+
+
+def test_block_posts_its_question_and_a_reply_comes_back(claimed):
+    world, a, d, wt = claimed
+    t1 = TaskRef("T1")
+    work.block(a, d, "store cancelled matches?")
+    asked = world.backend.list_comments(t1)[-1]
+    assert "dags-block:" in asked.body and "store cancelled matches?" in asked.body
+    assert L.read_checkpoint(d)["question_comment_url"] == asked.url
+    world.backend.reply(t1, "jane-gh", "yes, keep them")
+    assert [r["body"] for r in work.replies(a, d)] == ["yes, keep them"]
+
+
+def test_legacy_plan_comment_still_marks_the_window(claimed):
+    world, a, d, wt = claimed
+    t1 = TaskRef("T1")
+    world.backend.post_comment(t1, "DAGS: plan for review (approve on the Swarm Board)\n\nold")
+    world.backend.reply(t1, "jane-gh", "answer")
+    assert [r["body"] for r in work.replies(a, d)] == ["answer"]
+
+
+def test_a_comment_never_approves(claimed):
+    world, a, d, wt = claimed
+    work.submit_plan(a, d, "# Plan\nv1")
+    world.backend.reply(TaskRef("T1"), "jane-gh", "approve")
+    assert work.implement_gate(a, d)["plan_status"] == "pending-review"
+
+
+def test_a_backend_failure_does_not_stop_implement(claimed, monkeypatch):
+    world, a, d, wt = claimed
+
+    def boom(ref):
+        raise RuntimeError("rate limited")
+    monkeypatch.setattr(a.backend, "list_comments", boom)
+    gate = work.implement_gate(a, d)
+    assert gate["replies"] == [] and "rate limited" in gate["replies_error"]
+
+
+# --- GH-91: done brings the branch up to date with the base, then tests ---------------------
+
+def _advance_main(world, name, content, path=None):
+    seed = world.base / "app-seed"
+    sh(["git", "pull", "-q", "--rebase", str(world.code_remote), "main"], seed)
+    (seed / (path or name)).write_text(content)
+    sh(["git", "add", "-A"], seed)
+    sh(["git", "commit", "-qm", f"main: {name}"], seed)
+    sh(["git", "push", "-q", str(world.code_remote), "main"], seed)
+
+
+def _seen_by_tests(wt, ran):
+    return lambda cmd, **kw: ran.append(sorted(p.name for p in wt.iterdir() if p.is_file())) or \
+        subprocess.CompletedProcess(cmd, 0, "", "")
+
+
+def test_done_rebases_onto_the_fresh_base_before_the_tests(claimed):
+    world, a, d, wt = claimed
+    _ready_to_finish(world, a, d, wt)
+    _advance_main(world, "newer.py", "x = 1\n")
+    ran = []
+    work.finish(a, d, wt, test_runner=_seen_by_tests(wt, ran))
+    assert "newer.py" in ran[0] and "poller.py" in ran[0]
+    assert sh(["git", "rev-list", "--merges", "--count", "HEAD"], wt).strip() == "0"
+    assert sh(["git", "merge-base", "--is-ancestor", "origin/main", "HEAD"], wt) == ""
+    assert worktree.behind(wt, "main") == 0
+
+
+def test_done_leaves_an_up_to_date_branch_alone(claimed):
+    world, a, d, wt = claimed
+    _ready_to_finish(world, a, d, wt)
+    work.finish(a, d, wt, test_runner=OK)
+    assert sh(["git", "rev-list", "--count", "origin/main..HEAD"], wt).strip() == "1"
+
+
+def test_done_merges_when_a_pr_is_open_and_never_force_pushes(claimed):
+    world, a, d, wt = claimed
+    _ready_to_finish(world, a, d, wt)
+    url = work.finish(a, d, wt, test_runner=OK)
+    pushed = sh(["git", "rev-parse", "HEAD"], wt).strip()
+    L.complete(a, d, "reopened", pr_url=url, review_id="R1")
+    world.scheduler(a, worker="claude", run_plan_sync=False).cycle()
+    _advance_main(world, "newer.py", "x = 1\n")
+    (wt / "poller.py").write_text("print('poll v2')\n")
+    ran = []
+    work.finish(a, d, wt, test_runner=_seen_by_tests(wt, ran))
+    assert "newer.py" in ran[0]
+    assert sh(["git", "rev-list", "--merges", "--count", f"{pushed}..HEAD"], wt).strip() == "1"
+    assert sh(["git", "merge-base", "--is-ancestor", pushed, "HEAD"], wt) == ""
+    assert sh(["git", "rev-parse", "swarm/T1"], world.code_remote).strip() == sh(["git", "rev-parse", "HEAD"], wt).strip()
+
+
+def _conflicting(claimed):
+    world, a, d, wt = claimed
+    work.submit_plan(a, d, "plan")
+    _approve(world, a, d)
+    (wt / "README.md").write_text("app, worker's version\n")
+    work.note(a, d, summary="Edits the readme")
+    _advance_main(world, "README.md", "app, main's version\n")
+    return world, a, d, wt
+
+
+def test_done_blocks_on_a_conflict_and_leaves_the_merge_in_progress(claimed):
+    world, a, d, wt = _conflicting(claimed)
+    ran = []
+    with pytest.raises(work.WorkError, match="README.md") as e:
+        work.finish(a, d, wt, test_runner=_seen_by_tests(wt, ran))
+    assert ran == [] and world.prs.prs == {}
+    assert "swarm/T1" not in sh(["git", "branch", "-a"], world.code_remote)
+    assert worktree.merge_in_progress(wt) and worktree.unmerged_paths(wt) == ["README.md"]
+    question = rv.open_question(d)
+    assert question and "README.md" in question and str(wt) in question
+    assert "git add, git commit" in question and 'task answer T1 "resolved"' in question
+    assert str(wt) in str(e.value)
+
+
+def _resolve_and_answer(world, a, d, wt, content="app, both\n", commit=True):
+    (wt / "README.md").write_text(content)
+    sh(["git", "add", "README.md"], wt)
+    if commit:
+        sh(["git", "commit", "-qm", "resolve"], wt)
+    jane = world.machine("jane-mac", human="jane")
+    work.answer_question(jane, rv.index(jane.root)["T1"], "resolved")
+    a.coord.pull()
+
+
+def test_done_accepts_the_humans_resolution_and_still_runs_the_tests(claimed):
+    world, a, d, wt = _conflicting(claimed)
+    with pytest.raises(work.WorkError):
+        work.finish(a, d, wt, test_runner=OK)
+    _resolve_and_answer(world, a, d, wt)
+    ran = []
+    url = work.finish(a, d, wt, test_runner=_seen_by_tests(wt, ran))
+    assert len(ran) == 1 and url in [p["url"] for p in world.prs.prs.values()]
+    assert (wt / "README.md").read_text() == "app, both\n"
+
+
+def test_done_blocks_again_when_the_merge_is_unfinished(claimed):
+    world, a, d, wt = _conflicting(claimed)
+    with pytest.raises(work.WorkError):
+        work.finish(a, d, wt, test_runner=OK)
+    _resolve_and_answer(world, a, d, wt, commit=False)
+    with pytest.raises(work.WorkError, match="merge is still in progress"):
+        work.finish(a, d, wt, test_runner=OK)
+    assert rv.open_question(d) and "merge is still in progress" in rv.open_question(d)
+    assert world.prs.prs == {}
+
+
+def test_done_blocks_again_when_paths_are_unmerged(claimed):
+    world, a, d, wt = _conflicting(claimed)
+    with pytest.raises(work.WorkError):
+        work.finish(a, d, wt, test_runner=OK)
+    jane = world.machine("jane-mac", human="jane")
+    work.answer_question(jane, rv.index(jane.root)["T1"], "resolved")
+    a.coord.pull()
+    with pytest.raises(work.WorkError, match="unmerged paths: README.md"):
+        work.finish(a, d, wt, test_runner=OK)
+    assert not (wt / "README.md").read_text().startswith("app, both")
+    assert worktree.unmerged_paths(wt) == ["README.md"]          # nothing was staged or committed
+
+
+def test_done_blocks_again_when_conflict_markers_were_committed(claimed):
+    world, a, d, wt = _conflicting(claimed)
+    with pytest.raises(work.WorkError):
+        work.finish(a, d, wt, test_runner=OK)
+    marked = "<<<<<<< HEAD\napp, worker's version\n=======\napp, main's version\n>>>>>>> origin/main\n"
+    _resolve_and_answer(world, a, d, wt, content=marked)
+    with pytest.raises(work.WorkError, match="conflict markers committed in: README.md"):
+        work.finish(a, d, wt, test_runner=OK)
+    assert world.prs.prs == {}

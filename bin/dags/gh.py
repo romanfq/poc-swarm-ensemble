@@ -24,8 +24,20 @@ class GhError(RuntimeError):
 Runner = Callable[..., subprocess.CompletedProcess]
 
 
+def timeout() -> float:
+    """Seconds one gh call may take (``DAGS_GH_TIMEOUT``)."""
+    try:
+        return float(os.environ.get("DAGS_GH_TIMEOUT", "60"))
+    except ValueError:
+        return 60.0
+
+
 def _default_runner(args: list[str], *, env: dict, cwd=None, input: str | None = None):
-    return subprocess.run(["gh", *args], capture_output=True, text=True, env=env, cwd=cwd, input=input)
+    try:
+        return subprocess.run(["gh", *args], capture_output=True, text=True, env=env, cwd=cwd, input=input,
+                              timeout=timeout())
+    except subprocess.TimeoutExpired:
+        raise GhError(args, 124, f"timed out after {timeout():g}s") from None
 
 
 _runner: Runner = _default_runner

@@ -119,3 +119,80 @@ def test_wait_and_news_via_the_skill(world, monkeypatch):
     actions.freeze(jane, jd, "stop")
     r = skill("note", "--summary", "x")
     assert r.returncode != 0 and "no longer yours" in r.stderr and "froze the task" in r.stdout
+
+
+def test_status_and_implement_print_what_the_reviewer_said(world):
+    pytest.importorskip("typer")
+    pytest.importorskip("rich")
+    from dags import work
+    world.backend.add("T1", title="Poll the feed", labels=["repo:OWNER/app", "swarm:autonomy:human-must-review"])
+    a = world.machine("mac-a")
+    (a.root / "fake-backend.yaml").symlink_to(world.backend.path)
+    world.scheduler(a, worker="claude").cycle()
+    d = rv.index(a.root)["T1"]
+    wt = worktree.worktree_path(a, d)
+
+    def skill(*args):
+        return subprocess.run([str(wt / ".swarm-task" / "swarm-task"), *args], cwd=wt, capture_output=True, text=True)
+
+    (wt / ".swarm-task" / "plan.md").write_text("# Plan\nAdd poller.py.\n")
+    assert skill("plan", "--submit").returncode == 0
+    assert "Reviewer says" not in skill("status").stdout
+    from backends.base import TaskRef
+    from backends.fake import FakeBackend
+    issue = FakeBackend(a.root / "fake-backend.yaml")      # the file the skill's backend writes (not a symlink any more)
+    issue.reply(TaskRef("T1"), "jane-gh", "1: use the push feed")
+    issue.reply(TaskRef("T1"), "a-stranger", "spam")
+    out = skill("status").stdout
+    assert "Reviewer says" in out and "1: use the push feed" in out and "spam" not in out
+    refused = skill("implement")                          # not approved yet: the answers still print
+    assert refused.returncode != 0 and "1: use the push feed" in refused.stdout
+    jane = world.machine("jane-mac", human="jane")
+    work.approve_plan(jane, rv.index(jane.root)["T1"])
+    out = skill("implement").stdout
+    assert "# Reviewer says" in out and "1: use the push feed" in out
+    assert skill("block", "keep cancelled matches?").returncode == 0
+    issue.reply(TaskRef("T1"), "jane-gh", "yes, keep them")
+    out = skill("status").stdout
+    assert "yes, keep them" in out and "1: use the push feed" not in out    # the window moved to the question
+
+
+def test_wait_covers_the_test_scope_gate(world):
+    pytest.importorskip("typer")
+    pytest.importorskip("rich")
+    from dags import work
+    world.backend.add("T1", title="Poll the feed", labels=["repo:OWNER/app", "swarm:autonomy:human-must-review"])
+    a = world.machine("mac-a")
+    (a.root / "fake-backend.yaml").symlink_to(world.backend.path)
+    world.scheduler(a, worker="claude").cycle()
+    d = rv.index(a.root)["T1"]
+    wt = worktree.worktree_path(a, d)
+
+    def skill(*args):
+        return subprocess.run([str(wt / ".swarm-task" / "swarm-task"), *args], cwd=wt, capture_output=True, text=True)
+
+    def wait(mode):
+        return skill("wait", "--for", mode, "--timeout", "1.5", "--interval", "0.2")
+
+    (wt / ".swarm-task" / "plan.md").write_text("# Plan\nAdd poller.py.\n")
+    assert skill("plan", "--submit").returncode == 0
+    jane = world.machine("jane-mac", human="jane")
+    jd = rv.index(jane.root)["T1"]
+    work.approve_plan(jane, jd)
+    assert skill("wait", "--for", "approved", "--timeout", "5", "--interval", "0.2").returncode == 0
+    (wt / "poller.py").write_text("print(1)\n")
+    assert skill("test", "--propose").returncode == 0
+    # an unanswered proposal is outstanding: nothing returns 0, nothing claims "no open question"
+    for mode in ("answer", "tests", "any"):
+        r = wait(mode)
+        assert r.returncode == 3, (mode, r.stdout, r.stderr)
+        assert "no open" not in r.stdout.lower()
+    jane.coord.pull()
+    work.answer_tests(jane, jd, "targeted", targeted_enough=True, note_text="just the poller")
+    r = wait("answer")
+    assert r.returncode == 0 and "targeted" in r.stdout and "just the poller" in r.stdout
+    # the answer is one-off news; `tests` and `any` pick it up in a fresh worker session
+    for mode in ("tests", "any"):
+        (wt / ".swarm-task" / "seen.json").unlink(missing_ok=True)
+        r = wait(mode)
+        assert r.returncode == 0 and "targeted" in r.stdout, (mode, r.stdout, r.stderr)

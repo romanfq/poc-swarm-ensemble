@@ -26,35 +26,58 @@ from rich.text import Text  # noqa: E402
 from textual import work  # noqa: E402
 from textual.app import App, ComposeResult  # noqa: E402
 from textual.binding import Binding  # noqa: E402
+from textual.color import Color  # noqa: E402
 from textual.coordinate import Coordinate  # noqa: E402
 from textual.containers import Horizontal, Vertical, VerticalScroll  # noqa: E402
 from textual.command import DiscoveryHit, Hit, Provider  # noqa: E402
 from textual.screen import ModalScreen  # noqa: E402
+from textual.theme import Theme  # noqa: E402
 from textual.widgets import (Button, Checkbox, DataTable, Footer, Header, Input, Label, Markdown,  # noqa: E402
                              OptionList, ProgressBar, RichLog, Static)
 from textual.widgets.option_list import Option  # noqa: E402
 
+import resolve  # noqa: E402
 import workers  # noqa: E402
 from dags import actions, boardview, daemon, feed, gh, snapshot, worktree  # noqa: E402
 from dags import work as worklib  # noqa: E402
 from dags.config import Context  # noqa: E402
 
 # ---------------------------------------------------------------------------
-# appearance as data (GH-67): board.tcss refers to these tokens by name ($navy ...) and
-# cell styling resolves boardview's semantic names through STYLES, never anywhere else.
+# appearance (GH-72): the DAGS palette is a Textual theme, so board.tcss only uses tokens a
+# theme controls ($surface $panel $foreground ...) and any built-in theme re-colours the Board.
+# Cell styling resolves boardview's semantic names through BoardApp.cell_styles, which is
+# rebuilt from the active theme whenever it changes.
 # ---------------------------------------------------------------------------
 
-PALETTE = {"navy": "#15243C", "slate": "#4A5A75", "mid": "#6B7C99",
-           "rust": "#B23A2F", "pale": "#EEF2F8", "line": "#CFD8E6"}
+DAGS_THEME = Theme(
+    name="dags", dark=True,
+    primary="#4A5A75", secondary="#6B7C99", accent="#B23A2F", error="#B23A2F",
+    success="#5FA77A", warning="#D9A441",
+    foreground="#EEF2F8", background="#15243C", surface="#15243C", panel="#4A5A75",
+)
 
-# boardview's semantic style names -> Rich styles for Text.stylize
-STYLES = {
-    "plain": "", "dim": f"{PALETTE['mid']}",
-    "ok": "#5FA77A", "warn": "#D9A441", "crit": f"bold {PALETTE['rust']}",
-    "off": f"{PALETTE['mid']}", "accent": f"bold {PALETTE['rust']}",
+# theme colour used for each of boardview's semantic style names (bold = emphasised)
+STYLE_SOURCES = {
+    "plain": None, "dim": "secondary", "off": "secondary",
+    "ok": "success", "warn": "warning", "crit": "!error", "accent": "!accent",
 }
-LOG_STYLES = {"WARNING": STYLES["warn"], "ERROR": STYLES["crit"], "CRITICAL": STYLES["crit"],
-              "DEBUG": STYLES["dim"]}
+
+
+def build_cell_styles(variables: dict[str, str]) -> dict[str, str]:
+    """boardview's semantic style names -> Rich styles, from a theme's CSS variables."""
+    out = {}
+    for name, source in STYLE_SOURCES.items():
+        if source is None:
+            out[name] = ""
+        else:
+            bold = source.startswith("!")
+            out[name] = ("bold " if bold else "") + Color.parse(variables[source.lstrip("!")]).hex6
+    return out
+
+
+def build_log_styles(styles: dict[str, str]) -> dict[str, str]:
+    return {"WARNING": styles["warn"], "ERROR": styles["crit"], "CRITICAL": styles["crit"],
+            "DEBUG": styles["dim"]}
 
 # ---------------------------------------------------------------------------
 # links (GH-5): Textual captures the mouse, so the terminal's own Cmd-click
@@ -214,7 +237,8 @@ class InputScreen(ModalScreen[str | None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
-            yield Label(self.prompt, markup=False)
+            with VerticalScroll(id="prompt-scroll"):
+                yield Label(self.prompt, markup=False)
             yield Input(value=self.value, placeholder=self.placeholder, id="answer",
                         type="integer" if self.numeric else "text")
 
@@ -322,6 +346,7 @@ class PlanScreen(ModalScreen[str | None]):
                 else:
                     yield Button("Approve", id="approved", variant="success")
                     yield Button("Request changes", id="changes-requested", variant="warning")
+                yield Button("Answer on GitHub", id="answer-on-github")
                 yield Button("Cancel", id="cancel")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -374,9 +399,6 @@ class BoardApp(App):
     CSS_PATH = "board.tcss"
     COMMANDS = App.COMMANDS | {BoardCommands}
 
-    def get_css_variables(self) -> dict[str, str]:
-        return {**super().get_css_variables(), **PALETTE}
-
     # The footer shows the focused panel's actions (see the *Table classes) plus these four;
     # every other key still works from anywhere and is listed behind ':'.
     BINDINGS = [
@@ -427,6 +449,18 @@ class BoardApp(App):
         self.said: list[str] = []
         self.panel = "claims"                     # the focused (expanded) left panel
         self.counts: dict[str, int] = {}
+        self.register_theme(DAGS_THEME)
+        self.theme = DAGS_THEME.name
+        self.cell_styles = build_cell_styles(self.get_css_variables())
+        self.log_styles = build_log_styles(self.cell_styles)
+
+    def _on_theme_changed(self, _theme=None) -> None:
+        """Cell and log colours are Rich styles, not CSS: rebuild them and repaint."""
+        self.cell_styles = build_cell_styles(self.get_css_variables())
+        self.log_styles = build_log_styles(self.cell_styles)
+        if self.is_running and self.snap is not None:
+            self.refresh_data()
+            self.load_daemon_log()
 
     # -- layout ------------------------------------------------------------------
     def compose(self) -> ComposeResult:
@@ -450,6 +484,7 @@ class BoardApp(App):
         yield Footer()
 
     def on_mount(self) -> None:
+        self.theme_changed_signal.subscribe(self, self._on_theme_changed)
         self.sub_title = f"{self.ctx.identity} · operator {self.ctx.operator}"
         for tid, cols in (("claims", boardview.CLAIM_COLUMNS), ("review", boardview.REVIEW_COLUMNS),
                           ("arbitration", boardview.ARBITRATION_COLUMNS), ("plans", boardview.PLAN_COLUMNS),
@@ -508,7 +543,7 @@ class BoardApp(App):
                                              "checks": gh.checks_summary(pr), "url": t.pr_url}
                 except Exception:  # noqa: BLE001
                     pass
-        new_feed = [e.text for e in feed.new_events(ctx.root, self.seen)]
+        new_feed = [boardview.feed_line(e.text) for e in feed.new_events(ctx.root, self.seen)]
         notes = self.tail.read()
         logged = self.daemon_log.read_tagged()
         flagged = boardview.poller_flags(ctx.swarm_dir)
@@ -519,28 +554,30 @@ class BoardApp(App):
     # which cells carry an accent: only what needs a human (restraint, GH-67)
     ACCENT_COLUMN = {"arbitration": "why", "plans": "plan", "tests": "task"}
 
-    def _cell(self, tid: str, key: str, column: str, text: str, linked: bool, leases: dict) -> Text:
+    def _cell(self, tid: str, key: str, column: str, text: str, linked: bool, leases: dict,
+              kinds: dict | None = None) -> Text:
         cell = Text(text, style="underline" if linked and text else "")
         if column in boardview.SECONDARY_COLUMNS:
-            cell.stylize(STYLES["dim"])
+            cell.stylize(self.cell_styles["dim"])
         elif column == "lease":
-            cell.stylize(STYLES[boardview.level_of(leases.get(key))])
+            cell.stylize(self.cell_styles[boardview.level_of(leases.get(key))])
         elif column == self.ACCENT_COLUMN.get(tid):
-            cell.stylize(STYLES["accent"])
-        elif column == "state":
-            at = text.find("needs human")
-            if at >= 0:
-                cell.stylize(STYLES["accent"], at, at + len("needs human"))
+            cell.stylize(self.cell_styles["accent"])
+        elif tid == "claims" and column == "state":
+            cell.stylize(self.cell_styles[(kinds or {}).get(key, "plain")])
+        elif tid == "claims" and column == "task" and (kinds or {}).get(key) == "accent":
+            cell.stylize(self.cell_styles["accent"])      # findable at a glance in a long list (GH-102)
         return cell
 
-    def _fill(self, tid: str, rows: list[tuple[str, tuple]], leases: dict | None = None) -> None:
+    def _fill(self, tid: str, rows: list[tuple[str, tuple]], leases: dict | None = None,
+              kinds: dict | None = None) -> None:
         table = self.query_one(f"#{tid}", DataTable)
         selected = self.selected_key(table)
         table.clear()
         names = [str(c.label) for c in table.ordered_columns]
         for key, cells in rows:
             table.add_row(*(self._cell(tid, key, names[i], str(c), names[i] in boardview.LINK_COLUMNS and bool(c),
-                                       leases or {}) for i, c in enumerate(cells)), key=key)
+                                       leases or {}, kinds) for i, c in enumerate(cells)), key=key)
         if selected is not None:
             for i, (key, _) in enumerate(rows):
                 if key == selected:
@@ -566,7 +603,7 @@ class BoardApp(App):
                 continue
             if strip:
                 strip.append("  ")
-            strip.append(f"{title} {n}", style=STYLES[style])
+            strip.append(f"{title} {n}", style=self.cell_styles[style])
         self.query_one("#strip", Static).update(strip)
 
     def action_cycle_panel(self, step: int = 1) -> None:
@@ -588,8 +625,8 @@ class BoardApp(App):
         header = Text()
         for i, (label, value, style) in enumerate(boardview.header_rows(
                 snap, pid, info, self.ctx.operator, boardview.poller_age_s(self.ctx.swarm_dir, snap.now))):
-            header.append(("\n" if i else "") + label.ljust(9), style=STYLES["dim"])
-            header.append(value, style=STYLES[style])
+            header.append(("\n" if i else "") + label.ljust(9), style=self.cell_styles["dim"])
+            header.append(value, style=self.cell_styles[style])
         self.query_one("#machine", Static).update(header)
         q = boardview.quota(snap)
         self.query_one("#quota-label", Label).update(q.text)
@@ -598,7 +635,9 @@ class BoardApp(App):
                   "arbitration": boardview.arbitration_rows(snap, flagged), "plans": boardview.plan_rows(snap),
                   "tests": boardview.test_rows(snap)}
         for tid, rows in tables.items():
-            self._fill(tid, rows, boardview.claim_leases(snap) if tid == "claims" else None)
+            claims = tid == "claims"
+            self._fill(tid, rows, boardview.claim_leases(snap) if claims else None,
+                       boardview.claim_kinds(snap) if claims else None)
         self.counts = {tid: len(rows) for tid, rows in tables.items()}
         for tid, title in boardview.PANELS:
             self.query_one(f"#{tid}").border_title = f"{title} ({self.counts[tid]})"
@@ -633,7 +672,7 @@ class BoardApp(App):
     def write_daemon_log(self, entries) -> None:
         panel = self.query_one("#daemon-log", RichLog)
         for e in entries:
-            panel.write(Text(e.line, style=LOG_STYLES.get(e.level, "")))
+            panel.write(Text(e.line, style=self.log_styles.get(e.level, "")))
 
     def load_daemon_log(self) -> None:
         """(Re)fill the panel from the file at the current level."""
@@ -879,12 +918,17 @@ class BoardApp(App):
             return
         self.notify(escape(f"opened {url}"))
 
+    def has_open_question(self, key: str) -> bool:
+        return bool(resolve.open_question(self.task_dir(key)))
+
     def open_task_link(self, key: str, kind: str) -> None:
         if kind == "pr":
             url = actions.pr_url(self.task_dir(key))
             missing = "no PR yet"
         else:
-            url = actions.ticket_url(self.ctx, self.task_dir(key))
+            # a blocked task's link goes to the comment with its question (GH-33)
+            url = actions.answer_url(self.ctx, self.task_dir(key)) if self.has_open_question(key) \
+                else actions.ticket_url(self.ctx, self.task_dir(key))
             missing = "no ticket link"
         if url:
             self.open_link(url)
@@ -935,6 +979,13 @@ class BoardApp(App):
         def done(decision):
             if not decision:
                 return
+            if decision == "answer-on-github":
+                url = actions.answer_url(self.ctx, view.dir)
+                if url:
+                    self.open_link(url)
+                else:
+                    self.notify(f"{view.short} has no issue link", severity="warning")
+                return
             if decision == "submit-changes-requested":
                 def note_done(note):
                     if note is None:
@@ -945,7 +996,7 @@ class BoardApp(App):
                         return f"plan for {view.short}: submitted and changes requested"
                     self.run_job(f"plan for {view.short}: submitted and changes requested",
                                 submit_then_request)
-                self.push_screen(InputScreen(f"Why should {view.short} change the plan?"), note_done)
+                self.push_screen(InputScreen(f"Why should {view.short} change the plan? (the discussion belongs on the issue: use Answer on GitHub)"), note_done)
                 return
             if decision == "submit-approved":
                 def submit_then_approve():

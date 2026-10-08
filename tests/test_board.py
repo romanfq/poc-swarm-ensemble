@@ -1,5 +1,6 @@
 """Swarm Board pilot tests (Ch.10). Need textual — run on the Mac via bin/dev-setup.sh."""
 import asyncio
+from pathlib import Path
 import time
 
 import pytest
@@ -374,14 +375,40 @@ def test_share_zero_asks_for_confirmation(setup):
     run(go())
 
 
-def test_board_stylesheet_and_no_css_colours():
+def test_stylesheet_uses_only_theme_tokens(setup):
     import re
     from pathlib import Path
-    tcss = Path(board.__file__).with_name("board.tcss")
-    assert tcss.exists() and "$rust" in tcss.read_text()
-    assert not re.search(r"[:\s]#[0-9a-fA-F]{6}\b", tcss.read_text())        # tokens, no literals
-    assert not getattr(board.BoardApp, "CSS", "")                        # the class holds no CSS at all
-    assert board.PALETTE["navy"] == "#15243C"
+    world, a, app, _ = setup
+    text = re.sub(r"/\*.*?\*/", "", Path(board.__file__).with_name("board.tcss").read_text(), flags=re.S)
+    assert not re.search(r":[^;{}]*(#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\()", text)  # no literal colours
+    assert not getattr(board.BoardApp, "CSS", "")                              # the class holds no CSS at all
+    used = set(re.findall(r"\$([a-z][a-z-]*)", text))
+    assert used
+    assert not used & {"navy", "slate", "mid", "pale", "line", "rust"}
+    assert used <= set(app.get_css_variables())                                 # every token is theme-supplied
+    assert app.theme == "dags" and "dags" in app.available_themes
+    for name in ("primary", "secondary", "accent", "success", "warning", "error"):
+        assert getattr(board.DAGS_THEME, name)
+
+
+def test_switching_theme_recolours_the_board(setup):
+    world, a, app, _ = setup
+
+    async def go():
+        async with app.run_test(size=(100, 30)) as pilot:
+            await until(pilot, lambda: isinstance(app.screen, board.ChoiceScreen))
+            await pilot.press("escape")
+            await pilot.pause()
+            dark_bg = app.screen.styles.background
+            dark_cells = dict(app.cell_styles)
+            app.theme = "textual-light"
+            await pilot.pause()
+            assert app.screen.styles.background != dark_bg
+            assert app.cell_styles != dark_cells
+            app.theme = "dags"
+            await pilot.pause()
+            assert app.screen.styles.background == dark_bg
+    run(go())
 
 
 def test_focused_panel_has_room_and_footer_fits(setup):
@@ -432,4 +459,86 @@ def test_idle_block_when_nothing_is_live(world):
             assert app.query_one("#idle").display
             assert not app.query_one("#claims").display
             assert "start --quota-share 1" in shown(app.query_one("#idle"))
+    run(go())
+
+
+def test_input_dialog_scrolls_a_long_prompt():
+    from textual.app import App
+    from textual.containers import VerticalScroll
+    long = "\n\n".join(f"Paragraph {i}: " + "word " * 60 for i in range(12))
+
+    class Host(App):                                    # the real stylesheet, without the Board's panels
+        CSS_PATH = str(Path(board.__file__).with_name("board.tcss"))
+
+        def on_mount(self):                             # the theme, as BoardApp takes it
+            self.register_theme(board.DAGS_THEME)
+            self.theme = board.DAGS_THEME.name
+
+    async def go():
+        app = Host()
+        async with app.run_test(size=(100, 30)) as pilot:
+            app.push_screen(board.InputScreen(long))
+            await pilot.pause()
+            scroll = app.screen.query_one("#prompt-scroll", VerticalScroll)
+            assert scroll.virtual_size.height > scroll.size.height     # overflows, but scrolls
+            assert app.screen.query_one("#answer").region.bottom <= 30   # the Input stays on screen
+    run(go())
+
+
+def test_answer_on_github_opens_the_recorded_comment(setup):
+    world, a, app, opened = setup
+    d = rv.index(a.root)["T1"]
+    work.choose_worker(a, d, "claude", launch=world.launch, platform="darwin")
+    work.submit_plan(a, d, "# The plan\nDo it.")
+    from dags import ledger as L
+    url = L.read_checkpoint(d)["plan_comment_url"]
+    assert url
+
+    async def go():
+        async with app.run_test(size=(160, 50)) as pilot:
+            app.selected_task = lambda *args, **kwargs: "T1"
+            await until(pilot, lambda: app.snap and app.snap.by_key("T1").plan_status == "pending-review")
+            await pilot.press("v")
+            await until(pilot, lambda: isinstance(app.screen, board.PlanScreen))
+            await pilot.click("#answer-on-github")
+            await until(pilot, lambda: opened == [url])
+            assert rv.plan_status(d, a.human_names) == "pending-review"      # opening the thread decides nothing
+    run(go())
+
+
+def test_open_ticket_on_a_blocked_task_opens_its_question(setup):
+    world, a, app, opened = setup
+    d = rv.index(a.root)["T1"]
+    work.choose_worker(a, d, "claude", launch=world.launch, platform="darwin")
+    work.block(a, d, "keep cancelled matches?")
+    from dags import ledger as L
+    url = L.read_checkpoint(d)["question_comment_url"]
+
+    async def go():
+        async with app.run_test(size=(160, 50)) as pilot:
+            app.selected_task = lambda *args, **kwargs: "T1"
+            await until(pilot, lambda: app.snap and app.snap.by_key("T1") is not None)
+            app.action_open_ticket()
+            await until(pilot, lambda: opened == [url])
+    run(go())
+
+
+def test_needs_human_is_visible_in_a_narrow_claims_table(setup):
+    """GH-102: a long title no longer pushes the signal off a 100-column terminal."""
+    world, a, app, _ = setup
+    d = rv.index(a.root)["T1"]
+    work.choose_worker(a, d, "claude", launch=world.launch, platform="darwin")
+    work.block(a, d, "keep cancelled matches?")
+
+    async def go():
+        async with app.run_test(size=(100, 40)) as pilot:
+            claims = app.query_one("#claims")
+            await until(pilot, lambda: claims.row_count == 1)
+            width = claims.size.width
+            first = claims.ordered_columns[0].get_render_width(claims) + claims.ordered_columns[1].get_render_width(claims)
+            assert first < width                          # task and state both fit on screen
+            row = claims.get_row_at(0)
+            state = row[1]
+            assert state.plain.startswith("needs human")
+            assert app.cell_styles["accent"] in {str(sp.style) for sp in state.spans}
     run(go())

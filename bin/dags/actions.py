@@ -173,6 +173,14 @@ def ticket_url(ctx, task_dir: Path) -> str | None:
         return None
 
 
+def answer_url(ctx, task_dir: Path) -> str | None:
+    """Where a human answers the worker (GH-33): the comment holding its open question, else its latest
+    plan comment, else the issue itself."""
+    cp = L.read_checkpoint(task_dir)
+    url = cp.get("question_comment_url") if resolve.open_question(task_dir) else cp.get("plan_comment_url")
+    return url or ticket_url(ctx, task_dir)
+
+
 def pr_url(task_dir: Path) -> str | None:
     return resolve.read_outcome(task_dir).pr_url
 

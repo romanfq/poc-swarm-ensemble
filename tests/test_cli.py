@@ -128,6 +128,19 @@ def test_pause_resume_throttle_and_status(machine):
     assert "swarm" in r.output and "mac-a" in r.output
 
 
+def test_start_resumes_a_paused_machine(machine, monkeypatch):
+    from dags import ledger as L
+    monkeypatch.setattr(cli.daemon, "spawn", lambda *a, **k: None)
+    invoke("pause")
+    rows = {x["label"]: x for x in json.loads(invoke("status", "--json").stdout)}
+    assert "paused since" in rows["scheduler"]["value"] or "stopped" in rows["scheduler"]["value"]
+    invoke("stop")
+    r = invoke("start", "--skip-prereqs")
+    assert "was paused since" in r.output and "start resumed it" in r.output
+    assert not L.machine_control(machine.root, "mac-a")["paused"]
+    assert "was paused" not in invoke("start", "--skip-prereqs").output
+
+
 def test_human_levers_need_humans_yaml(machine):
     invoke("plan", "sync")
     assert invoke("quota", "set", "5", "--reason", "budget").exit_code == 0
@@ -264,3 +277,12 @@ def test_log_reads_the_ledger_and_filters(machine):
     assert json.loads(invoke("log", "--json", "--machine", "mac-z").stdout) == []
     assert len(json.loads(invoke("log", "--json", "--limit", "1").stdout)) == 1
     assert "is working on" not in invoke("log").output
+
+
+def test_status_ledger_skips_sync_and_failed_sync_is_marked(swarm, monkeypatch):
+    from dags import panel
+    a = swarm.clone("mac-a")
+    rows = {k: v for k, v, _ in panel.status_rows(a, synced=False, sync_note="local ledger only")}
+    assert "NOT synced (local ledger only; showing the local ledger)" in rows["coordination"]
+    rows = {k: v for k, v, _ in panel.status_rows(a)}
+    assert rows["coordination"].startswith("synced")
