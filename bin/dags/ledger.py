@@ -313,16 +313,20 @@ def set_quota(ctx: Context, n: int, reason: str = "") -> None:
 
 def machine_control(root: Path, machine: str) -> dict:
     """Latest pause/resume/stop/throttle state for a machine."""
-    state = {"paused": False, "quota_share": None, "stopped": False, "last": None}
+    state = {"paused": False, "paused_since": None, "paused_by": None,
+             "quota_share": None, "stopped": False, "last": None}
     records = sorted(R.read_dir(Path(root) / "control"), key=lambda pd: (R.clock_of(pd[1]), pd[0].name))
     for _, d in records:
         if d.get("machine") != machine:
             continue
         action = d.get("action")
         if action == "pause":
+            if not state["paused"]:
+                state["paused_since"], state["paused_by"] = d.get("wall_utc"), d.get("human")
             state["paused"] = True
         elif action == "resume":
             state["paused"] = False
+            state["paused_since"] = state["paused_by"] = None
         elif action == "start":
             state["stopped"] = False
             if d.get("quota_share") is not None:
