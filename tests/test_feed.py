@@ -76,7 +76,7 @@ def test_worker_dispatched_awaiting_and_still_working(world):
     work.choose_worker(a, d, "vscode", launch=world.launch, platform="darwin")
     work.still_working(a, d)
     lines = _lines(a)
-    assert "Roman's swarm handed T1 to VSCode + Human (mac-a)" in lines
+    assert any(ln.startswith("Roman's swarm handed T1 to VSCode + Human (mac-a) in ") for ln in lines)
     assert "Roman confirmed T1 is still being worked on (mac-a)" in lines
 
 

@@ -291,13 +291,14 @@ class Scheduler:
         label = resolve.label(d)
         if self.default_worker:
             try:
-                work.choose_worker(self.ctx, d, self.default_worker, launch=self.launch, platform=self.platform)
+                handed = work.choose_worker(self.ctx, d, self.default_worker, launch=self.launch,
+                                            platform=self.platform)
             except Exception as e:  # noqa: BLE001
                 self.dispatch_failed(d, cid, e, rep)
                 return
             self.clear_error(f"dispatch {label}")
             rep.dispatched.append(label)
-            self.notify(f"Handed {label} to {workers.WORKERS[self.default_worker].label}", "dispatched")
+            self.notify(handed.message(label), "dispatched")
             return
         rep.awaiting_worker.append(label)
         if cid in self._announced:
@@ -307,7 +308,8 @@ class Scheduler:
             L.record_event(self.ctx, d, "awaiting-worker", once_per_claim=True, claim_id=cid)
         except Exception as e:  # noqa: BLE001
             log.warning("could not record that %s awaits a worker: %s", label, e)
-        # prepare the worktree now so the human's choice is instant
+        # prepare the worktree now (and fetch behind it) so the human's choice is instant
+        work.fetch_ahead(self.ctx, d)
         try:
             work.prepare(self.ctx, d, cid)
         except Exception as e:  # noqa: BLE001

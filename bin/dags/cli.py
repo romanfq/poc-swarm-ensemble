@@ -613,6 +613,7 @@ def task_worker(key: str, choice: str = typer.Argument(..., help="a/claude, b/in
     label = work.choose_worker(ctx(), task_dir(key), choice)
     console.print(f"[swarm-board] Ok, you have selected {label}. Handing over {key} to it — "
                   f"when done, it will announce with the PR link here.", markup=False)
+    work.drain()
 
 
 @task_app.command("freeze")

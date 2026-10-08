@@ -22,8 +22,8 @@ def _stamp(ctx: Context, clock: int, **data) -> dict:
             "wall_utc": timeutil.iso()}
 
 
-def _tx(ctx: Context, message: str, build, push: bool = True) -> list[Path]:
-    return ctx.coord.transaction(build, f"[swarm] {ctx.identity}: {message}", push=push)
+def _tx(ctx: Context, message: str, build, push: bool = True, pull: bool = True) -> list[Path]:
+    return ctx.coord.transaction(build, f"[swarm] {ctx.identity}: {message}", push=push, pull=pull)
 
 
 # -- claims (Ch.6.2, 6.4) -----------------------------------------------------------
@@ -84,9 +84,11 @@ def still_mine(ctx: Context, task_dir: Path, claim_id: str) -> bool:
     return res.winner is not None and res.winner.id == claim_id
 
 
-def require_mine(ctx: Context, task_dir: Path, claim_id: str) -> None:
-    """Re-check resolve() before any expensive or irreversible step (Ch.6.4)."""
-    ctx.coord.pull()
+def require_mine(ctx: Context, task_dir: Path, claim_id: str, pull: bool = True) -> None:
+    """Re-check resolve() before any expensive or irreversible step (Ch.6.4). ``pull=False`` checks
+    the ledger as last synced, for a caller that must not wait on the network or the lock (GH-100)."""
+    if pull:
+        ctx.coord.pull()
     if not still_mine(ctx, task_dir, claim_id):
         raise LostClaim(f"{claim_id} no longer owns {task_dir.name}")
 
@@ -102,7 +104,7 @@ def read_checkpoint(task_dir: Path) -> dict:
 
 def update_checkpoint(ctx: Context, task_dir: Path, claim_id: str, *, append: dict | None = None,
                       push: bool = True, check_owner: bool = True, event: dict | None = None,
-                      **fields) -> dict:
+                      pull: bool = True, **fields) -> dict:
     """``event`` ({"kind": ..., **fields}) also writes an append-only
     ``events/`` record in the same commit, with the checkpoint's clock, so
     the activity feed sees a change the checkpoint only overwrites."""
@@ -133,7 +135,7 @@ def update_checkpoint(ctx: Context, task_dir: Path, claim_id: str, *, append: di
             paths.append(_write_event(ctx, task_dir, cp["logical_clock"], claim_id=claim_id, **event))
         return paths
 
-    _tx(ctx, f"checkpoint {task_dir.name}", build, push=push)
+    _tx(ctx, f"checkpoint {task_dir.name}", build, push=push, pull=pull)
     return out
 
 

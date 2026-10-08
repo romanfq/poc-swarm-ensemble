@@ -734,6 +734,10 @@ class BoardApp(App):
         self.call_from_thread(self.notify, escape(message))
         self.call_from_thread(self.refresh_data)
 
+    def hand_over(self, view, choice: str) -> str:
+        handed = worklib.choose_worker(self.ctx, view.dir, choice, launch=self.launch, platform=self.platform)
+        return handed.message(view.short)
+
     def say(self, text: str) -> None:
         self.said.append(text)
         self.query_one("#feed", RichLog).write(linkify(f"[swarm-board] {text}"))
@@ -1108,10 +1112,10 @@ class BoardApp(App):
                 self.say(f"No worker chosen for {view.short} yet — press w to choose later.")
                 return
             label = workers.WORKERS[choice].label
+            self.say(f"Launching {view.short}…")
             self.say(f"Ok, you have selected {label}. Handing over {view.short} to it — "
                      f"when done, it will announce with the PR link here.")
-            self.run_job(f"{view.short} handed to {label}", worklib.choose_worker, self.ctx, view.dir,
-                            choice, launch=self.launch, platform=self.platform)
+            self.run_job(f"{view.short} handed to {label}", self.hand_over, view, choice)
             self.call_later(self.maybe_prompt_worker)
         self.push_screen(ChoiceScreen(f"[swarm-board] {question}", options, letters), done)
 
