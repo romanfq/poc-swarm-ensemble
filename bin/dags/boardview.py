@@ -291,7 +291,7 @@ class Quota:
     @property
     def text(self) -> str:
         share = "?" if self.share is None else str(self.share)
-        return f"global {self.used}/{self.total}   ·   this machine {self.mine}/{share}"
+        return f"[global {self.used}/{self.total} · this machine {self.mine}/{share}]"
 
 
 def quota(snap: snapshot.Snapshot) -> Quota:
