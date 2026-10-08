@@ -424,6 +424,59 @@ def _await_checks(ctx, task_dir, claim_id, rcfg, url, token, say, sleep, clock) 
          "no checks": "no checks configured on this PR; finishing as usual"}[summary])
 
 
+CONFLICT_QUESTION = "Updating {branch} with origin/{base} conflicts in:"
+
+
+def _block_conflict(ctx, task_dir: Path, wt: Path, text: str) -> None:
+    block(ctx, task_dir, text)
+    raise WorkError(f"{text}\nThe merge is left in progress; touch nothing and "
+                    "`swarm-task wait --for answer`, then run `swarm-task done` again.")
+
+
+def _check_resolution(ctx, task_dir: Path, wt: Path, base: str, branch: str, cp: dict, label: str) -> None:
+    """Before anything is staged: a half-finished merge must not be committed with its markers."""
+    prefix = CONFLICT_QUESTION.format(branch=branch, base=base)
+    resuming = str(cp.get("needs_human") or "").startswith(prefix)
+    problems = []
+    if worktree.merge_in_progress(wt):
+        problems.append("a merge is still in progress (git commit it)")
+    unmerged = worktree.unmerged_paths(wt)
+    if unmerged:
+        problems.append("unmerged paths: " + ", ".join(unmerged))
+    if resuming:
+        marked = worktree.conflict_markers(wt, base)
+        if marked:
+            problems.append("conflict markers committed in: " + ", ".join(marked))
+    if problems:
+        _block_conflict(ctx, task_dir, wt, f"{prefix} the resolution isn't finished: "
+                        + "; ".join(problems) + f".\nIn {wt}: resolve, git add, git commit; "
+                        f'then: swarm.py task answer {label} "resolved"')
+
+
+def _bring_up_to_date(ctx, task_dir: Path, wt: Path, repo: str, base: str, branch: str, label: str) -> None:
+    """Fetch the base and bring the branch up to date with it before the tests (GH-91).
+    First push: rebase. PR already open: merge, never a force-push. A conflict is left as a
+    merge in progress and handed to a human with `block`; the re-run checks the resolution."""
+    prefix = CONFLICT_QUESTION.format(branch=branch, base=base)
+    worktree.fetch_base(wt, base)
+    if worktree.behind(wt, base) == 0:
+        return
+    try:
+        published = (resolve.last_submitted_commit(task_dir) is not None
+                     or worktree.remote_has_branch(wt, branch)
+                     or gh.pr_for_branch(repo, branch) is not None)
+    except Exception:  # noqa: BLE001 - can't tell: assume published, merge is the safe direction
+        published = True
+    try:
+        files = worktree.update_to_base(wt, base, rebase=not published)
+    except RuntimeError as e:
+        raise WorkError(f"{label}: {e}") from e
+    if files:
+        _block_conflict(ctx, task_dir, wt, f"{prefix} " + ", ".join(files)
+                        + f".\nIn {wt}: resolve the files, git add, git commit; "
+                        f'then: swarm.py task answer {label} "resolved" (or y on the Board)')
+
+
 def finish(ctx, task_dir: Path, wt: Path, *, skip_tests: bool = False, test_runner=subprocess.run,
            say=lambda text: None, wait_sleep=None, wait_clock=None) -> str:
     from dags.gitsync import git
@@ -447,6 +500,18 @@ def finish(ctx, task_dir: Path, wt: Path, *, skip_tests: bool = False, test_runn
     branch = worktree.branch_name(task_dir)
     durations: list[dict] = []
     scoped_note = ""
+    commit_msg, body = render(ctx, task_dir, cp)
+    _check_resolution(ctx, task_dir, wt, base, branch, cp, label)
+    git(["add", "-A"], wt)
+    if git(["diff", "--cached", "--quiet"], wt, check=False).returncode != 0:
+        cmd = ["commit", "-q", "-F", "-"]
+        bot = ctx.bot_identity()
+        if bot:
+            cmd.insert(1, f"--author={bot[0]} <{bot[1]}>")
+        git(cmd, wt, input=commit_msg)
+    _bring_up_to_date(ctx, task_dir, wt, repo, base, branch, label)
+    if worktree.commits_ahead(wt, base) == 0:
+        raise WorkError(f"{label}: no changes to submit on {branch}")
     if not skip_tests:
         scope, answer = _done_scope(ctx, task_dir, wt)
         if scope:
@@ -459,18 +524,7 @@ def finish(ctx, task_dir: Path, wt: Path, *, skip_tests: bool = False, test_runn
                            f"'{scope}' scope ({ran}) as enough.\n")
         else:
             durations = parse_durations(run_tests(rcfg.get("test_command"), wt, test_runner))
-
-    commit_msg, body = render(ctx, task_dir, cp)
     body += scoped_note
-    git(["add", "-A"], wt)
-    if git(["diff", "--cached", "--quiet"], wt, check=False).returncode != 0:
-        cmd = ["commit", "-q", "-F", "-"]
-        bot = ctx.bot_identity()
-        if bot:
-            cmd.insert(1, f"--author={bot[0]} <{bot[1]}>")
-        git(cmd, wt, input=commit_msg)
-    if worktree.commits_ahead(wt, base) == 0:
-        raise WorkError(f"{label}: no changes to submit on {branch}")
     submitted = resolve.last_submitted_commit(task_dir)
     if submitted and worktree.head(wt) == submitted:
         raise WorkError(f"{label}: nothing new since the PR was opened ({submitted[:7]}); "

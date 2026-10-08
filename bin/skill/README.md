@@ -65,8 +65,14 @@ task is no longer yours, or asks you to pause, record your progress with `note` 
 
 ## 3. Finish: `.swarm-task/swarm-task done`
 
-Needs a `--summary` note first. This runs the repo's tests, commits using the
-house template, pushes the branch and opens the pull request. It never merges;
-a human does that.
+Needs a `--summary` note first. This commits using the house template, brings the
+branch up to date with the base (a rebase before the first push, a merge once a PR
+is open; never a force-push), runs the repo's tests on the updated tree, pushes the
+branch and opens the pull request. It never merges; a human does that.
 
 If `done` fails (for example, tests are red), fix the problem and run it again.
+
+If updating the branch conflicts, `done` leaves the merge in progress and blocks with
+the files and the steps. Don't edit the tree: `.swarm-task/swarm-task wait --for answer`,
+then run `done` again. It accepts the human's resolution only if the merge is committed,
+no paths are unmerged and no conflict markers remain.

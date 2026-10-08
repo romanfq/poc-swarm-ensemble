@@ -534,3 +534,135 @@ def test_a_backend_failure_does_not_stop_implement(claimed, monkeypatch):
     monkeypatch.setattr(a.backend, "list_comments", boom)
     gate = work.implement_gate(a, d)
     assert gate["replies"] == [] and "rate limited" in gate["replies_error"]
+
+
+# --- GH-91: done brings the branch up to date with the base, then tests ---------------------
+
+def _advance_main(world, name, content, path=None):
+    seed = world.base / "app-seed"
+    sh(["git", "pull", "-q", "--rebase", str(world.code_remote), "main"], seed)
+    (seed / (path or name)).write_text(content)
+    sh(["git", "add", "-A"], seed)
+    sh(["git", "commit", "-qm", f"main: {name}"], seed)
+    sh(["git", "push", "-q", str(world.code_remote), "main"], seed)
+
+
+def _seen_by_tests(wt, ran):
+    return lambda cmd, **kw: ran.append(sorted(p.name for p in wt.iterdir() if p.is_file())) or \
+        subprocess.CompletedProcess(cmd, 0, "", "")
+
+
+def test_done_rebases_onto_the_fresh_base_before_the_tests(claimed):
+    world, a, d, wt = claimed
+    _ready_to_finish(world, a, d, wt)
+    _advance_main(world, "newer.py", "x = 1\n")
+    ran = []
+    work.finish(a, d, wt, test_runner=_seen_by_tests(wt, ran))
+    assert "newer.py" in ran[0] and "poller.py" in ran[0]
+    assert sh(["git", "rev-list", "--merges", "--count", "HEAD"], wt).strip() == "0"
+    assert sh(["git", "merge-base", "--is-ancestor", "origin/main", "HEAD"], wt) == ""
+    assert worktree.behind(wt, "main") == 0
+
+
+def test_done_leaves_an_up_to_date_branch_alone(claimed):
+    world, a, d, wt = claimed
+    _ready_to_finish(world, a, d, wt)
+    work.finish(a, d, wt, test_runner=OK)
+    assert sh(["git", "rev-list", "--count", "origin/main..HEAD"], wt).strip() == "1"
+
+
+def test_done_merges_when_a_pr_is_open_and_never_force_pushes(claimed):
+    world, a, d, wt = claimed
+    _ready_to_finish(world, a, d, wt)
+    url = work.finish(a, d, wt, test_runner=OK)
+    pushed = sh(["git", "rev-parse", "HEAD"], wt).strip()
+    L.complete(a, d, "reopened", pr_url=url, review_id="R1")
+    world.scheduler(a, worker="claude", run_plan_sync=False).cycle()
+    _advance_main(world, "newer.py", "x = 1\n")
+    (wt / "poller.py").write_text("print('poll v2')\n")
+    ran = []
+    work.finish(a, d, wt, test_runner=_seen_by_tests(wt, ran))
+    assert "newer.py" in ran[0]
+    assert sh(["git", "rev-list", "--merges", "--count", f"{pushed}..HEAD"], wt).strip() == "1"
+    assert sh(["git", "merge-base", "--is-ancestor", pushed, "HEAD"], wt) == ""
+    assert sh(["git", "rev-parse", "swarm/T1"], world.code_remote).strip() == sh(["git", "rev-parse", "HEAD"], wt).strip()
+
+
+def _conflicting(claimed):
+    world, a, d, wt = claimed
+    work.submit_plan(a, d, "plan")
+    _approve(world, a, d)
+    (wt / "README.md").write_text("app, worker's version\n")
+    work.note(a, d, summary="Edits the readme")
+    _advance_main(world, "README.md", "app, main's version\n")
+    return world, a, d, wt
+
+
+def test_done_blocks_on_a_conflict_and_leaves_the_merge_in_progress(claimed):
+    world, a, d, wt = _conflicting(claimed)
+    ran = []
+    with pytest.raises(work.WorkError, match="README.md") as e:
+        work.finish(a, d, wt, test_runner=_seen_by_tests(wt, ran))
+    assert ran == [] and world.prs.prs == {}
+    assert "swarm/T1" not in sh(["git", "branch", "-a"], world.code_remote)
+    assert worktree.merge_in_progress(wt) and worktree.unmerged_paths(wt) == ["README.md"]
+    question = rv.open_question(d)
+    assert question and "README.md" in question and str(wt) in question
+    assert "git add, git commit" in question and 'task answer T1 "resolved"' in question
+    assert str(wt) in str(e.value)
+
+
+def _resolve_and_answer(world, a, d, wt, content="app, both\n", commit=True):
+    (wt / "README.md").write_text(content)
+    sh(["git", "add", "README.md"], wt)
+    if commit:
+        sh(["git", "commit", "-qm", "resolve"], wt)
+    jane = world.machine("jane-mac", human="jane")
+    work.answer_question(jane, rv.index(jane.root)["T1"], "resolved")
+    a.coord.pull()
+
+
+def test_done_accepts_the_humans_resolution_and_still_runs_the_tests(claimed):
+    world, a, d, wt = _conflicting(claimed)
+    with pytest.raises(work.WorkError):
+        work.finish(a, d, wt, test_runner=OK)
+    _resolve_and_answer(world, a, d, wt)
+    ran = []
+    url = work.finish(a, d, wt, test_runner=_seen_by_tests(wt, ran))
+    assert len(ran) == 1 and url in [p["url"] for p in world.prs.prs.values()]
+    assert (wt / "README.md").read_text() == "app, both\n"
+
+
+def test_done_blocks_again_when_the_merge_is_unfinished(claimed):
+    world, a, d, wt = _conflicting(claimed)
+    with pytest.raises(work.WorkError):
+        work.finish(a, d, wt, test_runner=OK)
+    _resolve_and_answer(world, a, d, wt, commit=False)
+    with pytest.raises(work.WorkError, match="merge is still in progress"):
+        work.finish(a, d, wt, test_runner=OK)
+    assert rv.open_question(d) and "merge is still in progress" in rv.open_question(d)
+    assert world.prs.prs == {}
+
+
+def test_done_blocks_again_when_paths_are_unmerged(claimed):
+    world, a, d, wt = _conflicting(claimed)
+    with pytest.raises(work.WorkError):
+        work.finish(a, d, wt, test_runner=OK)
+    jane = world.machine("jane-mac", human="jane")
+    work.answer_question(jane, rv.index(jane.root)["T1"], "resolved")
+    a.coord.pull()
+    with pytest.raises(work.WorkError, match="unmerged paths: README.md"):
+        work.finish(a, d, wt, test_runner=OK)
+    assert not (wt / "README.md").read_text().startswith("app, both")
+    assert worktree.unmerged_paths(wt) == ["README.md"]          # nothing was staged or committed
+
+
+def test_done_blocks_again_when_conflict_markers_were_committed(claimed):
+    world, a, d, wt = _conflicting(claimed)
+    with pytest.raises(work.WorkError):
+        work.finish(a, d, wt, test_runner=OK)
+    marked = "<<<<<<< HEAD\napp, worker's version\n=======\napp, main's version\n>>>>>>> origin/main\n"
+    _resolve_and_answer(world, a, d, wt, content=marked)
+    with pytest.raises(work.WorkError, match="conflict markers committed in: README.md"):
+        work.finish(a, d, wt, test_runner=OK)
+    assert world.prs.prs == {}
