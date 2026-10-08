@@ -42,7 +42,7 @@ def test_panels_from_a_live_ledger(world):
     assert flagged["T3"] == ("T3", "-", "keeps racing (thrash)")
     q = boardview.quota(snap)
     assert (q.used, q.total, q.mine, q.share) == (2, 3, 2, 2)
-    assert q.text == "global 2/3   ·   this machine 2/2"
+    assert q.text == "[global 2/3 · this machine 2/2]"
     assert [t.short for t in snap.awaiting_worker()] == ["T2"]
 
     L.control(b, "pause")

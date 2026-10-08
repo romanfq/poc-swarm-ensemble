@@ -19,7 +19,7 @@ ModalScreen { align: center middle; }
 #header-block { height: auto; border: round $mid; border-title-color: $line; padding: 0 1; }
 #machine { height: auto; }
 #quota-row { height: 1; }
-#quota-label { width: auto; padding-right: 2; }
+#quota-label { width: auto; padding-left: 1; }
 #quota-name { width: 9; color: $mid; }
 
 /* columns */
