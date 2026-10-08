@@ -24,7 +24,7 @@ except ImportError:  # pragma: no cover - typer < 0.17
 
 import resolve
 from backends.base import AUTONOMY_TIERS, SWARM_STATUSES, TaskRef
-from dags import actions, daemon, feed, gh, panel, plan, prereqs, repos, snapshot, timeutil, work
+from dags import actions, boardview, daemon, feed, gh, panel, plan, prereqs, repos, snapshot, timeutil, work
 from dags import ledger as L
 from dags.config import ConfigError, Context
 from dags.gitsync import GitError
@@ -164,6 +164,10 @@ def start(
     for repo, result in repos.ensure_all(c).items():
         if isinstance(result, Exception):
             console.print(f"[yellow]{escape(repo)}:[/]", escape(str(result)))
+    was_paused = L.machine_control(c.root, c.identity)
+    if was_paused["paused"]:
+        console.print(f"[yellow]{c.identity} was paused{escape(boardview.pause_text(was_paused))}; start resumed it[/]")
+        actions.resume(c)
     L.control(c, "start", quota_share=quota_share, default_worker=default_worker)
     opts = daemon.Options(quota_share=quota_share, poll_interval=daemon.parse_interval(poll_interval),
                           cycle_interval=daemon.parse_interval(cycle_interval),

@@ -33,7 +33,10 @@ def status_rows(ctx, identity_new: bool = False, synced: bool = True, share: int
             return (name, f"✗ dead      {extra}", "warn")
         err = f"  (last error: {t['error']})" if t and t.get("error") else ""
         paused = name == "scheduler" and machine.get("paused")
-        return (name, f"● {'paused ' if paused else 'running'}   {extra}{err}", "warn" if paused or err else "ok")
+        if paused:
+            return (name, f"● paused{boardview.pause_text(machine)} — claiming nothing ({ready} ready)   {extra}{err}",
+                    "warn")
+        return (name, f"● running   {extra}{err}", "warn" if err else "ok")
 
     rows.append(thread_row("scheduler", f"quota-share {share if share is not None else '?'}"
                                         f"  ·  default worker {opts.get('default_worker') or 'ask on Board'}"))

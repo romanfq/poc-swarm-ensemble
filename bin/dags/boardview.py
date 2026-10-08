@@ -249,13 +249,20 @@ def quota(snap: snapshot.Snapshot) -> Quota:
     return Quota(snap.quota_used, snap.quota_n, snap.mine_used, snap.share)
 
 
+def pause_text(st: dict) -> str:
+    """" since 13:11:56 by roman" for a paused machine's control state, or ""."""
+    since, by = st.get("paused_since"), st.get("paused_by")
+    text = f" since {str(since).replace('T', ' ').rstrip('Z')[:19]}" if since else ""
+    return text + (f" by {by}" if by else "")
+
+
 def machine_line(snap: snapshot.Snapshot, daemon_pid: int | None, info: dict | None = None) -> str:
     st = snap.machines.get(snap.machine, {})
     if st.get("stopped") or not daemon_pid:
         state = "stopped" if st.get("stopped") else "daemon not running"
     else:
         if st.get("paused"):
-            state = "paused — claiming nothing (r resumes)"
+            state = f"paused{pause_text(st)} — claiming nothing ({len(snap.ready)} ready, r resumes)"
         elif snap.share == 0:
             state = "share 0 — out of rotation (t sets a share)"
         else:

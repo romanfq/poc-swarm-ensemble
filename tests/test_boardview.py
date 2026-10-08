@@ -188,7 +188,9 @@ def test_machine_line_says_when_out_of_rotation(world):
     snap = snapshot.take(a)
     assert "running" in boardview.machine_line(snap, 1)
     snap.machines["mac-a"] = {"paused": True}
-    assert "paused — claiming nothing (r resumes)" in boardview.machine_line(snap, 1)
+    assert "paused — claiming nothing (0 ready, r resumes)" in boardview.machine_line(snap, 1)
+    snap.machines["mac-a"] = {"paused": True, "paused_since": "2026-09-19T13:11:56Z", "paused_by": "roman"}
+    assert "paused since 2026-09-19 13:11:56 by roman — claiming nothing" in boardview.machine_line(snap, 1)
     snap.machines["mac-a"] = {}
     snap.share = 0
     assert "share 0 — out of rotation (t sets a share)" in boardview.machine_line(snap, 1)
