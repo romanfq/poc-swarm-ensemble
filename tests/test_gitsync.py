@@ -192,3 +192,24 @@ def test_control_and_quota_records(swarm):
     L.control(a, "resume")
     assert not L.machine_control(a.root, "mac-a")["paused"]
     assert b.coord.author_email(next((b.root / "quota").glob("jane-*.yaml"))) == "t@example.com"
+
+
+def test_network_git_call_times_out_instead_of_hanging(swarm, monkeypatch):
+    import subprocess
+
+    import pytest
+
+    from dags import gitsync
+    a = swarm.clone("mac-a")
+
+    def slow(cmd, **kw):
+        if cmd[1] == "ls-remote":
+            raise subprocess.TimeoutExpired(cmd, kw["timeout"])
+        return real(cmd, **kw)
+
+    real = subprocess.run
+    monkeypatch.setenv("DAGS_GIT_TIMEOUT", "2")
+    monkeypatch.setattr(subprocess, "run", slow)
+    with pytest.raises(gitsync.GitError) as exc:
+        a.coord.pull()
+    assert "ls-remote" in str(exc.value) and "timed out after 2s" in str(exc.value)

@@ -236,15 +236,18 @@ def throttle(share: int, machine: Optional[str] = typer.Option(None)):
 
 @app.command()
 @guarded
-def status(as_json: bool = typer.Option(False, "--json")):
+def status(as_json: bool = typer.Option(False, "--json"),
+           ledger_only: bool = typer.Option(False, "--ledger", help="Answer from the local ledger; don't sync.")):
     """Print the status panel (Ch.5.4)."""
     c = ctx()
-    try:
-        c.coord.pull()
-        synced = True
-    except GitError:
-        synced = False
-    rows = panel.status_rows(c, synced=synced)
+    reason = "local ledger only" if ledger_only else None
+    if not ledger_only:
+        try:
+            c.coord.pull()
+        except GitError as e:
+            lines = (e.stderr or "").strip().splitlines()
+            reason = lines[-1] if lines else "sync failed"
+    rows = panel.status_rows(c, synced=reason is None, sync_note=reason)
     if as_json:
         typer.echo(json.dumps([{"label": a, "value": b, "style": s} for a, b, s in rows], indent=2))
     else:

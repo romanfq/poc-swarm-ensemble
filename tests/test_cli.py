@@ -264,3 +264,12 @@ def test_log_reads_the_ledger_and_filters(machine):
     assert json.loads(invoke("log", "--json", "--machine", "mac-z").stdout) == []
     assert len(json.loads(invoke("log", "--json", "--limit", "1").stdout)) == 1
     assert "is working on" not in invoke("log").output
+
+
+def test_status_ledger_skips_sync_and_failed_sync_is_marked(swarm, monkeypatch):
+    from dags import panel
+    a = swarm.clone("mac-a")
+    rows = {k: v for k, v, _ in panel.status_rows(a, synced=False, sync_note="local ledger only")}
+    assert "NOT synced (local ledger only; showing the local ledger)" in rows["coordination"]
+    rows = {k: v for k, v, _ in panel.status_rows(a)}
+    assert rows["coordination"].startswith("synced")
