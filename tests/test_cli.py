@@ -264,3 +264,60 @@ def test_log_reads_the_ledger_and_filters(machine):
     assert json.loads(invoke("log", "--json", "--machine", "mac-z").stdout) == []
     assert len(json.loads(invoke("log", "--json", "--limit", "1").stdout)) == 1
     assert "is working on" not in invoke("log").output
+
+
+DRAFT = ("---\nlabels: [next-version]\nautonomy: human-must-review\nrepo: OWNER/app\nepic: 1\n"
+         "depends_on: [4]\n---\n# Filed from a draft\n\nBody.\n")
+
+
+@pytest.fixture
+def filing(machine):
+    from backends.github import GitHubBackend
+    from conftest import FakeGh
+    from dags import gh
+    from fakes import FakeGitHub
+    fake = FakeGitHub(repo="acme/plan")
+    fake.seed()
+    fake.labels.update({"next-version", "swarm:autonomy:human-must-review", "repo:OWNER/app"})
+    gh.set_runner(FakeGh(fake))
+    machine.set_backend(GitHubBackend("acme/plan", cache_seconds=0))
+    (machine.root / "drafts").mkdir(exist_ok=True)
+    yield machine, fake
+    gh.set_runner(None)
+
+
+def test_backend_file_dry_run_writes_nothing(filing):
+    machine, fake = filing
+    path = machine.root / "drafts" / "d.md"
+    path.write_text(DRAFT)
+    r = invoke("backend", "file", str(path))
+    assert r.exit_code == 0, r.output
+    assert "create  task: Filed from a draft" in r.output and "dry run" in r.output
+    assert len(fake.issues) == 8 and path.exists()
+
+
+def test_backend_file_apply_files_syncs_and_moves(filing, monkeypatch):
+    machine, fake = filing
+    monkeypatch.setattr(machine, "require_human", lambda: "roman")
+    path = machine.root / "drafts" / "d.md"
+    path.write_text(DRAFT)
+    r = invoke("backend", "file", str(path), "--apply", "--yes")
+    assert r.exit_code == 0, r.output
+    assert len(fake.issues) == 9 and "swarm:status:ready" not in fake.issues[9]["labels"]
+    assert not path.exists()
+    filed = machine.root / "drafts" / "filed" / "d.md"
+    assert "url: https://github.com/acme/plan/issues/9" in filed.read_text()
+    assert "plan sync ran" in r.output or "plan sync failed" in r.output
+    again = invoke("backend", "file", str(filed), "--apply", "--yes")
+    assert again.exit_code == 1 and "already filed" in " ".join(again.output.split()) and len(fake.issues) == 9
+
+
+def test_backend_file_invalid_draft_lists_everything_and_writes_nothing(filing):
+    machine, fake = filing
+    path = machine.root / "drafts" / "bad.md"
+    path.write_text("---\nlabels: [nope]\nrepo: OWNER/app\nepic: 4\ndepends_on: [99]\n---\n# Bad\n")
+    r = invoke("backend", "file", str(path), "--apply", "--yes")
+    assert r.exit_code == 1
+    for part in ("labels: nope", "epic:", "depends_on: 99"):
+        assert part in r.output
+    assert len(fake.issues) == 8 and path.exists()

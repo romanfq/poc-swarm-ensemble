@@ -25,7 +25,7 @@ So v2.0 is a rewrite. Three things follow from that:
   aspirational by accident: if the text does not mark a behaviour as outstanding,
   it is in `main` and has a test.
 - **The decisions survive as rationale, not as a diff.** Appendix A is the
-  decisions log, D1–D33, each with the reason it was taken and the chapter it
+  decisions log, D1–D34, each with the reason it was taken and the chapter it
   governs. It no longer pretends to be a changelog against v1.0.
 - **Every factual claim was checked against the code**, not inherited from the
   previous draft. File and line references are to `main` at the time of writing.
@@ -68,7 +68,7 @@ project. v1.1 is superseded.
 
 **Appendices**
 
-- A. Decisions log (D1–D33)
+- A. Decisions log (D1–D34)
 - B. Primer — DAGS in ten minutes
 - C. How-to guides
 - D. Reference
@@ -1182,6 +1182,17 @@ on explicit confirmation.
 now" and "Not now, and pause this machine" as first-class choices rather than
 leaving Escape as the undocumented way out.
 
+**Filing an issue is a form (D34).** A draft is a markdown file in `drafts/`: YAML
+frontmatter (`labels`, `autonomy`, `repo`, `epic`, `depends_on`, optional `status`),
+an H1 title, then the body verbatim. `swarm.py backend file drafts/x.md` validates it
+(every problem listed, nothing written), prints the diff, and with `--apply` creates
+the issue, sets its parent and blockers, runs `plan sync`, stamps the issue URL into
+the draft and moves it to `drafts/filed/`, so it cannot be filed twice. `epic` is
+required. `status: ready` is refused: filing and scheduling stay separate decisions.
+If a link fails after the issue exists, the draft stays in `drafts/` stamped with the
+URL, and running the command again adds only the missing links. The Board composer on
+`i` is specified to be the same path with a form in front (a follow-up).
+
 **Deferral is specified and not built.** A claim a human is not ready to staff
 should be snoozeable — remind me in ten minutes, back in an hour, park it — with
 a Board section listing parked and snoozed tasks and a ledger record so the
@@ -1492,6 +1503,7 @@ not to build it.
 | D31 | **Liveness lives outside the branch**, in `refs/dags/live/<machine>`, migrated by dual-read. | Heartbeats were half of all ledger commits and have no historical value. Moving them makes commit volume a function of work rather than time, and lets beats get *more* frequent with a shorter lease. | 4.5 | Specified |
 | D32 | **Worktrees live in the code repository's checkout**, kept out of git by `info/exclude`, with a per-repo override. | Inside the coordination repository, an agent walked up the tree into the swarm's own rules. Outside both repositories, project ancestry resolves to nothing and then to `$HOME`. | 7.3 | Specified |
 | D33 | **Nothing upgrades itself.** `bin/` in a coordination repository is a pinned copy; a merged change takes effect only when a human copies it in and restarts each machine. | A swarm that edits the protocol it is running would otherwise rewrite itself mid-flight, and a bad merge would break every machine at once. | 5.6 | Done |
+| D34 | **Filing an issue is a form, not a prompt.** A draft file (frontmatter, H1 title, body) is the whole input; `backend file` and the Board composer are two front ends onto one validate, diff, confirm, file, `plan sync` path. It makes the Board a tracker-*writing* tool, which is consistent with D28 (a human pressing a key is still the human), and it files with the operator's own `gh` login, not the worker bot's. It never sets an issue ready. | The same prompt was pasted into a terminal session each time, putting a language model in front of an irreversible external write. Authorship of an issue carries no approval constraint (D2b), so it should read as the person who filed it. | 10.3 | Partly done (CLI; the Board form follows) |
 
 \newpage
 
