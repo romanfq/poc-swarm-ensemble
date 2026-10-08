@@ -8,7 +8,7 @@ from __future__ import annotations
 from dags import boardview, daemon, snapshot
 
 
-def status_rows(ctx, identity_new: bool = False, synced: bool = True, share: int | None = None,
+def status_rows(ctx, identity_new: bool = False, synced: bool = True, sync_note: str | None = None, share: int | None = None,
                 poll_interval: float | None = None, snap=None) -> list[tuple[str, str, str]]:
     """[(label, value, style)] — style is one of ok / warn / off / plain."""
     snap = snap or snapshot.take(ctx, share=share)
@@ -22,7 +22,7 @@ def status_rows(ctx, identity_new: bool = False, synced: bool = True, share: int
 
     rows = [("identity", f"{ctx.identity}{' (new)' if identity_new else ''}  ·  operator {ctx.operator}", "plain")]
     ready = len(snap.ready)
-    rows.append(("coordination", f"{'synced' if synced else 'NOT synced'} -- {ready} task{'s' if ready != 1 else ''} ready",
+    rows.append(("coordination", f"{'synced' if synced else 'NOT synced' + (f' ({sync_note}; showing the local ledger)' if sync_note else '')} -- {ready} task{'s' if ready != 1 else ''} ready",
                  "ok" if synced else "warn"))
 
     def thread_row(name: str, extra: str) -> tuple[str, str, str]:

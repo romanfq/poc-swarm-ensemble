@@ -27,14 +27,27 @@ class GitError(RuntimeError):
         super().__init__(f"git {' '.join(args)} failed ({result.returncode}): {result.stderr.strip()}")
 
 
+def net_timeout() -> float:
+    """Seconds a git call that talks to the remote may take (``DAGS_GIT_TIMEOUT``)."""
+    try:
+        return float(os.environ.get("DAGS_GIT_TIMEOUT", "20"))
+    except ValueError:
+        return 20.0
+
+
 def git(args: list[str], cwd, *, check: bool = True, env: dict | None = None,
-        input: str | None = None) -> subprocess.CompletedProcess:
+        input: str | None = None, timeout: float | None = None) -> subprocess.CompletedProcess:
     full_env = dict(os.environ)
     full_env.setdefault("GIT_TERMINAL_PROMPT", "0")
     if env:
         full_env.update(env)
-    result = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True,
-                            env=full_env, input=input)
+    try:
+        result = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True,
+                                env=full_env, input=input, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        # Raised even with check=False: a timeout is not an answer (ls-remote would read as "no branch").
+        raise GitError(args, subprocess.CompletedProcess(
+            args, 124, "", f"timed out after {timeout:g}s")) from None
     if check and result.returncode != 0:
         raise GitError(args, result)
     return result
@@ -99,7 +112,8 @@ class Coord:
         return self.remote in git_out(["remote"], self.root).split()
 
     def _remote_branch_exists(self, branch: str) -> bool:
-        r = git(["ls-remote", "--exit-code", "--heads", self.remote, branch], self.root, check=False)
+        r = git(["ls-remote", "--exit-code", "--heads", self.remote, branch], self.root, check=False,
+                timeout=net_timeout())
         return r.returncode == 0
 
     # -- sync ---------------------------------------------------------------
@@ -110,13 +124,15 @@ class Coord:
             branch = self.branch()
             if not self._remote_branch_exists(branch):
                 return
-            r = git(["pull", "--rebase", "--autostash", "-q", self.remote, branch], self.root, check=False)
+            r = git(["pull", "--rebase", "--autostash", "-q", self.remote, branch], self.root, check=False,
+                    timeout=net_timeout())
             if r.returncode != 0:
                 self._recover_rebase()
                 # Append-only files cannot conflict; only single-writer files
                 # (checkpoint/heartbeat) can, and for those the remote wins —
                 # a stale writer discovers it lost on its next resolve().
-                git(["pull", "--rebase", "--autostash", "-q", "-X", "ours", self.remote, branch], self.root)
+                git(["pull", "--rebase", "--autostash", "-q", "-X", "ours", self.remote, branch], self.root,
+                    timeout=net_timeout())
 
     def _recover_rebase(self) -> None:
         if (self.root / ".git" / "rebase-merge").exists() or (self.root / ".git" / "rebase-apply").exists():

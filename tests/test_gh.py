@@ -117,3 +117,19 @@ def test_wait_for_checks_empty_rollup_gets_a_grace_period(monkeypatch):
     assert summary == "passing"
     (summary, _), clock = _waiter(monkeypatch, [{"statusCheckRollup": []}] * 10)
     assert summary == "no checks" and clock.t == 30
+
+
+def test_default_runner_timeout_names_the_call(monkeypatch):
+    import subprocess
+
+    def slow(cmd, **kw):
+        assert kw["timeout"] == 3.0
+        raise subprocess.TimeoutExpired(cmd, kw["timeout"])
+
+    monkeypatch.setenv("DAGS_GH_TIMEOUT", "3")
+    monkeypatch.setattr(subprocess, "run", slow)
+    gh.set_runner(None)
+    with pytest.raises(gh.GhError) as exc:
+        gh.gh(["pr", "view", "55"])
+    assert "gh pr view 55" in str(exc.value) and "timed out after 3s" in str(exc.value)
+    assert exc.value.returncode == 124
