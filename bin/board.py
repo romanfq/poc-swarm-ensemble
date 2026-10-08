@@ -17,6 +17,10 @@ from pathlib import Path
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import os  # noqa: E402
+import shlex  # noqa: E402
+import subprocess  # noqa: E402
+import tempfile  # noqa: E402
 import threading  # noqa: E402
 from functools import partial  # noqa: E402
 
@@ -33,12 +37,15 @@ from textual.command import DiscoveryHit, Hit, Provider  # noqa: E402
 from textual.screen import ModalScreen  # noqa: E402
 from textual.theme import Theme  # noqa: E402
 from textual.widgets import (Button, Checkbox, DataTable, Footer, Header, Input, Label, Markdown,  # noqa: E402
-                             OptionList, ProgressBar, RichLog, Static)
+                             OptionList, ProgressBar, RichLog, Select, SelectionList, Static, TextArea)
 from textual.widgets.option_list import Option  # noqa: E402
+from textual.widgets.selection_list import Selection  # noqa: E402
 
 import resolve  # noqa: E402
 import workers  # noqa: E402
-from dags import actions, boardview, daemon, feed, gh, snapshot, worktree  # noqa: E402
+from backends.base import AUTONOMY_TIERS  # noqa: E402
+from dags import actions, boardview, daemon, draft, feed, gh, snapshot, worktree  # noqa: E402
+from dags import records as R  # noqa: E402
 from dags import work as worklib  # noqa: E402
 from dags.config import Context  # noqa: E402
 
@@ -161,7 +168,8 @@ COMMANDS = [
     ("freeze", "Freeze or unfreeze the selected task", "f"),
     ("unpark", "Unpark the selected task", "u"),
     ("reassign", "Reassign the selected task", "a"),
-    ("takeover", "Take over or release the epic", "e"),
+    ("takeover", "Take over or release the epic", "k"),
+    ("compose_issue", "File an issue from a form", "i"),
     ("review_plan", "Review the selected plan", "v"),
     ("answer_tests", "Answer a test-scope question", "x"),
     ("answer_question", "Answer a worker's question", "y"),
@@ -303,7 +311,17 @@ HELP_TEXT = """Taking this machine out of rotation
 Pause keeps your claims alive; share 0 and stop let them go.
 
 In the worker prompt: Esc, a click outside, or "Not now" leaves the task
-claimed and unassigned (press w to choose later)."""
+claimed and unassigned (press w to choose later).
+
+Filing an issue
+
+  i  file an issue   A form: title, body, labels, autonomy, repo, epic (required),
+                     depends on, blocked. The labels it will get show before anything
+                     is written. e edits the body in $EDITOR, d loads a draft from
+                     drafts/, Save writes drafts/<title>.md, File checks it, shows
+                     what will be written and asks. Pasting a markdown draft into the
+                     body fills the other fields. It never sets an issue ready.
+  k  take over       Reserve the selected task's epic for this machine (k again releases)."""
 
 
 class HelpScreen(ModalScreen[None]):
@@ -390,6 +408,375 @@ class ScopeQuestionScreen(ModalScreen[tuple[str, bool] | None]):
         self.dismiss(None)
 
 
+class IssueComposer(ModalScreen[None]):
+    """File an issue from a form (GH-83, D34). It builds a ``draft.Draft`` and hands it to the
+    same validate / plan_filing / file_draft path as ``swarm.py backend file``; nothing is
+    filed here that the CLI could not file, and nothing is ever set ready."""
+    BINDINGS = [Binding("escape", "cancel", "Cancel"),
+                Binding("e", "edit_body", "Editor"), Binding("f2", "edit_body", show=False, priority=True),
+                Binding("d", "load_draft", "Load draft"),
+                Binding("ctrl+s", "save", "Save", priority=True),
+                Binding("q", "noop", show=False)]
+    FIELDS = ("title", "labels", "autonomy", "repo", "epic", "depends_on", "status")
+
+    def __init__(self, ctx: Context):
+        super().__init__()
+        self.ctx = ctx
+        self.code_repos = sorted((ctx.backend_cfg.get("repos") or {}).keys())
+        self.path: Path | None = None               # the draft file this form came from or was saved to
+        self.url: str | None = None                 # stamped by an earlier, part-way filing
+        self.extra: dict = {"labels": [], "depends_on": [], "autonomy": None, "repo": None,
+                            "epic": None, "status": None}   # draft values the widgets can't show
+        self.loaded = False
+        self.choices: dict[str, set[str]] = {"f-autonomy": set(AUTONOMY_TIERS), "f-repo": set(self.code_repos),
+                                              "f-epic": set()}
+        self.pending: draft.Draft | None = None
+        self.body_length = 0
+        self.submitting = False
+
+    # -- layout --------------------------------------------------------------------------
+    def compose(self) -> ComposeResult:
+        with Vertical(id="composer"):
+            yield Label("File an issue", markup=False)
+            with VerticalScroll(id="composer-form"):
+                yield Label("Title", markup=False)
+                yield Input(id="f-title", placeholder="one line")
+                yield Static("", id="err-title", classes="problem", markup=False)
+                yield Label("Body (e: open $EDITOR; paste a markdown draft to fill the form)", markup=False)
+                yield TextArea(id="f-body")
+                yield Label("Labels", markup=False)
+                yield SelectionList(id="f-labels")
+                yield Static("", id="err-labels", classes="problem", markup=False)
+                yield Label("Autonomy (blank: the default tier)", markup=False)
+                yield Select([(t, t) for t in AUTONOMY_TIERS], id="f-autonomy", prompt="default")
+                yield Static("", id="err-autonomy", classes="problem", markup=False)
+                yield Label("Repo", markup=False)
+                yield Select([(r, r) for r in self.code_repos], id="f-repo", prompt="choose a repo")
+                yield Static("", id="err-repo", classes="problem", markup=False)
+                yield Label("Epic (required)", markup=False)
+                yield Select([], id="f-epic", prompt="loading epics…")
+                yield Static("", id="err-epic", classes="problem", markup=False)
+                yield Label("Depends on (open tasks)", markup=False)
+                yield SelectionList(id="f-depends")
+                yield Static("", id="err-depends_on", classes="problem", markup=False)
+                yield Checkbox("Blocked (status: blocked)", id="f-blocked")
+                yield Static("", id="err-status", classes="problem", markup=False)
+            yield Static("", id="preview", markup=False)
+            yield Static("", id="composer-status", markup=False)
+            with Horizontal(id="buttons"):
+                yield Button("File", id="file", variant="primary")
+                yield Button("Save draft", id="save")
+                yield Button("Load draft", id="load")
+                yield Button("Editor", id="edit")
+                yield Button("Cancel", id="cancel")
+
+    def on_mount(self) -> None:
+        self.query_one("#f-title", Input).focus()
+        if len(self.code_repos) == 1:
+            self.query_one("#f-repo", Select).value = self.code_repos[0]
+        self.load_backend()
+        self.refresh_preview()
+
+    def say(self, text: str, error: bool = False) -> None:
+        status = self.query_one("#composer-status", Static)
+        status.update(text)
+        status.set_class(error, "problem")
+
+    # -- backend reads, off the UI thread ------------------------------------------------
+    @work(thread=True, group="composer-load", exit_on_error=False)
+    def load_backend(self) -> None:
+        try:
+            backend = self.ctx.backend
+            have = sorted(backend.existing_labels())
+            issues = backend.all_issues()
+            labels = [lb for lb in have if not lb.startswith(draft.OWNED_PREFIXES)]
+            epics = [(f"{backend.short_key(t.ref)}  {t.title}", t.ref.key) for t in issues
+                     if t.is_epic and not t.closed]
+            tasks = [(f"{backend.short_key(t.ref)}  {t.title}", t.ref.key) for t in issues
+                     if not t.is_epic and not t.done]
+        except Exception as e:  # noqa: BLE001
+            self.app.call_from_thread(self.loaded_failed, str(e))
+            return
+        self.app.call_from_thread(self.loaded_ok, labels, epics, tasks)
+
+    def loaded_failed(self, message: str) -> None:
+        self.say(f"couldn't read the tracker: {message}", error=True)
+        self.query_one("#f-epic", Select).prompt = "tracker unavailable"
+
+    def loaded_ok(self, labels, epics, tasks) -> None:
+        self.query_one("#f-labels", SelectionList).add_options([Selection(lb, lb) for lb in labels])
+        self.choices["f-epic"] = {key for _, key in epics}
+        self.query_one("#f-epic", Select).set_options(epics)
+        self.query_one("#f-epic", Select).prompt = "choose an epic" if epics else "no epics on the tracker"
+        self.query_one("#f-depends", SelectionList).add_options([Selection(text, key) for text, key in tasks])
+        self.loaded = True
+        if self.pending is not None:
+            pending, self.pending = self.pending, None
+            self.fill(pending)
+        self.refresh_preview()
+
+    # -- form <-> draft ------------------------------------------------------------------
+    @staticmethod
+    def chosen(select: Select) -> str | None:
+        value = select.value
+        return value if isinstance(value, str) and value else None
+
+    def current_draft(self) -> draft.Draft:
+        extra = self.extra
+        labels = list(self.query_one("#f-labels", SelectionList).selected)
+        deps = list(self.query_one("#f-depends", SelectionList).selected)
+        status = "blocked" if self.query_one("#f-blocked", Checkbox).value else extra["status"]
+        return draft.Draft(
+            title=self.query_one("#f-title", Input).value.strip(),
+            body=self.query_one("#f-body", TextArea).text,
+            labels=labels + [x for x in extra["labels"] if x not in labels],
+            autonomy=self.chosen(self.query_one("#f-autonomy", Select)) or extra["autonomy"],
+            repo=self.chosen(self.query_one("#f-repo", Select)) or extra["repo"],
+            epic=self.chosen(self.query_one("#f-epic", Select)) or extra["epic"],
+            depends_on=deps + [x for x in extra["depends_on"] if x not in deps],
+            status=status, url=self.url)
+
+    def set_select(self, widget_id: str, key: str, value: str | None) -> None:
+        select = self.query_one(widget_id, Select)
+        self.extra[key] = None
+        if value in self.choices[widget_id.lstrip("#")]:
+            select.value = value
+        else:
+            select.clear()
+            self.extra[key] = value
+
+    def set_list(self, widget_id: str, key: str, values: list[str]) -> None:
+        sl = self.query_one(widget_id, SelectionList)
+        known = {sl.get_option_at_index(i).value for i in range(sl.option_count)}
+        sl.deselect_all()
+        for v in values:
+            if v in known:
+                sl.select(v)
+        self.extra[key] = [v for v in values if v not in known]
+
+    def fill(self, d: draft.Draft) -> None:
+        """Put a parsed draft into the form, leaving only the real body in the TextArea."""
+        if not self.loaded:                         # lists not read yet: apply when they arrive
+            self.pending = d
+            self.query_one("#f-title", Input).value = d.title
+            self.set_body(d.body)
+            return
+        self.url = d.url
+        self.query_one("#f-title", Input).value = d.title
+        self.set_body(d.body)
+        self.set_list("#f-labels", "labels", d.labels)
+        self.set_list("#f-depends", "depends_on", [self.resolve_ref(x) for x in d.depends_on])
+        self.set_select("#f-autonomy", "autonomy", d.autonomy)
+        self.set_select("#f-repo", "repo", d.repo)
+        self.set_select("#f-epic", "epic", self.resolve_ref(d.epic))
+        self.query_one("#f-blocked", Checkbox).value = d.status == "blocked"
+        self.extra["status"] = d.status if d.status != "blocked" else None
+        self.refresh_preview()
+
+    def resolve_ref(self, text: str | None) -> str | None:
+        """A draft says ``epic: 7``; the widgets hold ``OWNER/REPO#7``. Text that isn't a reference
+        is passed on as it is, so ``validate`` can name it."""
+        if not text:
+            return None
+        try:
+            return self.ctx.backend.parse_ref(text).key
+        except ValueError:
+            return text
+
+    def set_body(self, text: str) -> None:
+        area = self.query_one("#f-body", TextArea)
+        self.body_length = len(text)
+        area.load_text(text)
+
+    # -- live preview and paste ----------------------------------------------------------
+    def refresh_preview(self) -> None:
+        d = self.current_draft()
+        try:
+            labels = draft.resolved_labels(self.ctx.backend, d)
+            text = "Labels on the issue: " + (", ".join(labels) if labels else "(none)")
+        except Exception as e:  # noqa: BLE001
+            text = f"Labels on the issue: can't work out ({e})"
+        self.query_one("#preview", Static).update(text)
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        self.refresh_preview()
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        key = {"f-autonomy": "autonomy", "f-repo": "repo", "f-epic": "epic"}.get(event.select.id or "")
+        if key and self.chosen(event.select):
+            self.extra[key] = None
+        self.refresh_preview()
+
+    def on_selection_list_selected_changed(self, event) -> None:
+        self.refresh_preview()
+
+    def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
+        self.refresh_preview()
+
+    def on_text_area_changed(self, event: TextArea.Changed) -> None:
+        text = event.text_area.text
+        grew = len(text) - self.body_length
+        self.body_length = len(text)
+        if grew > 1 and draft.looks_like_draft(text):       # a paste, not typing a heading
+            self.fill(draft.parse(text))
+        else:
+            self.refresh_preview()
+
+    # -- the editor, saved drafts --------------------------------------------------------
+    def action_noop(self) -> None:
+        pass
+
+    def action_edit_body(self) -> None:
+        editor = shlex.split(os.environ.get("EDITOR") or "vi")
+        with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8") as f:
+            f.write(self.query_one("#f-body", TextArea).text)
+            name = f.name
+        try:
+            with self.app.suspend():
+                subprocess.run([*editor, name], check=False)
+            text = Path(name).read_text(encoding="utf-8")
+        except (OSError, subprocess.SubprocessError) as e:
+            self.say(f"the editor failed: {e}", error=True)
+            return
+        finally:
+            Path(name).unlink(missing_ok=True)
+        if draft.looks_like_draft(text):
+            self.fill(draft.parse(text))
+        else:
+            self.set_body(text)
+            self.refresh_preview()
+
+    @property
+    def drafts_dir(self) -> Path:
+        return self.ctx.root / draft.DRAFTS_DIR
+
+    def action_load_draft(self) -> None:
+        files = sorted(p for p in self.drafts_dir.glob("*.md") if p.name.lower() != "readme.md")
+        if not files:
+            self.say(f"no drafts in {draft.DRAFTS_DIR}/", error=True)
+            return
+
+        def picked(name):
+            if not name:
+                return
+            path = self.drafts_dir / name
+            try:
+                d = draft.load(path)
+            except draft.DraftError as e:
+                self.say(str(e), error=True)
+                return
+            self.path = path
+            self.fill(d)
+            self.say(f"loaded {draft.DRAFTS_DIR}/{name}")
+        self.app.push_screen(ChoiceScreen("Load which draft?", [(p.name, p.name) for p in files]), picked)
+
+    def target_path(self, d: draft.Draft) -> Path:
+        if self.path is not None:
+            return self.path
+        name = R.slug(d.title).lower()[:60] + ".md"
+        path = self.drafts_dir / name
+        if path.exists() or (self.drafts_dir / draft.FILED_DIR / name).exists():
+            raise draft.DraftError(f"{draft.DRAFTS_DIR}/{name} already exists; load it with d or change the title")
+        return path
+
+    def save_draft(self) -> Path:
+        d = self.current_draft()
+        if not d.title:
+            raise draft.DraftError("title: missing (the draft's file is named after it)")
+        path = self.target_path(d)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(draft.render(d), encoding="utf-8")
+        self.path = path
+        return path
+
+    def action_save(self) -> None:
+        try:
+            path = self.save_draft()
+        except draft.DraftError as e:
+            self.say(str(e), error=True)
+            return
+        self.say(f"saved {draft.DRAFTS_DIR}/{path.name} (not filed)")
+
+    # -- submit --------------------------------------------------------------------------
+    def show_problems(self, problems: list[draft.Problem]) -> None:
+        by_field: dict[str, list[str]] = {}
+        for p in problems:
+            by_field.setdefault(p.field, []).append(p.message)
+        for name in self.FIELDS:
+            self.query_one(f"#err-{name}", Static).update("\n".join(by_field.get(name, [])))
+        self.say(f"{len(problems)} problem(s); nothing was filed" if problems else "", error=bool(problems))
+
+    def action_submit(self) -> None:
+        if self.submitting:
+            return
+        try:
+            self.ctx.require_human()
+        except Exception as e:  # noqa: BLE001
+            self.say(str(e), error=True)
+            return
+        self.submitting = True
+        self.say("checking…")
+        self.check(self.current_draft())
+
+    @work(thread=True, group="composer-check", exit_on_error=False)
+    def check(self, d: draft.Draft) -> None:
+        backend = self.ctx.backend
+        try:
+            problems = draft.validate(d, backend, self.code_repos)
+            filing = None if problems else draft.plan_filing(d, backend)
+            lines = filing.lines(backend.short_key) if filing else []
+        except Exception as e:  # noqa: BLE001
+            self.app.call_from_thread(self.check_failed, str(e))
+            return
+        self.app.call_from_thread(self.checked, d, problems, filing, lines)
+
+    def check_failed(self, message: str) -> None:
+        self.submitting = False
+        self.say(message, error=True)
+
+    def checked(self, d, problems, filing, lines) -> None:
+        self.submitting = False
+        self.show_problems(problems)
+        if problems:
+            return
+        text = "File this issue?\n\n" + "\n".join(lines) + "\n\nIt is not set ready."
+
+        def answered(ok):
+            if ok:
+                self.file(d, filing)
+        self.app.push_screen(ConfirmScreen(text), answered)
+
+    def file(self, d: draft.Draft, filing) -> None:
+        try:
+            path = self.save_draft()                # file_draft stamps and moves this file
+        except draft.DraftError as e:
+            self.say(str(e), error=True)
+            return
+        app, ctx = self.app, self.ctx
+
+        def job() -> str:
+            try:
+                res = draft.file_draft(ctx, path, d, filing)
+            except draft.DraftError as e:
+                app.call_from_thread(app.say, f"filing {d.title!r} stopped: {e}")
+                raise
+            if res.synced:
+                app.call_from_thread(app.say, f"filed {res.url} — the ledger has it; it is not ready")
+            else:
+                app.call_from_thread(app.say, f"filed {res.url} — plan sync failed ({res.sync_error}); "
+                                              f"run `swarm.py plan sync` or the swarm can't see it")
+            return f"filed {res.url}"
+        app.run_job(f"filed {d.title}", job)
+        self.dismiss(None)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        {"file": self.action_submit, "save": self.action_save, "load": self.action_load_draft,
+         "edit": self.action_edit_body, "cancel": self.action_cancel}[str(event.button.id)]()
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
 # ---------------------------------------------------------------------------
 # the Board
 # ---------------------------------------------------------------------------
@@ -399,12 +786,13 @@ class BoardApp(App):
     CSS_PATH = "board.tcss"
     COMMANDS = App.COMMANDS | {BoardCommands}
 
-    # The footer shows the focused panel's actions (see the *Table classes) plus these four;
+    # The footer shows the focused panel's actions (see the *Table classes) plus these five;
     # every other key still works from anywhere and is listed behind ':'.
     BINDINGS = [
         Binding("tab", "cycle_panel(1)", "Panel", priority=True),
         Binding("shift+tab", "cycle_panel(-1)", "Panel", show=False, priority=True),
         Binding("colon", "command_palette", "Commands"),
+        Binding("i", "compose_issue", "File issue"),
         Binding("question_mark", "help", "Help"),
         Binding("q", "quit", "Quit"),
         Binding("p", "pause", "Pause", show=False),
@@ -415,7 +803,7 @@ class BoardApp(App):
         Binding("f", "freeze", "Freeze/unfreeze", show=False),
         Binding("u", "unpark", "Unpark", show=False),
         Binding("a", "reassign", "Reassign", show=False),
-        Binding("e", "takeover", "Take over epic", show=False),
+        Binding("k", "takeover", "Take over epic", show=False),
         Binding("v", "review_plan", "Review plan", show=False),
         Binding("x", "answer_tests", "Answer tests", show=False),
         Binding("y", "answer_question", "Answer worker", show=False),
@@ -748,6 +1136,11 @@ class BoardApp(App):
 
     def action_help(self) -> None:
         self.push_screen(HelpScreen())
+
+    def action_compose_issue(self) -> None:
+        if self.busy():
+            return
+        self.push_screen(IssueComposer(self.ctx))
 
     def action_pause(self) -> None:
         if self.busy():

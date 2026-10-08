@@ -1167,7 +1167,7 @@ anything it shows, `status` can show.
 ## 10.3 Actions
 
 `p` pause, `r` resume, `t` throttle, `s` stop; `w` choose a worker, `f`
-freeze or unfreeze, `a` reassign, `e` take over an epic; `v` review a plan, `x`
+freeze or unfreeze, `a` reassign, `k` take over an epic, `i` file an issue; `v` review a plan, `x`
 answer a test-scope question, `y` answer a worker's question, `m` approve and
 merge; `o` open the ticket, `O` the pull request; `n` set the global cap, `l`
 cycle the log level, `?` help.
@@ -1190,8 +1190,16 @@ the issue, sets its parent and blockers, runs `plan sync`, stamps the issue URL 
 the draft and moves it to `drafts/filed/`, so it cannot be filed twice. `epic` is
 required. `status: ready` is refused: filing and scheduling stay separate decisions.
 If a link fails after the issue exists, the draft stays in `drafts/` stamped with the
-URL, and running the command again adds only the missing links. The Board composer on
-`i` is specified to be the same path with a form in front (a follow-up).
+URL, and running the command again adds only the missing links. The Board
+composer on `i` is the same path with a form in front: title, body, labels, autonomy,
+repo, epic (required, no "none"), depends on, blocked, with the resolved `swarm:*` label
+set shown live. Pasting a draft into the body fills the other fields, `e` edits the body
+in `$EDITOR`, `d` loads a file from `drafts/`, and Save writes `drafts/<title>.md`
+without filing. Submit validates (problems appear beside their fields, nothing is
+written), shows the diff in a confirmation, and files through `draft.file_draft`; the
+issue URL, or a `plan sync` warning, goes to the Activity feed. A draft filed from the
+Board ends in `drafts/filed/` like one filed from the CLI. There is no control that
+sets an issue ready. (Epic takeover moved from `e` to `k` to free `e` for the editor.)
 
 **Deferral is specified and not built.** A claim a human is not ready to staff
 should be snoozeable — remind me in ten minutes, back in an hour, park it — with
@@ -1503,7 +1511,7 @@ not to build it.
 | D31 | **Liveness lives outside the branch**, in `refs/dags/live/<machine>`, migrated by dual-read. | Heartbeats were half of all ledger commits and have no historical value. Moving them makes commit volume a function of work rather than time, and lets beats get *more* frequent with a shorter lease. | 4.5 | Specified |
 | D32 | **Worktrees live in the code repository's checkout**, kept out of git by `info/exclude`, with a per-repo override. | Inside the coordination repository, an agent walked up the tree into the swarm's own rules. Outside both repositories, project ancestry resolves to nothing and then to `$HOME`. | 7.3 | Specified |
 | D33 | **Nothing upgrades itself.** `bin/` in a coordination repository is a pinned copy; a merged change takes effect only when a human copies it in and restarts each machine. | A swarm that edits the protocol it is running would otherwise rewrite itself mid-flight, and a bad merge would break every machine at once. | 5.6 | Done |
-| D34 | **Filing an issue is a form, not a prompt.** A draft file (frontmatter, H1 title, body) is the whole input; `backend file` and the Board composer are two front ends onto one validate, diff, confirm, file, `plan sync` path. It makes the Board a tracker-*writing* tool, which is consistent with D28 (a human pressing a key is still the human), and it files with the operator's own `gh` login, not the worker bot's. It never sets an issue ready. | The same prompt was pasted into a terminal session each time, putting a language model in front of an irreversible external write. Authorship of an issue carries no approval constraint (D2b), so it should read as the person who filed it. | 10.3 | Partly done (CLI; the Board form follows) |
+| D34 | **Filing an issue is a form, not a prompt.** A draft file (frontmatter, H1 title, body) is the whole input; `backend file` and the Board composer are two front ends onto one validate, diff, confirm, file, `plan sync` path. It makes the Board a tracker-*writing* tool, which is consistent with D28 (a human pressing a key is still the human), and it files with the operator's own `gh` login, not the worker bot's. It never sets an issue ready. | The same prompt was pasted into a terminal session each time, putting a language model in front of an irreversible external write. Authorship of an issue carries no approval constraint (D2b), so it should read as the person who filed it. | 10.3 | Done |
 
 \newpage
 
