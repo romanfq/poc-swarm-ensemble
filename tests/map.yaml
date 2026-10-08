@@ -9,6 +9,7 @@ map:
   bin/dags/__init__.py: [tests/test_resolve.py]
   bin/dags/ledger.py: [tests/test_work.py, tests/test_resolve.py]
   bin/dags/work.py: [tests/test_work.py]
+  bin/dags/draft.py: [tests/test_draft.py, tests/test_cli.py]
   bin/dags/plan.py: [tests/test_plan_sync.py]
   bin/dags/snapshot.py: [tests/test_boardview.py]
   bin/dags/worktree.py: [tests/test_work.py, tests/test_skill.py]

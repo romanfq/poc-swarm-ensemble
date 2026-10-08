@@ -493,6 +493,51 @@ def backend_seed(plan_file: Path = typer.Argument(..., help="Plan file, e.g. poc
     console.print("[green]plan seeded[/] — next: `swarm.py plan sync`")
 
 
+@backend_app.command("file")
+@guarded
+def backend_file(draft_file: Path = typer.Argument(..., help="A markdown draft, e.g. drafts/my-issue.md."),
+                 apply: bool = typer.Option(False, "--apply", help="Create the issue (humans only)."),
+                 yes: bool = typer.Option(False, "--yes", "-y", help="Don't ask for confirmation.")):
+    """File an issue from a draft: frontmatter, H1 title, body (dry run unless --apply).
+
+    Never sets the issue ready. Uses your own gh login, not the bot's."""
+    from dags import draft, seed
+    c = ctx()
+    b = c.backend
+    code_repos = sorted((c.backend_cfg.get("repos") or {}).keys())
+    path = draft_file if draft_file.is_absolute() else Path.cwd() / draft_file
+    if not path.exists():
+        path = c.root / draft_file
+    try:
+        if draft.is_filed(path):
+            raise draft.DraftError(f"{path} is already filed; drafts/filed/ holds drafts that have been")
+        d = draft.load(path)
+        problems = draft.validate(d, b, code_repos)
+        if problems:
+            fail("draft problems (nothing written):\n  " + "\n  ".join(str(p) for p in problems))
+        f = draft.plan_filing(d, b)
+    except (draft.DraftError, seed.SeedError) as e:
+        fail(str(e))
+    for line in f.lines(b.short_key):
+        console.print(line, markup=False)
+    if not apply:
+        console.print("[dim]dry run — re-run with --apply to file it[/]")
+        return
+    c.require_human()
+    if not yes and not typer.confirm(f"File this issue in {getattr(b, 'repo', '?')}?"):
+        raise typer.Exit(1)
+    try:
+        res = draft.file_draft(c, path, d, f, echo=lambda line: console.print(line, markup=False))
+    except draft.DraftError as e:
+        fail(str(e))
+    console.print(f"[green]filed[/] {escape(res.url)}; the draft moved to {escape(str(res.moved_to))}")
+    if res.synced:
+        console.print("the ledger has it (plan sync ran); it is not ready — set that when you decide to")
+    else:
+        console.print(f"[yellow]plan sync failed ({escape(res.sync_error)}); run `swarm.py plan sync` — "
+                      f"the swarm can't see the issue until then[/]")
+
+
 # ---------------------------------------------------------------------------
 # human levers
 # ---------------------------------------------------------------------------
