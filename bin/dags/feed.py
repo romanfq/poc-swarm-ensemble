@@ -41,6 +41,21 @@ def _quote(text) -> str:
     return f"{QUOTE_SEP}{text}'" if text else ""
 
 
+def _took(data: dict) -> str:
+    """' in 1.1s' (and the slowest step when it was over a second) for a hand-over that was timed."""
+    try:
+        total = float(data["elapsed_s"])
+    except (KeyError, TypeError, ValueError):
+        return ""
+    out = f" in {total:.1f}s"
+    try:
+        if data.get("slowest") and float(data.get("slowest_s") or 0) >= 1:
+            out += f", slowest: {data['slowest']} {float(data['slowest_s']):.1f}s"
+    except (TypeError, ValueError):
+        pass
+    return out
+
+
 def _describe_event(task: str, who: str, machine: str, data: dict) -> str | None:
     """Records in a task's ``events/``: what a checkpoint change meant."""
     k = data.get("kind")
@@ -51,7 +66,7 @@ def _describe_event(task: str, who: str, machine: str, data: dict) -> str | None
     if k == "needs-human":
         return f"{task} needs a human decision{_quote(data.get('question'))}"
     if k == "worker-dispatched":
-        return f"{who}'s swarm handed {task} to {worker} ({machine})"
+        return f"{who}'s swarm handed {task} to {worker} ({machine}){_took(data)}"
     if k == "awaiting-worker":
         return f"{task} is waiting for a worker on {machine}"
     if k == "still-working":

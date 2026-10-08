@@ -103,6 +103,13 @@ def inject(ctx, wt: Path, spec_md: str, context: dict) -> Path:
     return dest
 
 
+def write_spec(wt: Path, spec_md: str) -> None:
+    """Replace the spec a worker reads (a fresher issue body arrived after the launch; GH-100)."""
+    dest = wt / SKILL_DIR
+    if dest.exists():
+        (dest / "spec.md").write_text(spec_md, encoding="utf-8")
+
+
 def strip_skill(wt: Path) -> bool:
     """rm -rf .swarm-task/ — done by the poller/Board, never by the worker."""
     dest = wt / SKILL_DIR

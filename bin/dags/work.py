@@ -6,11 +6,16 @@ anything that touches the ledger, the backend or GitHub it calls
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
+import json
 import logging
+import os
 import re
 import subprocess
 import tempfile
+import threading
+import time
 from pathlib import Path
 
 import resolve
@@ -49,42 +54,233 @@ def my_claim(ctx, task_dir: Path) -> str:
 # dispatch (Ch.7.3 "Selecting a worker")
 # ---------------------------------------------------------------------------
 
-def prepare(ctx, task_dir: Path, claim_id: str, worker: str | None = None) -> Path:
+class _Steps:
+    """Times the steps of a dispatch (GH-100): each is logged at DEBUG; the total and the slowest
+    go into the ``worker-dispatched`` event, so the next report has numbers."""
+
+    def __init__(self):
+        self.t0 = time.monotonic()
+        self.spans: dict[str, float] = {}
+
+    @contextlib.contextmanager
+    def step(self, name: str):
+        t = time.monotonic()
+        try:
+            yield
+        finally:
+            self.spans[name] = self.spans.get(name, 0.0) + time.monotonic() - t
+            log.debug("dispatch step %s: %.2fs", name, self.spans[name])
+
+    def elapsed(self) -> float:
+        return time.monotonic() - self.t0
+
+    def slowest(self) -> tuple[str, float] | None:
+        return max(self.spans.items(), key=lambda kv: kv[1], default=None)
+
+
+class Dispatched(str):
+    """The worker's label, plus how long the hand-over took."""
+    elapsed_s: float = 0.0
+    slowest: str | None = None
+
+    def message(self, short: str) -> str:
+        return f"Handed {short} to {self} ({self.elapsed_s:.1f}s)"
+
+
+# -- background work: whatever talks to GitHub follows the launch -----------------------------
+
+_background: list[threading.Thread] = []
+
+
+def _spawn(name: str, fn, *args) -> None:
+    def run():
+        try:
+            fn(*args)
+        except Exception as e:  # noqa: BLE001 - retried later (the next push carries the commit)
+            log.warning("%s failed: %s", name, e)
+    t = threading.Thread(target=run, name=name, daemon=True)
+    _background.append(t)
+    t.start()
+
+
+def drain(timeout: float = 10.0) -> None:
+    """Wait (bounded) for the background fetch/push; a short-lived CLI calls it before exiting."""
+    deadline = time.monotonic() + timeout
+    while _background:
+        t = _background.pop(0)
+        t.join(max(0.0, deadline - time.monotonic()))
+
+
+# -- the spec, snapshotted at dispatch (GH-100) --------------------------------------------------
+
+def spec_wait_s() -> float:
+    """How long dispatch waits for a live issue read when it has this claim's cached spec."""
+    try:
+        return float(os.environ.get("DAGS_SPEC_WAIT", "3"))
+    except ValueError:
+        return 3.0
+
+
+def _spec_cache_path(ctx, task_dir: Path) -> Path:
+    return ctx.swarm_dir / "spec-cache" / f"{worktree.task_slug(task_dir)}.json"
+
+
+def _store_spec(ctx, task_dir: Path, claim_id: str, spec: str) -> None:
+    path = _spec_cache_path(ctx, task_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"claim_id": claim_id, "fetched_utc": timeutil.iso(), "spec": spec}),
+                   encoding="utf-8")
+    tmp.replace(path)
+
+
+def _load_spec(ctx, task_dir: Path, claim_id: str) -> str | None:
+    """The cached spec, only if it was fetched for this claim: never older than the claim."""
+    try:
+        data = json.loads(_spec_cache_path(ctx, task_dir).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data.get("spec") if isinstance(data, dict) and data.get("claim_id") == claim_id else None
+
+
+def _fetch_spec(ctx, task_dir: Path) -> str:
+    get = getattr(ctx.backend, "get_task_fresh", None) or ctx.backend.get_task
+    return get(_ref(task_dir)).spec_markdown()
+
+
+class _SpecFetch:
+    """A live read of the issue body, started early so it overlaps the local work. ``result``
+    returns it; if GitHub is slow or down and this claim's cached spec exists, that is used
+    instead (and a slow read still lands in ``on_late`` if it differs)."""
+
+    def __init__(self, ctx, task_dir: Path, claim_id: str):
+        self.ctx, self.task_dir, self.claim_id = ctx, task_dir, claim_id
+        self._done = threading.Event()
+        self._lock = threading.Lock()
+        self._box: dict = {}
+        self._late = None
+        self.cached = _load_spec(ctx, task_dir, claim_id)
+        threading.Thread(target=self._run, name=f"spec {task_dir.name}", daemon=True).start()
+
+    def _run(self) -> None:
+        try:
+            spec = _fetch_spec(self.ctx, self.task_dir)
+            _store_spec(self.ctx, self.task_dir, self.claim_id, spec)
+        except Exception as e:  # noqa: BLE001
+            with self._lock:
+                self._box["err"] = e
+            self._done.set()
+            return
+        with self._lock:
+            self._box["spec"] = spec
+            late = self._late
+        self._done.set()
+        if late is not None and spec != self.cached:
+            late(spec)
+
+    def result(self, on_late=None) -> str:
+        self._done.wait(None if self.cached is None else spec_wait_s())
+        with self._lock:
+            if "spec" in self._box:
+                return self._box["spec"]
+            if self.cached is None:
+                raise self._box["err"]
+            if "err" in self._box:
+                log.warning("%s: issue read failed (%s); using the spec fetched at claim time",
+                            self.task_dir.name, self._box["err"])
+            else:
+                self._late = on_late
+            return self.cached
+
+
+def fetch_ahead(ctx, task_dir: Path) -> None:
+    """When the claim is taken a human is about to spend seconds choosing a worker: fetch the code
+    repo meanwhile, so the worktree is cut from a fresh base. (``prepare`` at that moment also
+    leaves the issue body in the spec cache.) Best effort, in the background."""
+    repo = resolve.read_meta(task_dir).get("repo")
+    if repo:
+        _spawn(f"fetch {task_dir.name}", lambda: (ctx.repo_path(repo) / ".git").exists()
+               and repos.fetch_origin(repo, ctx.repo_path(repo)))
+
+
+def prepare(ctx, task_dir: Path, claim_id: str, worker: str | None = None, steps: _Steps | None = None) -> Path:
+    steps = steps or _Steps()
     meta = resolve.read_meta(task_dir)
     repo = meta.get("repo")
     if not repo:
         raise WorkError(f"{resolve.label(task_dir)} has no target repo (add a repo: label)")
-    repo_path = repos.ensure(ctx, repo)
+    spec = _SpecFetch(ctx, task_dir, claim_id)
     base = ctx.repo_config(repo).get("base", "main")
-    wt = worktree.ensure(ctx, task_dir, repo_path, base)
-    spec = ctx.backend.get_task(_ref(task_dir)).spec_markdown()
-    worktree.inject(ctx, wt, spec, worktree.context_for(ctx, task_dir, claim_id, worker))
+    with steps.step("repo"):
+        repo_path = repos.ensure(ctx, repo, fetch=False)     # fetching follows the launch
+        if not worktree.worktree_path(ctx, task_dir).joinpath(".git").exists():
+            # Nothing to branch from yet, or a resumed task whose branch another machine pushed.
+            if not worktree._has_ref(repo_path, f"refs/remotes/origin/{base}") \
+                    or L.read_checkpoint(task_dir).get("branch"):
+                repos.fetch_origin(repo, repo_path)
+    with steps.step("worktree"):
+        wt = worktree.ensure(ctx, task_dir, repo_path, base)
+    with steps.step("spec"):
+        text = spec.result(on_late=lambda late: worktree.write_spec(wt, late))
+    with steps.step("inject"):
+        worktree.inject(ctx, wt, text, worktree.context_for(ctx, task_dir, claim_id, worker))
     return wt
 
 
 def choose_worker(ctx, task_dir: Path, choice: str, launch=None, platform: str | None = None) -> str:
-    """Record the worker in checkpoint.yaml, inject the skill and hand over."""
+    """Record the worker in checkpoint.yaml, inject the skill and hand over.
+
+    The launch comes as soon as the local work is done (GH-100): no pull, no fetch, no push in
+    front of it, and the repo lock is taken only for the checkpoint commit, if it is free."""
+    steps = _Steps()
     name = workers.resolve_name(choice)
     meta = resolve.read_meta(task_dir)
     autonomy = str(meta.get("autonomy") or "")
     if name not in workers.allowed_for(autonomy):
         raise WorkError(f"{resolve.label(task_dir)} is {autonomy}: only a human worker may take it")
-    ctx.coord.pull()
     claim_id = my_claim(ctx, task_dir)
     w = workers.get(name, ctx.local, launch=launch, platform=platform)
-    L.require_mine(ctx, task_dir, claim_id)
-    wt = prepare(ctx, task_dir, claim_id, name)
-    L.update_checkpoint(ctx, task_dir, claim_id, worker=name, worker_label=w.label,
-                        branch=worktree.branch_name(task_dir), dispatched_utc=timeutil.iso(),
-                        needs_human=None, dispatch_failed=None,
-                        event={"kind": "worker-dispatched", "worker": w.label, "human": ctx.operator})
+    L.require_mine(ctx, task_dir, claim_id, pull=False)
+    wt = prepare(ctx, task_dir, claim_id, name, steps=steps)
     task = workers.ClaimedTask(key=str(meta["key"]), short=resolve.label(task_dir),
                                title=str(meta.get("title") or ""), claim_id=claim_id,
                                autonomy=autonomy, repo=meta.get("repo"),
                                branch=worktree.branch_name(task_dir))
+
+    def record():
+        slowest = steps.slowest()
+        event = {"kind": "worker-dispatched", "worker": w.label, "human": ctx.operator,
+                 "elapsed_s": round(steps.elapsed(), 2)}
+        if slowest:
+            event.update(slowest=slowest[0], slowest_s=round(slowest[1], 2))
+        L.update_checkpoint(ctx, task_dir, claim_id, pull=False, push=False,
+                            worker=name, worker_label=w.label, branch=worktree.branch_name(task_dir),
+                            dispatched_utc=timeutil.iso(), needs_human=None, dispatch_failed=None, event=event)
+
+    recorded = False
+    if ctx.coord.lock.try_enter():
+        try:
+            with steps.step("checkpoint"):
+                record()
+            recorded = True
+        finally:
+            ctx.coord.lock.__exit__(None, None, None)
+    else:
+        log.info("%s: the repo lock is busy; launching first, recording after", task.short)
+    elapsed, slowest = steps.elapsed(), steps.slowest()
     w.dispatch(task, wt)
+    if not recorded:
+        try:
+            record()
+        except Exception as e:  # noqa: BLE001 - the worker is running; its own commands show a lost claim
+            log.warning("%s: recording the hand-over failed: %s", task.short, e)
     _try_backend(ctx, ctx.backend.set_status, _ref(task_dir), "in-progress")
-    return w.label
+    _spawn(f"push {task.short}", ctx.coord.push)
+    if meta.get("repo"):
+        _spawn(f"fetch {task.short}", repos.fetch_origin, meta["repo"], ctx.repo_path(meta["repo"]))
+    out = Dispatched(w.label)
+    out.elapsed_s, out.slowest = elapsed, slowest[0] if slowest else None
+    return out
 
 
 # ---------------------------------------------------------------------------

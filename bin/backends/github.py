@@ -195,6 +195,17 @@ class GitHubBackend(PlanScoped):
             raise KeyError(f"no such issue {ref.key}")
         return self._to_task(node, repo)
 
+    def get_task_fresh(self, ref: TaskRef) -> Task:
+        """One issue read straight from GitHub, bypassing the snapshot (which may be a cycle old):
+        the body a worker is handed must be current to the last edit (GH-100)."""
+        repo, num = self._split(ref)
+        owner, name = repo.split("/", 1)
+        node = ((self._graphql(ONE_QUERY, owner=owner, name=name, number=num).get("repository") or {})
+                .get("issue"))
+        if not node:
+            raise KeyError(f"no such issue {ref.key}")
+        return self._to_task(node, repo)
+
     def dependencies(self, ref: TaskRef) -> list[TaskRef]:
         return self.get_task(ref).dependencies
 

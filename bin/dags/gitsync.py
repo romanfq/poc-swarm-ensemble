@@ -85,6 +85,25 @@ class RepoLock:
         self._local.depth = depth + 1
         return self
 
+    def try_enter(self) -> bool:
+        """Like ``__enter__`` but gives up at once when someone else holds the lock. On True the
+        caller owes one ``__exit__``."""
+        if not self._tlock.acquire(blocking=False):
+            return False
+        depth = getattr(self._local, "depth", 0)
+        if depth == 0:
+            self.lock_file.parent.mkdir(parents=True, exist_ok=True)
+            fh = open(self.lock_file, "a+")
+            try:
+                fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                fh.close()
+                self._tlock.release()
+                return False
+            self._local.fh = fh
+        self._local.depth = depth + 1
+        return True
+
     def __exit__(self, *exc):
         self._local.depth -= 1
         if self._local.depth == 0:
@@ -166,12 +185,15 @@ class Coord:
                 time.sleep(delay + random.random() * delay)
                 delay = min(delay * 2, 8)
 
-    def transaction(self, build: Callable[[], Iterable], message: str, push: bool = True) -> list[Path]:
+    def transaction(self, build: Callable[[], Iterable], message: str, push: bool = True,
+                    pull: bool = True) -> list[Path]:
         """pull -> build() writes files and returns their paths -> commit -> push.
         ``build`` runs after the pull, under the lock, so any logical clock it
-        computes sees everything synced so far."""
+        computes sees everything synced so far. ``pull=False`` skips the network
+        round trip (a local commit that a later push carries; GH-100)."""
         with self.lock:
-            self.pull()
+            if pull:
+                self.pull()
             paths = [Path(p) for p in (build() or [])]
             if self.commit(paths, message) and push:
                 self.push()

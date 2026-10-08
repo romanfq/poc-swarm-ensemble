@@ -11,7 +11,7 @@ from pathlib import Path
 
 import resolve
 from dags import gh
-from dags.gitsync import git, git_out
+from dags.gitsync import git, git_out, net_timeout
 
 log = logging.getLogger("dags.repos")
 
@@ -60,11 +60,17 @@ def ensure(ctx, repo: str, fetch: bool = True) -> Path:
         log.info("cloning %s into %s", repo, path)
         gh.gh(["repo", "clone", repo, str(path)])
     elif fetch:
-        r = git(["fetch", "--prune", "-q", "origin"], path, check=False)
-        if r.returncode != 0:
-            log.warning("%s: fetch failed: %s", repo, r.stderr.strip())
+        fetch_origin(repo, path)
     configure(ctx, path)
     return path
+
+
+def fetch_origin(repo: str, path: Path) -> bool:
+    """``git fetch --prune origin``; a failure is logged and reported, never raised."""
+    r = git(["fetch", "--prune", "-q", "origin"], path, check=False, timeout=net_timeout())
+    if r.returncode != 0:
+        log.warning("%s: fetch failed: %s", repo, r.stderr.strip())
+    return r.returncode == 0
 
 
 def ensure_all(ctx, fetch: bool = True) -> dict[str, Path | Exception]:
