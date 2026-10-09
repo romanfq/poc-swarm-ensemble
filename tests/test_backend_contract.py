@@ -2,7 +2,7 @@
 import pytest
 
 from backends.base import IssueBackend, TaskRef
-from fakes import PLAN, FakeGitHub, plan_labels
+from fakes import PLAN, FakeGitHub, FakeJira, plan_labels
 
 
 class FakeAdapter:
@@ -79,6 +79,45 @@ class GitHubAdapter:
                              plan_scope=scope)
 
 
+class JiraAdapter:
+    def __init__(self, tmp_path, lag=False):
+        self.fake = FakeJira(lag=False)
+        self.refs = {}
+        for name, spec in PLAN.items():
+            key = self.fake.add(name, spec["title"], epic=bool(spec.get("epic")), body=spec.get("body", ""),
+                                labels=plan_labels(spec, issue_types=True), closed=bool(spec.get("closed")),
+                                parent=spec.get("parent"), deps=spec.get("deps", ()))
+            self.refs[name] = TaskRef(key)
+        self.fake.lag = lag
+        self.tmp = tmp_path
+        self.b = self.make()
+
+    def make(self, scope="labelled"):
+        from backends.jira import JiraBackend
+        return JiraBackend(self.fake, "KAN", "https://acme.atlassian.net", cache_seconds=0, plan_scope=scope,
+                           recent_path=self.tmp / "jira-recent.json")
+
+    def comments(self, ref):
+        out = []
+        for c in self.fake.comments[ref.key]:
+            props = {p["key"]: p["value"] for p in c["properties"]}
+            if "dags.markdown" in props:
+                out.append(props["dags.markdown"]["markdown"])
+        return out
+
+    def reply(self, ref, author, text):
+        from dags.adf import to_adf
+        self.fake.human_comment(ref.key, author, to_adf(text))
+
+    def add_unlabelled(self, name, title, parent=None, closed=False):
+        key = self.fake.add(name, title, parent=parent, closed=closed)
+        self.refs[name] = TaskRef(key)
+        return self.refs[name]
+
+    def scoped(self, scope):
+        return self.make(scope)
+
+
 class _Runner:
     def __init__(self, handler):
         from conftest import FakeGh
@@ -88,11 +127,13 @@ class _Runner:
         return self.inner(args, **kw)
 
 
-@pytest.fixture(params=["fake", "github", "github-issue-types"])
+@pytest.fixture(params=["fake", "github", "github-issue-types", "jira"])
 def adapter(request, tmp_path):
     from dags import gh
     if request.param == "fake":
         yield FakeAdapter(tmp_path)
+    elif request.param == "jira":
+        yield JiraAdapter(tmp_path)
     else:
         yield GitHubAdapter(tmp_path, issue_types=request.param.endswith("types"))
     gh.set_runner(None)

@@ -24,7 +24,7 @@ except ImportError:  # pragma: no cover - typer < 0.17
 
 import autonomy as autonomy_names
 import resolve
-from backends.base import AUTONOMY_TIERS, SWARM_STATUSES, TaskRef
+from backends.base import AUTONOMY_TIERS, SWARM_STATUSES, BackendError, TaskRef
 from dags import actions, boardview, daemon, feed, gh, panel, plan, prereqs, repos, snapshot, timeutil, work
 from dags import ledger as L
 from dags.config import ConfigError, Context
@@ -47,7 +47,7 @@ app.add_typer(quota_app, name="quota")
 app.add_typer(epic_app, name="epic")
 
 SCRIPT = Path(__file__).resolve().parent.parent / "swarm.py"
-KNOWN_ERRORS = (ConfigError, work.WorkError, actions.ActionError, L.LostClaim, gh.GhError, GitError,
+KNOWN_ERRORS = (ConfigError, work.WorkError, actions.ActionError, L.LostClaim, BackendError, GitError,
                 repos.RepoError, ValueError, KeyError, RuntimeError)
 
 _state: dict = {}
@@ -364,6 +364,19 @@ def backend_get_task(key: str):
     typer.echo(ctx().backend.get_task(_ref_for(key)).spec_markdown())
 
 
+@backend_app.command("whoami")
+@guarded
+def backend_whoami():
+    """Who the tracker account is. On Jira, the `accountId` to put under `jira:` in humans.yaml."""
+    b = ctx().backend
+    if not hasattr(b, "whoami"):
+        fail(f"the {b.name} backend has no account to show; humans.yaml matches your `gh` login")
+    me = b.whoami()
+    console.print(f"account:    {me.get('displayName', '?')}", markup=False)
+    console.print(f"accountId:  {me.get('accountId', '?')}", markup=False)
+    console.print("Put the accountId under `jira:` for a person in humans.yaml.", markup=False)
+
+
 @backend_app.command("ready")
 @guarded
 def backend_ready(ledger_only: bool = typer.Option(False, "--ledger", help="Also apply ledger readiness.")):
@@ -494,7 +507,7 @@ def backend_seed(plan_file: Path = typer.Argument(..., help="Plan file, e.g. poc
         raise typer.Exit(1)
     try:
         seed.apply(d, b, echo=lambda line: console.print(line, markup=False))
-    except gh.GhError as e:
+    except BackendError as e:
         fail(f"{e}\nstopped part-way; re-run the same command to continue")
     left = seed.verify(plan_, b, code_repos)
     if left:

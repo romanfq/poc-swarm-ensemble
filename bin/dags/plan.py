@@ -156,6 +156,7 @@ def membership_fixes(ctx, backend) -> tuple[list[Label], list[str]]:
     notes are cases a human must decide."""
     members, skipped = plan_members(backend)
     kinds = bool(getattr(backend, "uses_type_labels", False))
+    epic_status = bool(getattr(backend, "epics_carry_status", True))   # False on Jira: containers get no status
     fixes: list[Label] = []
     notes: list[str] = []
     seen: set[str] = set()
@@ -167,7 +168,9 @@ def membership_fixes(ctx, backend) -> tuple[list[Label], list[str]]:
             continue
         seen.add(t.ref.key)
         if t.is_epic:
-            fixes.append(Label(t, None if kinds else "ready", "epic" if kinds else None, "tracked in the ledger"))
+            status = None if kinds or not epic_status else "ready"
+            if status or kinds:
+                fixes.append(Label(t, status, "epic" if kinds else None, "tracked in the ledger"))
             continue
         state = resolve.task_state(d, now, ctx.settings.lease_s, ctx.human_names)
         status = LEDGER_STATUS.get(state)

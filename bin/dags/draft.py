@@ -32,8 +32,8 @@ import yaml
 
 import autonomy
 from backends.base import (AUTONOMY_PREFIX, AUTONOMY_TIERS, DEFAULT_AUTONOMY, REPO_PREFIX, STATUS_PREFIX,
-                           SWARM_STATUSES, TaskRef)
-from dags import gh, seed
+                           SWARM_STATUSES, BackendError, TaskRef)
+from dags import seed
 
 DRAFTS_DIR = "drafts"
 FILED_DIR = "filed"
@@ -324,7 +324,7 @@ def apply(f: Filing, backend, echo=print) -> TaskRef:
         for dep in f.missing_deps:
             backend.add_dependency(ref, dep)
             echo(f"depends {backend.short_key(ref)} blocked by {backend.short_key(dep)}")
-    except gh.GhError as e:
+    except BackendError as e:
         raise FilingError(backend.web_url(ref) or ref.key, str(e)) from e
     return ref
 

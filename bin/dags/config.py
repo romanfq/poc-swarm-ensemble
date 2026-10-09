@@ -118,6 +118,16 @@ class Context:
                 return str(h["name"])
         return None
 
+    def human_by_tracker(self, author: str | None) -> str | None:
+        """The human whose ``humans.yaml`` entry matches a comment author on the active tracker: the
+        ``github`` login (case-insensitive) or the ``jira`` accountId (exact, case-sensitive)."""
+        if self.backend_cfg.get("backend") == "jira":
+            for h in self.humans:
+                if author and str(h.get("jira", "")) == author:
+                    return str(h["name"])
+            return None
+        return self.human_by_github(author)
+
     def human_by_email(self, email: str | None) -> str | None:
         for h in self.humans:
             if email and email.lower() in [str(e).lower() for e in h.get("emails") or []]:

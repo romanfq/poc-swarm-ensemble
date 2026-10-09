@@ -9,7 +9,7 @@ poc/matchwire/plan.yaml). Seeding is idempotent:
 
 ``diff()`` works out what would change without writing anything, and
 ``apply()`` performs the changes. The backend must provide the seeding
-helpers (only the GitHub adapter does today).
+helpers (the GitHub and Jira adapters do).
 """
 from __future__ import annotations
 

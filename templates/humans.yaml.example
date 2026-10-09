@@ -1,9 +1,12 @@
 # Recognised human identities (whitepaper Ch.6.6, Ch.10.6).
 # Only these names may arbitrate, pause/resume machines, set quota or merge.
-# `github` is matched against `gh api user`; `emails` against the commit
+# `github` is matched against `gh api user` (and, on GitHub, comment authors); `jira` is the
+# accountId that identifies comment authors on a Jira backend; `emails` against the commit
 # author of arbitration records.
 
 humans:
   - name: roman
     github: romanfq
+    jira: 5b10ac8d82e05b22cc7d4ef5   # Jira accountId, only when backend is jira (`swarm.py backend whoami`);
+                                     # matched exactly, e-mail addresses are often hidden by Jira
     emails: [roman.fq@gmail.com]

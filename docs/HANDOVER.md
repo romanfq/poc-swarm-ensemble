@@ -55,8 +55,8 @@ frontend `~/Documents/DAGS/matchwire/fe/matchwire-frontend`.
     "Branch protection and CI" below for why that now matters.
 - **D3: macOS only** for worker launchers (plan §2.14): Terminal/iTerm via
   `osascript`, `open -na "IntelliJ IDEA.app"`, `code -n`.
-- **D4: Phase 8 (Jira adapter) deferred.** No Jira instance (`FutureWork.md`).
-  `backend: jira` fails with a pointer there.
+- **D4: Phase 8 (Jira adapter) built (GH-123).** `backend: jira` loads `bin/backends/jira.py` over the
+  `JiraClient` seam (`bin/dags/jira_client.py`). Mirror-site checks are still manual (see the PR).
 - **D5: two agents, one baton.** Cowork writes code; Claude Code runs what
   needs the real Mac (venv, `gh`, Keychain, `osascript`) and anything touching
   GitHub. `BATON` names the only agent allowed to edit this repo; hand-offs
@@ -187,7 +187,7 @@ frontend `~/Documents/DAGS/matchwire/fe/matchwire-frontend`.
 | Phase | Status |
 |---|---|
 | 0–7 (core, Board) | done, tested |
-| 8 Jira adapter | deferred (`FutureWork.md`) |
+| 8 Jira adapter | built, GH-123; live checks on the mirror site are manual |
 | 9 POC on MatchWire | in progress — see below |
 | — Meta/dogfooding swarm | in progress — see below, not in the original phase numbering |
 
