@@ -13,8 +13,10 @@ import shutil
 import subprocess
 from typing import Any, Callable
 
+from backends.base import BackendError
 
-class GhError(RuntimeError):
+
+class GhError(BackendError):
     def __init__(self, args, returncode, stderr):
         self.returncode = returncode
         self.stderr = stderr

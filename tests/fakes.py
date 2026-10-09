@@ -1,8 +1,7 @@
 """In-memory stand-in for GitHub (via the gh CLI).
 
 It is seeded from one neutral plan description so the backend contract
-suite can run unchanged against every adapter (the Jira adapter is future work,
-see FutureWork.md).
+suite can run unchanged against every adapter (the Jira adapter runs against FakeJira, below).
 """
 from __future__ import annotations
 
@@ -245,3 +244,170 @@ class FakePRs:
             pr["state"] = "MERGED"
             return ""
         raise AssertionError(f"unexpected gh call {args}")
+
+
+# ---------------------------------------------------------------------------
+# Jira (implements the JiraClient interface directly: no HTTP)
+# ---------------------------------------------------------------------------
+
+class FakeJira:
+    """In-memory Jira project in Jira's documented JSON shapes. ``lag=True`` models eventual consistency:
+    search serves an index that only catches up when ``settle()`` is called, except for issue ids passed
+    as ``reconcile_issues``. Direct reads (``get_issue``) always see the latest write."""
+
+    STATUSES = {"To Do": "new", "In Progress": "indeterminate", "Done": "done"}
+
+    def __init__(self, project="KAN", page_size=3, lag=False):
+        import copy
+        self._copy = copy
+        self.project, self.page_size, self.lag = project, page_size, lag
+        self.issues: dict[str, dict] = {}
+        self.index: dict[str, dict] = {}
+        self.comments: dict[str, list[dict]] = {}
+        self.calls: list[tuple] = []
+        self.names: dict[str, str] = {}
+        self.seq = 0
+        self.tick = 0
+        self.properties_ok = True
+        self.extra_transitions: list[dict] = []
+        self.closed_by_human: set[str] = set()
+
+    # -- seeding
+    def issue_type(self, epic: bool, subtask=False):
+        if subtask:
+            return {"name": "Subtask", "hierarchyLevel": -1, "subtask": True}
+        return {"name": "Epic", "hierarchyLevel": 1} if epic else {"name": "Task", "hierarchyLevel": 0}
+
+    def add(self, name, title, *, epic=False, labels=(), parent=None, closed=False, body="", deps=(),
+            subtask=False, index=True):
+        self.seq += 1
+        key = f"{self.project}-{self.seq}"
+        self.names[name] = key
+        self.issues[key] = {"id": str(10000 + self.seq), "key": key, "fields": {
+            "summary": title, "description": None if not body else
+            {"version": 1, "type": "doc", "content": [{"type": "paragraph", "content": [{"type": "text", "text": body}]}]},
+            "status": {"name": "Done" if closed else "To Do",
+                       "statusCategory": {"key": "done" if closed else "new"}},
+            "labels": list(labels), "issuetype": self.issue_type(epic, subtask),
+            "parent": {"key": self.names[parent]} if parent else None,
+            "issuelinks": []}}
+        for d in deps:
+            self._link("Blocks", key, self.names[d])
+        self.comments[key] = []
+        if index:
+            self.settle()
+        return key
+
+    def settle(self):
+        self.index = self._copy.deepcopy(self.issues)
+
+    def _link(self, type_name, blocked, blocker):
+        self.issues[blocked]["fields"]["issuelinks"].append(
+            {"type": {"name": type_name}, "inwardIssue": {"key": blocker}})
+        self.issues[blocker]["fields"]["issuelinks"].append(
+            {"type": {"name": type_name}, "outwardIssue": {"key": blocked}})
+
+    def human_comment(self, key, author, adf_body):
+        self.tick += 1
+        self.comments[key].append({"id": str(900 + self.tick), "author": {"accountId": author}, "body": adf_body,
+                                   "created": f"2026-10-09T10:{self.tick:02d}:00.000+0100", "properties": []})
+
+    # -- the JiraClient interface
+    def myself(self):
+        self.calls.append(("myself",))
+        return {"accountId": "bot-account", "displayName": "dags-bot"}
+
+    def _view(self, issue, fields):
+        out = self._copy.deepcopy(issue)
+        if fields:
+            out["fields"] = {k: v for k, v in out["fields"].items() if k in fields}
+        return out
+
+    def search(self, jql, fields, *, next_page_token=None, max_results=100, reconcile_issues=None):
+        self.calls.append(("search", next_page_token, tuple(reconcile_issues or ())))
+        src = self.index if self.lag else self.issues
+        pool = dict(src)
+        for i in reconcile_issues or ():
+            for k, v in self.issues.items():
+                if v["id"] == str(i):
+                    pool[k] = v
+        rows = sorted(pool.values(), key=lambda i: int(i["id"]))
+        start = int(next_page_token or 0)
+        page = rows[start:start + self.page_size]
+        last = start + self.page_size >= len(rows)
+        return {"issues": [self._view(i, fields) for i in page], "isLast": last,
+                **({} if last else {"nextPageToken": str(start + self.page_size)})}
+
+    def _get(self, key):
+        from dags.jira_client import JiraError
+        if key not in self.issues:
+            raise JiraError(404, "Issue does not exist or you do not have permission to see it.", path=key)
+        return self.issues[key]
+
+    def get_issue(self, key, fields=None):
+        self.calls.append(("get_issue", key))
+        return self._view(self._get(key), fields)
+
+    def create_issue(self, fields):
+        self.calls.append(("create_issue", fields["summary"]))
+        epic = fields["issuetype"]["name"] == "Epic"
+        key = self.add(f"_new{self.seq + 1}", fields["summary"], epic=epic, labels=fields.get("labels") or (),
+                       body="", index=False)
+        self.issues[key]["fields"]["description"] = fields.get("description")
+        return {"id": self.issues[key]["id"], "key": key}
+
+    def _write(self, key):
+        # the index is deliberately NOT updated: under lag it catches up only on settle()
+        return self._get(key)
+
+    def update_issue(self, key, body):
+        self.calls.append(("update_issue", key, body))
+        issue = self._write(key)
+        f = issue["fields"]
+        for op in (body.get("update") or {}).get("labels") or []:
+            if "add" in op and op["add"] not in f["labels"]:
+                f["labels"].append(op["add"])
+            if "remove" in op and op["remove"] in f["labels"]:
+                f["labels"].remove(op["remove"])          # removing a label that is not there is a no-op
+        if "parent" in (body.get("fields") or {}):
+            f["parent"] = {"key": body["fields"]["parent"]["key"]}
+
+    def get_transitions(self, key):
+        self._get(key)
+        return [{"id": "11", "name": "Start", "to": {"name": "In Progress", "statusCategory": {"key": "indeterminate"}}},
+                {"id": "31", "name": "Finish", "to": {"name": "Done", "statusCategory": {"key": "done"}}},
+                *self.extra_transitions]
+
+    def transition(self, key, transition_id):
+        self.calls.append(("transition", key, transition_id))
+        names = {"11": "In Progress", "31": "Done", **{t["id"]: t["to"]["name"] for t in self.extra_transitions}}
+        name = names[str(transition_id)]
+        cat = self.STATUSES.get(name, "done" if name == "Done" else "indeterminate")
+        self._write(key)["fields"]["status"] = {"name": name, "statusCategory": {"key": cat}}
+
+    def create_issue_link(self, type_name, inward_key, outward_key):
+        self.calls.append(("link", type_name, inward_key, outward_key))
+        self._get(inward_key), self._get(outward_key)
+        self._link(type_name, inward_key, outward_key)       # inward is the blocked issue
+
+    def add_comment(self, key, adf_body, properties=None):
+        self.calls.append(("add_comment", key))
+        from dags.jira_client import JiraError
+        self._get(key)
+        if properties and not self.properties_ok:
+            raise JiraError(400, "comment properties are not supported")
+        self.tick += 1
+        c = {"id": str(900 + self.tick), "author": {"accountId": "bot-account"}, "body": adf_body,
+             "created": f"2026-10-09T10:{self.tick:02d}:00.000+0100", "properties": properties or []}
+        self.comments[key].append(c)
+        return {"id": c["id"]}
+
+    def list_comments(self, key):
+        self._get(key)
+        return self._copy.deepcopy(self.comments[key])
+
+    def list_labels(self):
+        return sorted({lb for i in self.issues.values() for lb in i["fields"]["labels"]})
+
+    def list_issue_types(self, project_key):
+        return [self.issue_type(True), self.issue_type(False), self.issue_type(False, subtask=True)]

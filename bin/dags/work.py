@@ -424,7 +424,7 @@ def replies(ctx, task_dir: Path) -> list[dict]:
     last = max((i for i, c in enumerate(comments) if _MARKER_RE.search(c.body or "")), default=-1)
     out = []
     for c in comments[last + 1:]:
-        human = ctx.human_by_github(c.author)
+        human = ctx.human_by_tracker(c.author)
         if human:
             out.append({"human": human, "author": c.author, "body": c.body, "created_at": c.created_at,
                         "url": c.url})

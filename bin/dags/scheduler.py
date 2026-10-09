@@ -168,6 +168,8 @@ class Scheduler:
             ctx.coord.pull()
             if not resolve.ledger_ready(ctx.root, d, timeutil.now(), lease, humans):
                 continue
+            if not self.fresh_ready(key, rep):
+                continue
             cid = L.claim(ctx, d, worker=self.default_worker)
             ctx.coord.pull()
             res = resolve.resolve(d, timeutil.now(), lease, humans)
@@ -180,6 +182,29 @@ class Scheduler:
             self._set_status(d, "claimed")
             self.after_win(d, cid, rep)
         return rep
+
+    def fresh_ready(self, key: str, rep: CycleReport) -> bool:
+        """Just before a claim: re-read the candidate and its epic chain directly, for a tracker whose
+        search lags its writes (``lagging_search``, e.g. Jira), so a ``blocked`` a human set a moment ago
+        wins over a stale ready list. Same rule as ``ready_from``. Trackers with consistent reads skip it."""
+        backend = self.ctx.backend
+        if not getattr(backend, "lagging_search", False):
+            return True
+        get = getattr(backend, "get_task_fresh", None) or backend.get_task
+        try:
+            ref, seen = TaskRef(key), set()
+            t = get(ref)
+            if t.is_epic or t.closed or t.status in ("blocked", "done"):
+                return False
+            while t.epic is not None and t.epic.key not in seen:
+                seen.add(t.epic.key)
+                t = get(t.epic)
+                if t.blocked:
+                    return False
+        except Exception as e:  # noqa: BLE001
+            self.report_error("backend", f"fresh check of {key}: {e}", rep)
+            return False
+        return True
 
     def tidy_own_claims(self, rep: CycleReport) -> None:
         ctx = self.ctx

@@ -1,19 +1,24 @@
 # Which issue backend this swarm is bound to (whitepaper Ch.3.4), plus
 # shared swarm settings. Committed: every machine reads the same file.
 
-backend: github            # or: jira
+backend: github            # or: jira (see the jira: block; credentials are per machine, never here)
 
 github:
   repo: romanfq/matchwire-spec       # repo holding the epics/tasks as GitHub Issues
   use_issue_types: false             # true only for org repos with issue types configured (Ch.3.3)
 
 jira:
-  base_url: https://yourorg.atlassian.net
-  project_key: MW
-  blocks_link_type: Blocks           # issue-link type used for dependencies
+  base_url: https://yourteam.atlassian.net   # https and *.atlassian.net only (other hosts: jira.allowed_hosts in
+                                             # .swarm/local.yaml, never here)
+  project_key: KAN                           # the project's key; the bot account must be a member of it
+  blocks_link_type: Blocks                   # issue-link type used for dependencies
+  issue_types: {epic: Epic, task: Task}      # names of the issue types used when seeding / filing
+  cache_seconds: 20
+  transitions: {}                            # optional: let Jira board columns follow the swarm,
+                                             # e.g. {done: Done, in-progress: In Progress}
 
 # Code repositories tasks may target. A task names its repo with a
-# `repo:OWNER/NAME` label (GitHub) or `repo:` in swarm.yaml (Jira).
+# `repo:OWNER/NAME` label (on GitHub and on Jira).
 # Phase 9 POC: the plan is poc/matchwire/plan.yaml (seed it with
 # `swarm.py backend seed`). Until the scaffold tasks S1/S2 land, these test
 # commands fail on a clean checkout, and that is expected.

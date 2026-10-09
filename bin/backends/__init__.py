@@ -7,12 +7,13 @@ from backends.base import IssueBackend, Task, TaskRef  # noqa: F401
 
 ADAPTERS = {
     "github": ("backends.github", "GitHubBackend"),
+    "jira": ("backends.jira", "JiraBackend"),
     "fake": ("backends.fake", "FakeBackend"),
 }
 
 
-# Planned adapters that are not built yet.
-NOT_YET = {"jira": "see FutureWork.md"}
+# Planned adapters that are not built yet (none today; see FutureWork.md).
+NOT_YET: dict[str, str] = {}
 
 
 def load_backend(ctx) -> IssueBackend:

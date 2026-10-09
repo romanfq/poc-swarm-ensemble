@@ -212,9 +212,8 @@ no leader.
 ## 2.4 Two ports, and why only two
 
 **The issue backend** (`bin/backends/base.py`) is the boundary to a tracker.
-Nothing outside `bin/backends/` talks to a tracker directly. Two adapters exist:
-`github` and `fake` (file-backed, for tests and offline demos). A Jira adapter is
-designed for but not written — see `FutureWork.md` and §3.5.
+Nothing outside `bin/backends/` talks to a tracker directly. Three adapters exist:
+`github`, `jira` (Jira Cloud, §3.5) and `fake` (file-backed, for tests and offline demos).
 
 **The worker** (`bin/workers/base.py`) is the boundary to whatever implements a
 task. A worker is an AI CLI in a terminal or a human in an IDE; the scheduler only
@@ -365,12 +364,49 @@ swarm:
   thrash_threshold: 2           # conflict cycles before arbitration (§9.5)
 ```
 
-**There is no Jira adapter.** v1.1 documented one, including a `swarm.yaml`
-attachment format, and it was never written: `bin/backends/` contains `base`,
-`fake` and `github`. The port exists and is deliberately tracker-agnostic — the
-readiness and membership rules live in it precisely so a second adapter inherits
-them — but Jira is future work (`FutureWork.md`), and this specification no
-longer describes it as though it shipped.
+**Jira Cloud** (`backend: jira`, D4) is a second tracker for the *plan*. Pull requests, reviews and
+checks stay on GitHub, so `gh` remains a prerequisite. A ledger is bound to one tracker (keys like
+`org/repo#7` become `KAN-12`), so moving a swarm from GitHub to Jira means a new coordination repository (D27),
+not a migration.
+
+```yaml
+backend: jira
+jira:
+  base_url: https://yourteam.atlassian.net
+  project_key: KAN
+  blocks_link_type: Blocks
+  issue_types: {epic: Epic, task: Task}
+  cache_seconds: 20
+  transitions: {}               # optional, e.g. {done: Done, in-progress: In Progress}
+```
+
+How the swarm's concepts map:
+
+* Status, autonomy and target repo are **labels** (`swarm:status:ready`, ...), as on GitHub. The Jira workflow
+  is left alone except that `done` closes the issue (idempotently: an issue already in a Done status category
+  is left as it is). Moving a status away from `done` does not reopen it.
+* An issue is an **epic** when its issue type has `hierarchyLevel >= 1` (never matched by name). A Task with a
+  subtask that carries a swarm label is a container and is never claimed. A subtask without a swarm label is
+  outside the plan under `plan_scope: labelled`; under `all` every subtask is a task.
+* The parent is `fields.parent`. Dependencies are issue links of `blocks_link_type`.
+* Comments and descriptions are Atlassian Document Format on the wire. The swarm's markdown is kept beside
+  each comment as the entity property `dags.markdown` so it reads back exactly; markers such as
+  `<!-- dags-plan: ... -->` appear as inline code in the Jira UI.
+* Jira has no label registry: `backend init` has nothing to create.
+
+Jira's search is eventually consistent. The adapter therefore applies its own writes to its cached snapshot
+and passes recently written issue ids as `reconcileIssues` (kept in `.swarm/jira-recent.json`, ten minutes).
+Writes by other people can still lag, so just before a claim the scheduler re-reads the candidate and its
+epic chain directly and refuses it if it is blocked or closed (`lagging_search`). Expect one full project
+search per `cache_seconds` plus up to two issue reads per claim candidate.
+
+Credentials are per machine and never committed: `JIRA_EMAIL` (or `jira.email`) and `JIRA_API_TOKEN` (or the
+Keychain item `dags-jira-token`). They are sent only to `*.atlassian.net` or `api.atlassian.com`; redirects to
+another host are refused. Use a dedicated Atlassian account for the swarm. Store the token with
+`security add-generic-password -a "$USER" -s dags-jira-token -w "$(pbpaste)"` (token on the clipboard; clear
+it afterwards) or with Keychain Access, **never** with the bare `-w` prompt, which cuts the input at 128
+characters and stores a truncated token. Humans are matched by Jira `accountId` (`jira:` in `humans.yaml`;
+`swarm.py backend whoami` prints yours).
 
 ## 3.6 Seeding a plan from a file
 
@@ -1481,7 +1517,7 @@ not to build it.
 | D1 | All DAGS code lives in the coordination repository's `bin/`. | "Installing the protocol is cloning the repository." | 2, 4 | Done |
 | D2 | Worker pull requests are opened by a separate **bot account**; its token comes from an environment variable, else the macOS Keychain; `worker_token: none` opts out. Humans approve and merge with their own `gh auth`, and commits are authored as the bot. | Keeps worker writes separable from a human's. It later turned out to be the mechanism that makes the merge gate real: a GitHub account cannot approve its own pull request, so a bot-opened pull request *requires* a human reviewer. | 5.5, 9.1, 11.4 | Done |
 | D3 | Worker launchers are **macOS only**: Terminal and iTerm via `osascript`, `open -na` for IntelliJ, `code -n` for VS Code. | The proof of concept runs on Macs; the worker port leaves room for other systems. | 1, 7.3 | Done |
-| D4 | The **Jira adapter is deferred.** | No Jira site to build and test against, and a moving API. The port stays tracker-agnostic so the work is contained when it happens. | 3.5 | Deferred |
+| D4 | The **Jira adapter** was deferred until a Jira site existed; it now ships (GH-123) behind a narrow `JiraClient` seam. Live checks on the mirror site are manual (`tests/live_jira_smoke.py`). | A site to build against became available; the port stayed tracker-agnostic so the work was contained. | 3.5 | Built; live acceptance manual |
 | D5 | Two builders share the repository with a `BATON` file; hand-offs are local commits. | A development arrangement for building DAGS, not part of the protocol. | — | Done |
 | D6 | Leases use **skew-corrected wall-clock time**: the offset is measured from GitHub's `Date` header; lease 15 minutes, heartbeat every 3. | A logical clock orders events but cannot measure fifteen minutes, and a purely logical lease never expires when only one machine is active. | 5.3, 6.5 | Done |
 | D7 | `heartbeats/<machine>.yaml` and `checkpoint.yaml` are **single-writer** and re-check `resolve()`; heartbeats are one commit per cycle; `meta.yaml` never changes, later changes become `meta/` revisions. | Keeps "append-only, no textual conflicts" true for everything else. | 4.2, 4.3 | Done |
@@ -1817,10 +1853,16 @@ Called by `.swarm-task/swarm-task`, rarely by hand.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `backend` | — | `github` or `fake` |
+| `backend` | — | `github`, `jira` or `fake` |
 | `github.repo` | — | The plan repository |
 | `github.use_issue_types` | `false` | Use GitHub issue types instead of `type:` labels |
 | `github.cache_seconds` | `20` | Read cache |
+| `jira.base_url` | — | The Jira Cloud site (`https://TEAM.atlassian.net`) |
+| `jira.project_key` | — | The project holding the plan |
+| `jira.blocks_link_type` | `Blocks` | Issue-link type for dependencies |
+| `jira.issue_types` | `{epic: Epic, task: Task}` | Issue type names used when creating issues |
+| `jira.cache_seconds` | `20` | Read cache |
+| `jira.transitions` | `{}` | Optional workflow transitions by swarm status (`done`, `in-progress`, ...) |
 | `plan_scope` | `labelled` | `labelled` or `all` (§3.4) |
 | `repos.<R>.base` | `main` | The branch tasks target |
 | `repos.<R>.test_command` | — | What `done` runs |
@@ -1838,7 +1880,9 @@ Called by `.swarm-task/swarm-task`, rarely by hand.
 ## D.3 `humans.yaml`
 
 The people whose records the swarm honours. Committed, so the set is reviewed.
-A plan review or arbitration naming anyone else is ignored (D16).
+A plan review or arbitration naming anyone else is ignored (D16). Each entry has a `name` and,
+as the backend needs, `github` (login), `jira` (Jira `accountId`, matched exactly: e-mail addresses are often
+hidden by Jira) and `emails`.
 
 ## D.4 `.swarm/local.yaml` — per machine, never committed
 
@@ -1850,6 +1894,10 @@ A plan review or arbitration naming anyone else is ignored (D16).
 | `bot.login`, `bot.email` | Commit authorship for worker commits |
 | `terminal_app`, `intellij_app` | Which application a launcher drives |
 | `notify.desktop`, `notify.webhook` | Opt-in notification channels |
+| `jira.email` | The swarm's Atlassian account (or `JIRA_EMAIL`) |
+| `jira.token.keychain_service` | Keychain item holding the API token (default `dags-jira-token`; or `JIRA_API_TOKEN`) |
+| `jira.cloud_id` | Only for scoped tokens: calls go to `api.atlassian.com/ex/jira/{cloudId}` |
+| `jira.allowed_hosts` | Extra hosts the Jira credential may be sent to (default: `*.atlassian.net` only) |
 
 ## D.5 Labels
 
