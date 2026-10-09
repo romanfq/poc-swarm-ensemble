@@ -300,7 +300,7 @@ def test_utc_iso(stamp, out):
 # -- labels ---------------------------------------------------------------------------------------------
 def test_existing_labels_lists_jira_plus_everything_the_swarm_would_create():
     fake, b = make(code_repos=["org/app"])
-    k = fake.add("T", "t", labels=["bug"])
+    fake.add("T", "t", labels=["bug"])
     have = b.existing_labels()
     assert "bug" in have and "swarm:status:ready" in have and "swarm:autonomy:self-approve" in have
     assert "repo:org/app" in have

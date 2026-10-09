@@ -1,9 +1,6 @@
 """Slice 1 of the Jira backend (GH-123): the tracker-neutral glue that does not need Jira itself."""
-import pytest
-
-import resolve as rv
 from backends.base import BackendError, Task, TaskRef, TrackerHelpers
-from dags import gh, plan, timeutil
+from dags import gh, plan
 from dags.config import Context
 
 

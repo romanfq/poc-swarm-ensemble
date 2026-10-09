@@ -81,7 +81,6 @@ class GitHubAdapter:
 
 class JiraAdapter:
     def __init__(self, tmp_path, lag=False):
-        from backends.jira import JiraBackend
         self.fake = FakeJira(lag=False)
         self.refs = {}
         for name, spec in PLAN.items():

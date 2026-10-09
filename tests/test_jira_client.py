@@ -239,7 +239,7 @@ def test_credentials_resolve_per_call_and_prefer_env(monkeypatch):
     cr.env = {"JIRA_API_TOKEN": "env-tok", "JIRA_EMAIL": "env@x"}
     assert cr.token == "env-tok" and cr.email == "env@x"
     with pytest.raises(jc.JiraError):
-        jc.Credentials({}, env={}, keychain=lambda s: None).token
+        _ = jc.Credentials({}, env={}, keychain=lambda s: None).token
 
 
 def test_no_secret_in_error_text_for_any_failure():
