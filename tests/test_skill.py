@@ -117,6 +117,7 @@ def test_wait_and_news_via_the_skill(world, monkeypatch):
     assert r.returncode == 0 and "answered" in r.stdout and "yes" in r.stdout
     from dags import actions
     actions.freeze(jane, jd, "stop")
+    a.coord.pull()                                   # `note` reads the ledger as the daemon last synced it (GH-113)
     r = skill("note", "--summary", "x")
     assert r.returncode != 0 and "no longer yours" in r.stderr and "froze the task" in r.stdout
 

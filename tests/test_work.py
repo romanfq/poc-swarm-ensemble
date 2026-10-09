@@ -1,4 +1,5 @@
 """Phase 5: the worker side — plan gate, notes, feedback and `done` (Ch.7.3, 8, 9.1, 9.3)."""
+import json
 import subprocess
 
 import pytest
@@ -666,3 +667,89 @@ def test_done_blocks_again_when_conflict_markers_were_committed(claimed):
     with pytest.raises(work.WorkError, match="conflict markers committed in: README.md"):
         work.finish(a, d, wt, test_runner=OK)
     assert world.prs.prs == {}
+
+
+# -- GH-113: note is one process, no pull, a local commit, never blocked on the lock -------------
+
+def _git_calls(ctx, monkeypatch):
+    from dags import gitsync
+    calls = []
+    real = gitsync.git
+
+    def spy(args, *a, **kw):
+        calls.append(list(args))
+        return real(args, *a, **kw)
+    monkeypatch.setattr(gitsync, "git", spy)
+    return calls
+
+
+def test_note_with_events_does_not_pull_or_push(claimed, monkeypatch):
+    world, a, d, wt = claimed
+    work.drain()                                                 # dispatch's background push
+    calls = _git_calls(a, monkeypatch)
+    before = a.coord.unpushed()
+    out = work.note_with_events(a, d, L.read_checkpoint(d)["claim_id"], summary="quick", tried=["x"])
+    assert out["written"] and not out["queued"]
+    assert not [c for c in calls if c[0] in ("pull", "push", "fetch", "ls-remote")], calls
+    assert a.coord.unpushed() == before + 1                      # committed locally
+    assert L.read_checkpoint(d)["summary"] == "quick"
+    a.coord.push()                                               # the next pushing command carries it
+    assert a.coord.unpushed() == 0
+
+
+def test_events_and_wait_still_pull(claimed, monkeypatch):
+    world, a, d, wt = claimed
+    calls = _git_calls(a, monkeypatch)
+    work.worker_events(a, d, L.read_checkpoint(d)["claim_id"])
+    assert any(c[0] == "pull" for c in calls)
+
+
+def test_note_queues_when_the_lock_is_busy_and_flushes_later(claimed, monkeypatch):
+    import threading
+    import time
+    world, a, d, wt = claimed
+    work.drain()                                                 # dispatch's background push holds the lock
+    monkeypatch.setenv("DAGS_NOTE_LOCK_WAIT", "0.1")
+    claim = L.read_checkpoint(d)["claim_id"]
+    held, release = threading.Event(), threading.Event()
+
+    def holder():
+        with a.coord.lock:
+            held.set()
+            release.wait(10)
+    threading.Thread(target=holder, daemon=True).start()
+    assert held.wait(5)
+    t0 = time.monotonic()
+    out = work.note_with_events(a, d, claim, summary="queued one", tried=["q"])
+    assert time.monotonic() - t0 < 3 and out["queued"] and not out["written"]
+    release.set()
+    time.sleep(0.2)
+    assert L.read_checkpoint(d).get("summary") != "queued one"
+    assert work.flush_note_queue(a) == 1
+    cp = L.read_checkpoint(d)
+    assert cp["summary"] == "queued one" and "q" in cp["tried"]
+    assert work.flush_note_queue(a) == 0
+
+
+def test_queued_notes_land_before_the_next_note(claimed, monkeypatch):
+    world, a, d, wt = claimed
+    claim = L.read_checkpoint(d)["claim_id"]
+    q = work._note_queue(a)
+    q.mkdir(parents=True, exist_ok=True)
+    (q / "1.json").write_text(json.dumps({"task_dir": str(d), "args": work._note_args("old", ["first"], None, (), ())}))
+    work.note_with_events(a, d, claim, tried=["second"])
+    cp = L.read_checkpoint(d)
+    assert cp["summary"] == "old" and cp["tried"] == ["first", "second"]
+
+
+def test_note_with_events_stops_on_a_lost_claim(claimed):
+    world, a, d, wt = claimed
+    from dags import actions
+    claim = L.read_checkpoint(d)["claim_id"]
+    jane = world.machine("jane-mac", human="jane")
+    actions.freeze(jane, rv.index(jane.root)["T1"], "stop")
+    a.coord.pull()
+    out = work.note_with_events(a, d, claim, summary="should not land")
+    assert any(e["kind"] == "claim-lost" for e in out["events"])
+    assert not out["written"] and not out["queued"]
+    assert L.read_checkpoint(d).get("summary") != "should not land"
