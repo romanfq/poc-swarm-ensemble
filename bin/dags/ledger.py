@@ -235,7 +235,7 @@ def propose_tests(ctx: Context, task_dir: Path, claim_id: str, proposal: dict) -
 def answer_tests(ctx: Context, task_dir: Path, proposal_id: str, scope: str, targeted_enough: bool = False,
                  note: str = "", self_accepted: bool = False) -> None:
     """A human's answer (``targeted_enough``: ``done`` may run just this scope), or, for an
-    auto-pr task, the worker accepting its own recommendation (``self_accepted``)."""
+    self-approve task, the worker accepting its own recommendation (``self_accepted``)."""
     human = None if self_accepted else ctx.require_human()
 
     def build():

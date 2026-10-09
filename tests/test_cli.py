@@ -20,7 +20,7 @@ def machine(swarm, tmp_path, monkeypatch):
     ctx = swarm.clone("mac-a")
     backend = FakeBackend(tmp_path / "b.yaml")
     backend.add("E1", title="Epic", epic=True)
-    backend.add("T1", title="Poll", epic_of="E1", labels=["repo:OWNER/app", "swarm:autonomy:auto-pr"])
+    backend.add("T1", title="Poll", epic_of="E1", labels=["repo:OWNER/app", "swarm:autonomy:self-approve"])
     ctx.set_backend(backend)
     monkeypatch.setattr(cli, "ctx", lambda: ctx)
     return ctx
@@ -236,10 +236,10 @@ def test_backend_init_labels_what_the_plan_is_missing(machine):
 def test_backend_adopt(machine):
     b = machine.backend
     b.add("U1", title="File it, then hand it to the swarm")
-    r = invoke("backend", "adopt", "U1", "--autonomy", "auto-pr")
+    r = invoke("backend", "adopt", "U1", "--autonomy", "self-approve")
     assert r.exit_code == 0 and "is in the plan" in r.output
     t = b.get_task(TaskRef("U1"))
-    assert t.status == "ready" and t.autonomy == "auto-pr" and "type:task" in t.labels
+    assert t.status == "ready" and t.autonomy == "self-approve" and "type:task" in t.labels
     assert TaskRef("U1") in b.ready_tasks()
     r = invoke("backend", "adopt", "T1")
     assert r.exit_code != 0 and "already in the plan" in r.output

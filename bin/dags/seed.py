@@ -19,6 +19,7 @@ from pathlib import Path
 
 import yaml
 
+import autonomy
 from backends.base import AUTONOMY_TIERS, DEFAULT_AUTONOMY, SWARM_STATUSES, Task, TaskRef
 
 MARKER = "<!-- dags-seed: {id} -->"
@@ -72,7 +73,7 @@ def load(path: Path) -> Plan:
         items.append(Item(id=str(raw.get("id", "")), title=str(raw.get("title", "")),
                           body=str(raw.get("body") or ""),
                           epic=str(raw["epic"]) if raw.get("epic") else None,
-                          repo=raw.get("repo"), autonomy=raw.get("autonomy"),
+                          repo=raw.get("repo"), autonomy=autonomy.LEGACY.get(raw.get("autonomy"), raw.get("autonomy")),
                           depends_on=[str(d) for d in raw.get("depends_on") or []]))
     return Plan(repo=data.get("repo"), status=data.get("status", "ready"), items=items)
 

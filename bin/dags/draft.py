@@ -30,6 +30,7 @@ from pathlib import Path
 
 import yaml
 
+import autonomy
 from backends.base import (AUTONOMY_PREFIX, AUTONOMY_TIERS, DEFAULT_AUTONOMY, REPO_PREFIX, STATUS_PREFIX,
                            SWARM_STATUSES, TaskRef)
 from dags import gh, seed
@@ -120,7 +121,7 @@ def parse(text: str) -> Draft:
         labels = [labels]
     return Draft(title=m.group(1), body=body,
                  labels=[str(x).strip() for x in labels or [] if str(x).strip()],
-                 autonomy=text_of("autonomy"), repo=text_of("repo"),
+                 autonomy=autonomy.LEGACY.get(text_of("autonomy"), text_of("autonomy")), repo=text_of("repo"),
                  epic=(_refs(data.get("epic"), "epic") or [None])[0],
                  depends_on=_refs(data.get("depends_on"), "depends_on"),
                  status=text_of("status"), url=text_of("url"))

@@ -26,9 +26,9 @@ def texts(rep, kind):
 
 @pytest.fixture
 def pr_open(world):
-    """mac-a's claude worker has opened a PR for T1 (auto-pr)."""
+    """mac-a's claude worker has opened a PR for T1 (self-approve)."""
     world.backend.add("E1", title="Epic", epic=True)
-    world.backend.add("T1", title="Poll", epic_of="E1", labels=["repo:OWNER/app", "swarm:autonomy:auto-pr"])
+    world.backend.add("T1", title="Poll", epic_of="E1", labels=["repo:OWNER/app", "swarm:autonomy:self-approve"])
     world.backend.add("T2", title="Parse", epic_of="E1", blocked_by=["T1"], labels=["repo:OWNER/app", "type:task"])
     a = world.machine("mac-a")
     poller = Poller(a, notify=world.notify)

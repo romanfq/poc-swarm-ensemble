@@ -6,7 +6,7 @@ import workers
 from workers.base import ClaimedTask, applescript_string
 
 TASK = ClaimedTask(key="org/plan#3", short="GH-3", title='Say "hi"', claim_id="mac-a-9",
-                   autonomy="auto-pr", repo="OWNER/app", branch="swarm/GH-3")
+                   autonomy="self-approve", repo="OWNER/app", branch="swarm/GH-3")
 WT = Path("/Users/roman/DAGS/.worktrees/GH 3")
 
 
@@ -17,7 +17,7 @@ def test_registry_and_prompt():
     with pytest.raises(workers.WorkerError):
         workers.resolve_name("emacs")
     assert workers.allowed_for("human-must-scope") == ["intellij", "vscode"]
-    assert workers.allowed_for("auto-pr") == ["claude", "intellij", "vscode"]
+    assert workers.allowed_for("self-approve") == ["claude", "intellij", "vscode"]
     assert isinstance(workers.get("a"), workers.Worker)
 
 

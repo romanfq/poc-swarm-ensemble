@@ -118,7 +118,7 @@ def test_get_task_fields(adapter):
     t = adapter.b.get_task(r["T1"])
     assert t.title == "Poll feed"
     assert "every minute" in t.body
-    assert t.autonomy == "auto-pr"
+    assert t.autonomy == "self-approve"
     assert t.repo == "OWNER/app"
     assert t.epic == r["E1"]
     assert not t.is_epic and not t.closed and not t.done

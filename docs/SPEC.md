@@ -25,7 +25,7 @@ So v2.0 is a rewrite. Three things follow from that:
   aspirational by accident: if the text does not mark a behaviour as outstanding,
   it is in `main` and has a test.
 - **The decisions survive as rationale, not as a diff.** Appendix A is the
-  decisions log, D1–D34, each with the reason it was taken and the chapter it
+  decisions log, D1–D35, each with the reason it was taken and the chapter it
   governs. It no longer pretends to be a changelog against v1.0.
 - **Every factual claim was checked against the code**, not inherited from the
   previous draft. File and line references are to `main` at the time of writing.
@@ -68,7 +68,7 @@ project. v1.1 is superseded.
 
 **Appendices**
 
-- A. Decisions log (D1–D34)
+- A. Decisions log (D1–D35)
 - B. Primer — DAGS in ten minutes
 - C. How-to guides
 - D. Reference
@@ -245,7 +245,7 @@ The port's vocabulary is small and fixed:
 ```python
 SWARM_STATUSES  = ("ready", "claimed", "in-progress",
                    "awaiting-review", "blocked", "done")
-AUTONOMY_TIERS  = ("auto-pr", "human-must-review", "human-must-scope")
+AUTONOMY_TIERS  = ("self-approve", "human-must-review", "human-must-scope")
 DEFAULT_AUTONOMY = "human-must-review"
 PLAN_SCOPES     = ("labelled", "all")
 DEFAULT_PLAN_SCOPE = "labelled"
@@ -930,7 +930,7 @@ distinguished because they mean different things: `lost-race`,
 `no-worker-chosen`, `quota` and `dispatch-failed`. Expiry is the exception — it
 writes nothing, because it is computed rather than performed (§6.5).
 
-Repeated failure on one task lowers its autonomy tier by one step — `auto-pr` to
+Repeated failure on one task lowers its autonomy tier by one step — `self-approve` to
 `human-must-review` to `human-must-scope` — on the grounds that a task three
 agents could not finish is a task whose framing needs a human. The threshold
 scales with how many times it has already been lowered
@@ -951,7 +951,7 @@ says, and the only CLI reset writes the tracker label. The specified behaviour i
 a `task set-autonomy` command, with **the ledger as the source of truth and the
 tracker label following it** (D30).
 
-**A plan-level question drops a task out of `auto-pr` for that run** (D30,
+**A plan-level question drops a task out of `self-approve` for that run** (D30,
 `#45`). When a worker records `needs_human` about its plan, the self-approval is
 cleared and the plan goes through the normal review gate, because a plan written
 against a wrong assumption should not reach a pull request unreviewed. The
@@ -1003,7 +1003,7 @@ progress is write a record a human can refuse.
 writes `plan.md`, submits it, and may not implement until a recognised human has
 approved it. `work.finish` refuses outright if the plan is not approved, so the
 gate is enforced at the end as well as at the start — an agent that ignored the
-instruction still cannot open a pull request. An `auto-pr` task self-approves on
+instruction still cannot open a pull request. A `self-approve` task self-approves on
 submit, which is what that tier means.
 
 **The merge gate.** The swarm never merges. `done` pushes a branch and opens a
@@ -1261,7 +1261,7 @@ by every test (`conftest.py`, the fakes) always mean `full`.
 The flow is a conversation, not a guess: `swarm-task test --propose` records a
 proposal and a question, a human answers from the Board (`x`) or with
 `task answer-tests --scope`, and `swarm-task test` then runs only that scope and
-refuses to run before an answer exists. An `auto-pr` task may accept its own
+refuses to run before an answer exists. A `self-approve` task may accept its own
 proposal.
 
 **The default is still the full suite**, and that is specified to change (`#59`).
@@ -1352,7 +1352,7 @@ each step.
    a human which worker, unless a default is configured.
 6. **The worker plans.** `swarm-task plan` writes `plan.md` from the ticket and
    from whatever a previous attempt recorded; `--submit` puts it in the
-   checkpoint and, on an `auto-pr` task, self-approves it (§9.1).
+   checkpoint and, on an `self-approve` task, self-approves it (§9.1).
 7. **A human reviews the plan** on the Board, or sends it back with a note
    (§9.2). The worker waits on that outcome rather than polling (§9.3).
 8. **The worker implements**, recording what it tried and what remains as it goes,
@@ -1393,7 +1393,7 @@ the time of writing. Each entry names the issue that will build it.
 | Machine control | A deliberate `start` clears a pause | `#30` | §8.1 |
 | Machine control | `start` without an explicit share keeps the last throttle | `#61` | §8.1 |
 | Autonomy | `task set-autonomy`; the ledger is authoritative and the label mirrors it | `#45` | §8.3 |
-| Autonomy | A plan-level question drops a task out of `auto-pr` for that run only | `#45` | §8.3 |
+| Autonomy | A plan-level question drops a task out of `self-approve` for that run only | `#45` | §8.3 |
 | Autonomy | Lease expiry caused by a machine going away does not count as failure | `#14` territory | §6.5, §8.3 |
 | Tests | `done` runs the `targeted` scope by default; `--scope` widens it; the scope is recorded and stated in the pull request | `#59` | §11.2 |
 | Tests | Scopes are passed as paths, not filters; parallelism only on the full scope; a venv build announces itself | `#59` | §11.2, §5.2 |
@@ -1489,7 +1489,7 @@ not to build it.
 | D9 | The **global cap N lives in `quota/` records**; the latest from a recognised human wins; the default comes from `backend.yaml`. | N has to be changeable at runtime by any human, from any machine. | 7.1 | Done |
 | D10 | A task's code repository is its `repo:` label, else the epic's, else `default_repo`. One repository per task. | Neither tracker has a field for a target repository. | 3.3, 3.5 | Done |
 | D11 | **Plan sync** mirrors the tracker into `tasks/` every cycle. Done means the pull request merged. Readiness is the backend's rule **and** the ledger's. | Nothing in the original design said who creates task files or who marks a task done. | 3, 7.4, 12 | Done |
-| D12 | **Autonomy tiers:** `auto-pr` self-approves its plan, `human-must-review` needs a human approval, `human-must-scope` is never given to an AI worker. Repeated failure drops the tier one step. | The tiers were named but their behaviour was undefined. | 7.3, 8.3, 9.1 | Done |
+| D12 | **Autonomy tiers:** `self-approve` self-approves its plan, `human-must-review` needs a human approval, `human-must-scope` is never given to an AI worker. Repeated failure drops the tier one step. | The tiers were named but their behaviour was undefined. | 7.3, 8.3, 9.1 | Done |
 | D13 | **Idle limit:** no progress for `human_idle_hours` prompts "still working?", for every worker type. | The daemon heartbeats on the worker's behalf, so an abandoned IDE would otherwise hold a claim indefinitely. | 8.6 | Done |
 | D14 | `done` runs the repository's tests and refuses on failure; merge refuses only on *failing* checks. | Written when there was no CI, so a pull request usually had no checks at all. Superseded in part by Chapter 11. | 11.3 | Done |
 | D15 | Corrections to the originally published commands. | The commands as first written did not run. | — | Done |
@@ -1507,11 +1507,12 @@ not to build it.
 | D27 | **One coordination repository per swarm, holding no product code.** | Ledger commits swamped a code history, branch protection blocked the daemon's pushes outright, and a worker's worktree sat inside the live ledger. | 4.6 | Done |
 | D28 | **The tracker is a human input surface.** `swarm:status:ready` means "a human says this may be worked"; computed readiness is never written back; labels that have stopped applying are retired on completion. | The alternative makes the tracker self-describing at the cost of a write loop that drifts when sync fails. The tracker stays the place humans state intent. | 3.2 | Specified |
 | D29 | **A "Request changes" review binds; a comment from a recognised human surfaces without reopening.** | Discussion and instruction are different acts. Conflating them makes every passing remark into work; ignoring comments entirely loses real feedback, so they are shown instead. | 9.4 | Partly done |
-| D30 | **The ledger is the source of truth for autonomy**, and the tracker label mirrors it. A plan-level question drops a task out of `auto-pr` **for that run only**; a downgrade can be undone. | A downgrade recorded in the ledger already beat the label, with no way to reverse it — so a single question could permanently change a task's tier. | 8.3 | Specified |
+| D30 | **The ledger is the source of truth for autonomy**, and the tracker label mirrors it. A plan-level question drops a task out of `self-approve` **for that run only**; a downgrade can be undone. | A downgrade recorded in the ledger already beat the label, with no way to reverse it — so a single question could permanently change a task's tier. | 8.3 | Specified |
 | D31 | **Liveness lives outside the branch**, in `refs/dags/live/<machine>`, migrated by dual-read. | Heartbeats were half of all ledger commits and have no historical value. Moving them makes commit volume a function of work rather than time, and lets beats get *more* frequent with a shorter lease. | 4.5 | Specified |
 | D32 | **Worktrees live in the code repository's checkout**, kept out of git by `info/exclude`, with a per-repo override. | Inside the coordination repository, an agent walked up the tree into the swarm's own rules. Outside both repositories, project ancestry resolves to nothing and then to `$HOME`. | 7.3 | Specified |
 | D33 | **Nothing upgrades itself.** `bin/` in a coordination repository is a pinned copy; a merged change takes effect only when a human copies it in and restarts each machine. | A swarm that edits the protocol it is running would otherwise rewrite itself mid-flight, and a bad merge would break every machine at once. | 5.6 | Done |
 | D34 | **Filing an issue is a form, not a prompt.** A draft file (frontmatter, H1 title, body) is the whole input; `backend file` and the Board composer are two front ends onto one validate, diff, confirm, file, `plan sync` path. It makes the Board a tracker-*writing* tool, which is consistent with D28 (a human pressing a key is still the human), and it files with the operator's own `gh` login, not the worker bot's. It never sets an issue ready. | The same prompt was pasted into a terminal session each time, putting a language model in front of an irreversible external write. Authorship of an issue carries no approval constraint (D2b), so it should read as the person who filed it. | 10.3 | Done |
+| D35 | **`auto-pr` is renamed `self-approve`.** The tier means the worker approves its own plan and test scope; the PR is opened and reviewed by a human in every tier. Readers accept both names (`autonomy.canonical`), writers use only the new one, and the append-only ledger and existing `swarm:autonomy:auto-pr` labels are not rewritten. `backend init` creates the new label and leaves the old one. Renaming the other two tiers is #115. | The old name read as "the PR is automatic", the opposite of the protocol's guarantee. | 7.3, 8.3, 9.1 | Done |
 
 \newpage
 
@@ -1805,7 +1806,7 @@ Called by `.swarm-task/swarm-task`, rarely by hand.
 
 | Command | What it does |
 |---|---|
-| `task submit-plan KEY --file F` | Record the plan; self-approve if `auto-pr` |
+| `task submit-plan KEY --file F` | Record the plan; self-approve if the tier is `self-approve` |
 | `task note KEY [--summary] [--tried] [--remaining] [--question] [--risk]` | Update the checkpoint |
 | `task block KEY "question"` | Ask a human and stop |
 | `task propose-tests KEY --worktree W [--accept]` | Propose a test scope from the diff |
@@ -1855,7 +1856,7 @@ A plan review or arbitration naming anyone else is ignored (D16).
 | Label | Values |
 |---|---|
 | `swarm:status:` | `ready`, `claimed`, `in-progress`, `awaiting-review`, `blocked`, `done` |
-| `swarm:autonomy:` | `auto-pr`, `human-must-review`, `human-must-scope` |
+| `swarm:autonomy:` | `self-approve`, `human-must-review`, `human-must-scope` |
 | `repo:` | `OWNER/NAME` |
 | `type:` | `epic`, `task` |
 

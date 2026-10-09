@@ -8,7 +8,7 @@ backend.yaml:
 fake-backend.yaml:
     issues:
       E1: {title: Ingestion, epic: true}
-      T1: {title: Poll feed, epic_of: E1, repo: OWNER/app, labels: [swarm:autonomy:auto-pr]}
+      T1: {title: Poll feed, epic_of: E1, repo: OWNER/app, labels: [swarm:autonomy:self-approve]}
       T2: {title: Parse feed, epic_of: E1, blocked_by: [T1], labels: [type:task]}
 
 Only issues with a ``swarm:`` or ``type:`` label (or a ``status``), and their
@@ -19,6 +19,7 @@ from __future__ import annotations
 import threading
 from pathlib import Path
 
+import autonomy
 from backends.base import (AUTONOMY_PREFIX, DEFAULT_AUTONOMY, DEFAULT_PLAN_SCOPE, STATUS_PREFIX,
                            Comment, PlanScoped, Task, TaskRef, parse_labels, plan_scope_of)
 from dags import records as R
@@ -89,6 +90,7 @@ class FakeBackend(PlanScoped):
             self._save(issues)
 
     def set_autonomy(self, ref: TaskRef, tier: str) -> None:
+        tier = autonomy.canonical(tier)
         with _lock:
             issues = self._load()
             labels = [x for x in issues[ref.key].get("labels") or [] if not x.startswith(AUTONOMY_PREFIX)]

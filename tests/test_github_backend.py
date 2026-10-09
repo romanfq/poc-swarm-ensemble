@@ -101,6 +101,7 @@ def test_init_commands_cover_all_labels(gh_fake):
     assert "swarm:autonomy:human-must-scope" in names
     assert "type:epic" in names and "repo:OWNER/app" in names
     assert all("--force" in c for c in cmds)
+    assert "swarm:autonomy:self-approve" in names and "swarm:autonomy:auto-pr" not in names   # GH-114
     assert "type:epic" not in [c[2] for c in GitHubBackend("acme/plan", use_issue_types=True).init_commands([])]
 
 

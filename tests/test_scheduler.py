@@ -20,7 +20,7 @@ def _plan(world, *tasks):
 
 
 def test_claims_prepares_and_asks_for_a_worker(world):
-    _plan(world, ("T1", {"labels": ["swarm:autonomy:auto-pr"]}))
+    _plan(world, ("T1", {"labels": ["swarm:autonomy:self-approve"]}))
     a = world.machine("mac-a")
     rep = world.scheduler(a).cycle()
     assert rep.claimed == ["T1"] and rep.awaiting_worker == ["T1"] and not rep.errors
@@ -559,7 +559,7 @@ def _cli(monkeypatch, ctx, *args):
 
 
 def test_park_keeps_the_task_out_until_unparked(world, monkeypatch):
-    _plan(world, ("T1", {"labels": ["swarm:autonomy:auto-pr"]}))
+    _plan(world, ("T1", {"labels": ["swarm:autonomy:self-approve"]}))
     a = world.machine("mac-a")
     world.scheduler(a).cycle()
     d = rv.index(a.root)["T1"]
@@ -608,16 +608,16 @@ def test_set_autonomy_is_live_without_plan_sync(world, monkeypatch):
     world.scheduler(a).cycle()
     d = rv.index(a.root)["T1"]
     assert "human workers only" in world.notes[-1][1]
-    r = _cli(monkeypatch, a, "task", "set-autonomy", "T1", "auto-pr", "--reason", "scoped by hand")
+    r = _cli(monkeypatch, a, "task", "set-autonomy", "T1", "self-approve", "--reason", "scoped by hand")
     assert r.exit_code == 0, r.output
-    assert rv.read_meta(d)["autonomy"] == "auto-pr"
-    assert world.backend.get_task(TaskRef("T1")).autonomy == "auto-pr"
+    assert rv.read_meta(d)["autonomy"] == "self-approve"
+    assert world.backend.get_task(TaskRef("T1")).autonomy == "self-approve"
     work.release(a, d)
     world.scheduler(a, run_plan_sync=False).cycle()
     assert "human workers only" not in world.notes[-1][1]
     # same tier again: nothing to write, and it says so
-    r = _cli(monkeypatch, a, "task", "set-autonomy", "T1", "auto-pr")
-    assert r.exit_code == 0 and "already auto-pr" in r.output
+    r = _cli(monkeypatch, a, "task", "set-autonomy", "T1", "self-approve")
+    assert r.exit_code == 0 and "already self-approve" in r.output
 
 
 def test_set_autonomy_rejects_unknown_tier_and_reports_a_ledger_failure(world, monkeypatch):
@@ -643,7 +643,7 @@ def test_feed_names_parks_and_tier_changes(world):
     a = world.machine("mac-a")
     world.scheduler(a).cycle()
     d = rv.index(a.root)["T1"]
-    actions.set_autonomy(a, d, "auto-pr", "scoped")
+    actions.set_autonomy(a, d, "self-approve", "scoped")
     actions.park(a, d, "waiting")
     actions.unpark(a, d)
     text = "\n".join(e.text for e in feed.all_events(a.root))

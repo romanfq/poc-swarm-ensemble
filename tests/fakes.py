@@ -14,7 +14,7 @@ PLAN = {
     "E1": {"title": "Ingestion", "epic": True},
     "E2": {"title": "Frontend", "epic": True, "status": "blocked"},
     "T0": {"title": "Schema", "parent": "E1", "closed": True, "status": "done"},
-    "T1": {"title": "Poll feed", "parent": "E1", "autonomy": "auto-pr", "repo": "OWNER/app",
+    "T1": {"title": "Poll feed", "parent": "E1", "autonomy": "self-approve", "repo": "OWNER/app",
            "body": "Poll the feed every minute.", "status": "ready"},
     "T2": {"title": "Parse feed", "parent": "E1", "deps": ["T1"], "status": "ready"},
     "T3": {"title": "Blocked one", "parent": "E1", "status": "blocked"},

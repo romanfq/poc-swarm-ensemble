@@ -21,7 +21,7 @@ change and how you'll test it. Then submit it:
 
     .swarm-task/swarm-task plan --submit
 
-- **auto-pr** tasks: you may approve your own plan, so you can go straight on.
+- **self-approve** tasks: you may approve your own plan, so you can go straight on.
 - **human-must-review** tasks: wait until a human approves the plan on the
   Swarm Board (or with `swarm.py task approve-plan`). Then run
   `.swarm-task/swarm-task wait --for approved`. It blocks cheaply and returns when

@@ -233,8 +233,8 @@ def test_test_scope_status(ledger):
                                                "scope": "neighbours", "human": "roman"})
     st = rv.test_scope_status(d, {"roman"})
     assert st["status"] == "answered" and st["answer"]["scope"] == "neighbours"
-    # on an auto-pr task the worker's own acceptance counts
-    auto = ledger.task("T2", autonomy="auto-pr")
+    # on an self-approve task the worker's own acceptance counts
+    auto = ledger.task("T2", autonomy="self-approve")
     R.write_new(auto / "test-scope" / "q1.yaml", {"kind": "question", "proposal_id": "m-1", "logical_clock": 1})
     R.write_new(auto / "test-scope" / "a1.yaml", {"kind": "answer", "proposal_id": "m-1", "logical_clock": 2,
                                                   "scope": "targeted", "self_accepted": True})
