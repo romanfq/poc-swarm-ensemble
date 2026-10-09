@@ -374,7 +374,14 @@ def backend_ready(ledger_only: bool = typer.Option(False, "--ledger", help="Also
         ready = {t.key for t in snap.ready}
         refs = [r for r in refs if r.key in ready]
     for r in refs:
-        typer.echo(r.key)
+        d = resolve.lookup(c.root, r.key)
+        state = None
+        if d is not None:
+            state = resolve.task_state(d, timeutil.now(), c.settings.lease_s, c.human_names)
+        if state in (None, "open"):
+            typer.echo(r.key)
+        else:
+            typer.echo(f"{r.key} ({state})")
 
 
 @backend_app.command("set-status")

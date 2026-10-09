@@ -92,6 +92,15 @@ def test_freeze_and_unfreeze(ledger):
     assert rv.ledger_ready(ledger.root, t, at(0), LEASE, HUMANS)
 
 
+def test_parked_task_reports_the_real_state(ledger):
+    t = ledger.task("T1", autonomy="human-must-scope")
+    ledger.claim(t, "mac-a", 10)
+    ledger.withdraw(t, "mac-a", 10, reason="no-worker-chosen", wclock=11)
+    assert rv.parked(t)
+    assert rv.task_state(t, at(0), LEASE) == "parked"
+    assert not rv.ledger_ready(ledger.root, t, at(0), LEASE)
+
+
 def test_dependencies_gate_readiness(ledger):
     a = ledger.task("A")
     b = ledger.task("B", deps=["A"])
