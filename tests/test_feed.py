@@ -43,11 +43,11 @@ def test_plan_submitted_approved_and_sent_back(world):
 
 
 def test_self_approved_plan(world):
-    _task(world, autonomy="auto-pr")
+    _task(world, autonomy="self-approve")
     a = world.machine("mac-a")
     world.scheduler(a, worker="claude").cycle()
     work.submit_plan(a, rv.index(a.root)["T1"], "plan")
-    assert "claude submitted a plan for T1 (mac-a) — self-approved (auto-pr)" in _lines(a)
+    assert "claude submitted a plan for T1 (mac-a) — self-approved (self-approve)" in _lines(a)
 
 
 def test_event_shares_the_checkpoint_commit_and_clock(world):

@@ -22,6 +22,7 @@ try:  # typer >= 0.17 vendors click; older typer depends on the real package
 except ImportError:  # pragma: no cover - typer < 0.17
     import click
 
+import autonomy as autonomy_names
 import resolve
 from backends.base import AUTONOMY_TIERS, SWARM_STATUSES, TaskRef
 from dags import actions, boardview, daemon, feed, gh, panel, plan, prereqs, repos, snapshot, timeutil, work
@@ -429,8 +430,11 @@ def backend_adopt(key: str,
     """Bring one issue into the plan: label it swarm:status:ready (and type:task)."""
     c = ctx()
     b = c.backend
-    if autonomy is not None and autonomy not in AUTONOMY_TIERS:
-        fail(f"--autonomy must be one of {', '.join(AUTONOMY_TIERS)}")
+    if autonomy is not None:
+        try:
+            autonomy = autonomy_names.canonical(autonomy)
+        except ValueError as e:
+            fail(f"--autonomy: {e}")
     ref = _ref_for(key)
     t = b.get_task(ref)
     in_plan = getattr(b, "in_plan", None)
@@ -816,7 +820,7 @@ def task_block(key: str, question: str):
 @task_app.command("propose-tests")
 @guarded
 def task_propose_tests(key: str, worktree_path: Path = typer.Option(..., "--worktree", exists=True, file_okay=False),
-                       accept: bool = typer.Option(False, "--accept", help="auto-pr only: take the recommendation.")):
+                       accept: bool = typer.Option(False, "--accept", help="self-approve only: take the recommendation.")):
     """Map the diff to tests, record the question and print the options (swarm-task test --propose)."""
     from dags import testscope
     d = task_dir(key)

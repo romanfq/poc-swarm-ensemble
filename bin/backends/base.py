@@ -8,8 +8,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import NamedTuple, Protocol, runtime_checkable
 
+import autonomy
+
 SWARM_STATUSES = ("ready", "claimed", "in-progress", "awaiting-review", "blocked", "done")
-AUTONOMY_TIERS = ("auto-pr", "human-must-review", "human-must-scope")
+AUTONOMY_TIERS = autonomy.TIERS
 DEFAULT_AUTONOMY = "human-must-review"
 
 STATUS_PREFIX = "swarm:status:"
@@ -191,19 +193,20 @@ class PlanScoped:
 def parse_labels(labels: list[str]) -> dict:
     """Pull swarm fields out of plain labels (Ch.3.2/3.3)."""
     status = None
-    autonomy = None
+    autonomy_ = None
     repo = None
     kind = None
     for name in labels:
         if name.startswith(STATUS_PREFIX):
             status = name[len(STATUS_PREFIX):]
         elif name.startswith(AUTONOMY_PREFIX):
-            autonomy = name[len(AUTONOMY_PREFIX):]
+            tier = name[len(AUTONOMY_PREFIX):]
+            autonomy_ = autonomy.LEGACY.get(tier, tier)
         elif name.startswith(REPO_PREFIX):
             repo = name[len(REPO_PREFIX):]
         elif name in ("type:epic", "type:task"):
             kind = name.split(":", 1)[1]
-    return {"status": status, "autonomy": autonomy if autonomy in AUTONOMY_TIERS else None,
+    return {"status": status, "autonomy": autonomy_ if autonomy_ in AUTONOMY_TIERS else None,
             "repo": repo, "kind": kind}
 
 

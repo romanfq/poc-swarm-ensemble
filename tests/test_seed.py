@@ -30,7 +30,7 @@ tasks:
     epic: BE
     title: Feature A
     repo: acme/api
-    autonomy: auto-pr
+    autonomy: self-approve
     depends_on: [S1]
   - id: B
     epic: FE
@@ -73,7 +73,7 @@ def test_dry_run_writes_nothing(world):
     assert d.count("create") == 5 and d.count("parent") == 3 and d.count("depends") == 3
     assert d.count("label") == len(b.required_labels(REPOS))
     lines = d.lines(b.short_key)
-    assert any(line.startswith("create  task A: Feature A") and "swarm:autonomy:auto-pr" in line
+    assert any(line.startswith("create  task A: Feature A") and "swarm:autonomy:self-approve" in line
                for line in lines)
     assert "depends B (new) blocked by A (new)" in lines
 
@@ -87,7 +87,7 @@ def test_apply_creates_everything_in_order(world):
     assert list(ids) == ["BE", "FE", "S1", "A", "B"]          # epics, then dependency order
     assert refs["A"].key == f"acme/plan#{ids['A']}"
     a, bb, be = fake.issues[ids["A"]], fake.issues[ids["B"]], fake.issues[ids["BE"]]
-    assert set(a["labels"]) == {"swarm:status:ready", "swarm:autonomy:auto-pr", "repo:acme/api", "type:task"}
+    assert set(a["labels"]) == {"swarm:status:ready", "swarm:autonomy:self-approve", "repo:acme/api", "type:task"}
     assert "swarm:autonomy:human-must-review" in fake.issues[ids["S1"]]["labels"]   # default tier
     assert be["labels"] == ["type:epic"] and be["body"].startswith("Backend work.")
     assert a["parent"] == ids["BE"] and bb["parent"] == ids["FE"]
@@ -235,7 +235,7 @@ def test_matchwire_plan_is_valid():
         for dep in item.depends_on:
             assert order.index(dep) < order.index(item.id)
     tiers = {i.id: i.autonomy for i in plan.items if not i.is_epic}
-    assert tiers["E7"] == "human-must-scope" and tiers["E12"] == "auto-pr"
+    assert tiers["E7"] == "human-must-scope" and tiers["E12"] == "self-approve"
     assert len(tiers) == 18
 
 

@@ -19,6 +19,7 @@ import threading
 import time
 from pathlib import Path
 
+import autonomy
 import resolve
 import workers
 from backends.base import TaskRef
@@ -441,7 +442,7 @@ def submit_plan(ctx, task_dir: Path, plan_md: str) -> str:
     meta = resolve.read_meta(task_dir)
     sha = plan_sha(plan_md)
     fields = {"plan_md": plan_md, "plan_sha": sha, "needs_human": None}
-    self_approved = meta.get("autonomy") == "auto-pr"
+    self_approved = autonomy.is_self_approve(meta.get("autonomy"))
     if self_approved:
         fields["plan_self_approved"] = sha            # self-review allowed (plan §2.8)
     cp = L.read_checkpoint(task_dir)
@@ -505,7 +506,7 @@ def block(ctx, task_dir: Path, question: str) -> None:
     flush_note_queue(ctx)
     claim_id = my_claim(ctx, task_dir)
     meta = resolve.read_meta(task_dir)
-    if meta.get("autonomy") == "auto-pr":
+    if autonomy.is_self_approve(meta.get("autonomy")):
         _try_backend(ctx, ctx.backend.set_autonomy, _ref(task_dir), "human-must-review")
         L.set_autonomy(ctx, task_dir, "human-must-review", f"plan question: {question}", human=str(ctx.operator))
     url = _post(ctx, task_dir, f"{BLOCK_MARKER.format(claim=claim_id)}\n"
@@ -604,11 +605,11 @@ def answer_tests(ctx, task_dir: Path, scope: str, targeted_enough: bool = False,
 
 
 def accept_tests(ctx, task_dir: Path) -> str:
-    """auto-pr only: the worker takes its own recommendation, as it may with a plan. Never
+    """self-approve only: the worker takes its own recommendation, as it may with a plan. Never
     lets ``done`` skip the full suite; only a human answer does."""
     my_claim(ctx, task_dir)
-    if resolve.read_meta(task_dir).get("autonomy") != "auto-pr":
-        raise WorkError(f"{resolve.label(task_dir)} is not auto-pr: a human has to answer the test question")
+    if not autonomy.is_self_approve(resolve.read_meta(task_dir).get("autonomy")):
+        raise WorkError(f"{resolve.label(task_dir)} is not self-approve: a human has to answer the test question")
     status = resolve.test_scope_status(task_dir, ctx.human_names)
     if not status:
         raise WorkError("ask first: swarm-task test --propose")

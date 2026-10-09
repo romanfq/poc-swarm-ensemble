@@ -7,7 +7,7 @@ so the same mistake doesn't come back on a different task.
 ## Process
 
 1. `swarm-task plan` — write `.swarm-task/plan.md`. Don't write code yet.
-2. Get the plan reviewed (by yourself for `auto-pr` tasks, by a human otherwise).
+2. Get the plan reviewed (by yourself for `self-approve` tasks, by a human otherwise).
 3. `swarm-task implement` — work against the plan and record progress with `swarm-task note`.
 4. `swarm-task done` — commits, pushes and opens the PR. Never run `gh pr merge`.
 

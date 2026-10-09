@@ -84,10 +84,12 @@ def park(ctx, task_dir: Path, reason: str) -> None:
 def set_autonomy(ctx, task_dir: Path, tier: str, reason: str = "") -> str:
     """Change a task's autonomy tier through the backend and the ledger together (D30), so
     the next scheduler cycle sees it without a ``plan sync``. Safe to re-run."""
-    from backends.base import AUTONOMY_TIERS
+    import autonomy
     human = require_known_human(ctx)
-    if tier not in AUTONOMY_TIERS:
-        raise ActionError(f"autonomy must be one of {', '.join(AUTONOMY_TIERS)}")
+    try:
+        tier = autonomy.canonical(tier)
+    except ValueError as e:
+        raise ActionError(str(e)) from e
     label = resolve.label(task_dir)
     ref = TaskRef(str(resolve.read_meta(task_dir)["key"]))
     try:

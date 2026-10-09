@@ -14,7 +14,7 @@ from dags import ledger as L
 def awaiting(world):
     world.backend.add("E1", title="Epic", epic=True)
     world.backend.add("T1", title="Poll the feed", epic_of="E1", body="Poll it.",
-                      labels=["repo:OWNER/app", "swarm:autonomy:auto-pr"])
+                      labels=["repo:OWNER/app", "swarm:autonomy:self-approve"])
     a = world.machine("mac-a")
     world.scheduler(a).cycle()                       # claims T1; no default worker, so it awaits one
     work.drain()
@@ -144,7 +144,7 @@ def test_the_event_and_the_feed_carry_the_elapsed_time(awaiting):
 
 def test_a_launch_failure_still_ends_in_dispatch_failed(world):
     world.backend.add("E1", title="Epic", epic=True)
-    world.backend.add("T1", title="Poll", epic_of="E1", labels=["repo:OWNER/app", "swarm:autonomy:auto-pr"])
+    world.backend.add("T1", title="Poll", epic_of="E1", labels=["repo:OWNER/app", "swarm:autonomy:self-approve"])
     a = world.machine("mac-a")
 
     def broken(cmd):

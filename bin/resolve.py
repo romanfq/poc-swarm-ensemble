@@ -20,6 +20,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterable
 
+import autonomy
 from dags import records as R
 from dags import timeutil
 
@@ -557,7 +558,7 @@ def race_history(task_dir) -> dict[str, int]:
 def plan_status(task_dir, humans: set[str] | None = None) -> str | None:
     """None (no plan yet) | pending-review | changes-requested | approved.
     The plan itself lives in checkpoint.yaml (plan_sha); approvals are
-    append-only records from humans, or self-review for auto-pr tasks."""
+    append-only records from humans, or self-review for self-approve tasks."""
     cp = R.load_yaml(Path(task_dir) / "checkpoint.yaml")
     sha = cp.get("plan_sha")
     if not sha:
@@ -581,7 +582,7 @@ def plan_status(task_dir, humans: set[str] | None = None) -> str | None:
 def test_scope_status(task_dir, humans: set[str] | None = None) -> dict | None:
     """None (never asked) or ``{"status": "pending" | "answered", "proposal_id", "proposal",
     "answer"}`` for the latest question. An answer counts when it names that question and comes
-    from a known human, or, on an auto-pr task, is the worker accepting its own recommendation."""
+    from a known human, or, on a self-approve task, is the worker accepting its own recommendation."""
     records = _sorted_records(Path(task_dir) / "test-scope")
     question = qname = None
     for path, d in records:
@@ -590,7 +591,7 @@ def test_scope_status(task_dir, humans: set[str] | None = None) -> dict | None:
     if question is None:
         return None
     pid = question.get("proposal_id")
-    auto = read_meta(task_dir).get("autonomy") == "auto-pr"
+    auto = autonomy.is_self_approve(read_meta(task_dir).get("autonomy"))
     answer = aname = None
     for path, d in records:
         if d.get("kind") != "answer" or d.get("proposal_id") != pid:
@@ -697,7 +698,7 @@ def worker_events(task_dir, claim_id: str, machine: str, now: datetime, lease_s:
             elif d.get("decision") == "approved":
                 add("plan-approved", path.name, f"{who} approved the plan.{note} Next: `swarm-task implement`.")
         if cp.get("plan_self_approved") == sha and not cp.get("needs_human"):
-            add("plan-approved", sha, "The plan is approved (auto-pr). Next: `swarm-task implement`.")
+            add("plan-approved", sha, "The plan is approved (self-approve). Next: `swarm-task implement`.")
         # only the latest decision counts
         decided = [e for e in out if e["kind"].startswith("plan-")]
         for e in decided[:-1]:

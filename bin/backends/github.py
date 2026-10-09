@@ -21,6 +21,7 @@ import re
 import threading
 import time
 
+import autonomy
 from backends.base import (AUTONOMY_PREFIX, AUTONOMY_TIERS, DEFAULT_AUTONOMY, DEFAULT_PLAN_SCOPE,
                            REPO_PREFIX, STATUS_PREFIX, SWARM_STATUSES, Comment, PlanScoped, Task, TaskRef,
                            parse_labels, plan_scope_of)
@@ -276,8 +277,7 @@ class GitHubBackend(PlanScoped):
         self.invalidate()
 
     def set_autonomy(self, ref: TaskRef, tier: str) -> None:
-        if tier not in AUTONOMY_TIERS:
-            raise ValueError(f"unknown autonomy tier {tier!r}")
+        tier = autonomy.canonical(tier)
         self._swap_label(ref, AUTONOMY_PREFIX, tier)
 
     def post_comment(self, ref: TaskRef, text: str) -> str | None:

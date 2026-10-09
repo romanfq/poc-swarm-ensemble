@@ -43,7 +43,7 @@ def test_skill_help_runs_without_context(tmp_path):
 def test_plan_implement_done_via_the_skill(world, tmp_path, monkeypatch):
     pytest.importorskip("typer")
     pytest.importorskip("rich")
-    world.backend.add("T1", title="Poll the feed", labels=["repo:OWNER/app", "swarm:autonomy:auto-pr"])
+    world.backend.add("T1", title="Poll the feed", labels=["repo:OWNER/app", "swarm:autonomy:self-approve"])
     a = world.machine("mac-a")
     (a.root / "fake-backend.yaml").symlink_to(world.backend.path)
     ghbin = tmp_path / "ghbin"

@@ -14,7 +14,7 @@ def world(swarm, tmp_path):
     backend = FakeBackend(tmp_path / "shared-backend.yaml")
     backend.add("E1", title="Ingestion", epic=True)
     backend.add("T0", title="Schema", epic_of="E1", closed=True, status="done")
-    backend.add("T1", title="Poll", epic_of="E1", labels=["swarm:autonomy:auto-pr", "repo:OWNER/app"])
+    backend.add("T1", title="Poll", epic_of="E1", labels=["swarm:autonomy:self-approve", "repo:OWNER/app"])
     backend.add("T2", title="Parse", epic_of="E1", blocked_by=["T1", "T0"], labels=["type:task"])
     backend.add("T9", title="Old closed", closed=True)
     a, b = swarm.clone("mac-a"), swarm.clone("mac-b")
@@ -32,7 +32,7 @@ def test_import_creates_meta_and_done_records(world):
     assert idx["T1"] == a.root / "tasks" / "E1" / "T1"
     assert idx["E1"] == a.root / "tasks" / "E1" / "_epic"
     meta = rv.read_meta(idx["T1"])
-    assert meta["repo"] == "OWNER/app" and meta["autonomy"] == "auto-pr" and meta["short"] == "T1"
+    assert meta["repo"] == "OWNER/app" and meta["autonomy"] == "self-approve" and meta["short"] == "T1"
     assert rv.read_meta(idx["T2"])["repo"] == "OWNER/app"          # default_repo
     assert rv.read_meta(idx["T2"])["dependencies"] == ["T1", "T0"]
     now = timeutil.now()

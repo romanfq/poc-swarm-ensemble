@@ -61,7 +61,7 @@ def _describe_event(task: str, who: str, machine: str, data: dict) -> str | None
     k = data.get("kind")
     worker = data.get("worker") or "the worker"
     if k == "plan-submitted":
-        tail = "self-approved (auto-pr)" if data.get("self_approved") else "waiting for review"
+        tail = "self-approved (self-approve)" if data.get("self_approved") else "waiting for review"
         return f"{worker} submitted a plan for {task} ({machine}) — {tail}"
     if k == "needs-human":
         return f"{task} needs a human decision{_quote(data.get('question'))}"

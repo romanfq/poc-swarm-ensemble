@@ -50,8 +50,8 @@ def test_plan_gate_for_human_must_review(claimed):
     assert work.implement_gate(a, d)["allowed"]
 
 
-def test_auto_pr_self_approves(world):
-    world.backend.add("T9", title="x", labels=["repo:OWNER/app", "swarm:autonomy:auto-pr"])
+def test_self_approve_self_approves(world):
+    world.backend.add("T9", title="x", labels=["repo:OWNER/app", "swarm:autonomy:self-approve"])
     a = world.machine("mac-a")
     world.scheduler(a, worker="claude").cycle()
     d = rv.index(a.root)["T9"]
@@ -59,8 +59,8 @@ def test_auto_pr_self_approves(world):
     assert world.backend.comments(TaskRef("T9")) == []
 
 
-def test_auto_pr_drops_to_human_review_when_plan_question_is_raised(world):
-    world.backend.add("T9", title="x", labels=["repo:OWNER/app", "swarm:autonomy:auto-pr"])
+def test_self_approve_drops_to_human_review_when_plan_question_is_raised(world):
+    world.backend.add("T9", title="x", labels=["repo:OWNER/app", "swarm:autonomy:self-approve"])
     a = world.machine("mac-a")
     world.scheduler(a, worker="claude").cycle()
     d = rv.index(a.root)["T9"]
@@ -275,7 +275,7 @@ def test_tests_refuse_before_an_answer(claimed):
 def test_the_worker_cannot_answer_for_a_human_on_human_must_review(claimed):
     world, a, d, wt = claimed
     _ask(a, d, wt)
-    with pytest.raises(work.WorkError, match="not auto-pr"):
+    with pytest.raises(work.WorkError, match="not self-approve"):
         work.accept_tests(a, d)
     from dags.config import ConfigError
     mallory = world.machine("mal-mac", human="mallory")
@@ -296,8 +296,8 @@ def test_only_the_answered_scope_runs(claimed):
     assert scope == "full" and ran == ["true"]
 
 
-def test_auto_pr_may_accept_its_own_recommendation(world):
-    world.backend.add("T9", title="x", labels=["repo:OWNER/app", "swarm:autonomy:auto-pr"])
+def test_self_approve_may_accept_its_own_recommendation(world):
+    world.backend.add("T9", title="x", labels=["repo:OWNER/app", "swarm:autonomy:self-approve"])
     a = world.machine("mac-a")
     world.scheduler(a, worker="claude").cycle()
     d = rv.index(a.root)["T9"]

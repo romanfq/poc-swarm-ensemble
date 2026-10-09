@@ -139,7 +139,7 @@ def cmd_plan(args):
             sys.exit("swarm-task: run `swarm-task plan` first to create .swarm-task/plan.md")
         status = swarm("submit-plan", CTX["short"], "--file", str(plan), capture=True).stdout.strip()
         if status == "approved":
-            print("Plan recorded and self-approved (auto-pr). Next: .swarm-task/swarm-task implement")
+            print("Plan recorded and self-approved (self-approve). Next: .swarm-task/swarm-task implement")
         else:
             print("Plan submitted for human review. Check with `.swarm-task/swarm-task status`; "
                   "don't implement until it says approved.")
@@ -350,7 +350,7 @@ def main(argv=None):
     sb.set_defaults(fn=cmd_block)
     st = sub.add_parser("test", help="ask the human which tests to run, then run only that scope")
     st.add_argument("--propose", action="store_true", help="recommend a scope from your diff and ask")
-    st.add_argument("--accept", action="store_true", help="auto-pr tasks only: take the recommendation")
+    st.add_argument("--accept", action="store_true", help="self-approve tasks only: take the recommendation")
     st.set_defaults(fn=cmd_test)
     sd = sub.add_parser("done", help="test, commit, push, open the PR")
     sd.add_argument("--skip-tests", action="store_true", help=argparse.SUPPRESS)

@@ -98,7 +98,7 @@ frontend `~/Documents/DAGS/matchwire/fe/matchwire-frontend`.
 - **D11: plan sync and Done (§2.7).** Every cycle mirrors the tracker into
   `tasks/`. Done = the PR was merged (poller or Board's Approve & merge), or
   the tracker issue was closed by hand.
-- **D12: autonomy tiers (§2.8).** `auto-pr` self-approves its plan;
+- **D12: autonomy tiers (§2.8).** `self-approve` (was `auto-pr`, D35) self-approves its plan;
   `human-must-review` needs a human; `human-must-scope` never goes to an AI
   worker. After `max_retries` failed claims the tier drops one step — except
   it can't drop past `human-must-scope`, which is a live gap (`#12`).
