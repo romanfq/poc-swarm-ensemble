@@ -117,6 +117,16 @@ def test_backend_commands(machine):
     assert r.exit_code == 1
 
 
+def test_backend_ready_marks_parked_tasks(machine):
+    invoke("plan", "sync")
+    from dags import ledger as L
+    import resolve as rv
+    d = rv.index(machine.root)["T1"]
+    cid = L.claim(machine, d)
+    L.withdraw(machine, d, cid, "no-worker-chosen")
+    assert invoke("backend", "ready").output.strip() == "T1 (parked)"
+
+
 def test_pause_resume_throttle_and_status(machine):
     assert invoke("pause").exit_code == 0
     r = invoke("status", "--json")

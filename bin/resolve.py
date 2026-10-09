@@ -347,6 +347,8 @@ def task_state(task_dir, now: datetime, lease_s: float, humans: set[str] | None 
     kind = res.outcome.kind
     if kind == "done":
         return "done"
+    if parked(task_dir):
+        return "parked"
     if res.frozen:
         return "frozen"
     if kind == "pr-opened":
