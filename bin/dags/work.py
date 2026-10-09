@@ -13,6 +13,7 @@ import logging
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -289,13 +290,113 @@ def choose_worker(ctx, task_dir: Path, choice: str, launch=None, platform: str |
 
 def note(ctx, task_dir: Path, *, summary=None, tried=(), remaining=None, questions=(), risks=()) -> dict:
     claim_id = my_claim(ctx, task_dir)
+    return _write_note(ctx, task_dir, claim_id, _note_args(summary, tried, remaining, questions, risks))
+
+
+def _note_args(summary, tried, remaining, questions, risks) -> dict:
+    return {"summary": summary, "tried": list(tried or ()), "remaining": remaining,
+            "questions": list(questions or ()), "risks": list(risks or ())}
+
+
+def _write_note(ctx, task_dir: Path, claim_id: str, a: dict, **kw) -> dict:
     fields = {}
-    if summary is not None:
-        fields["summary"] = summary
-    if remaining is not None:
-        fields["remaining"] = list(remaining)
-    append = {k: list(v) for k, v in (("tried", tried), ("open_questions", questions), ("risks", risks)) if v}
-    return L.update_checkpoint(ctx, task_dir, claim_id, append=append, **fields)
+    if a.get("summary") is not None:
+        fields["summary"] = a["summary"]
+    if a.get("remaining") is not None:
+        fields["remaining"] = list(a["remaining"])
+    append = {k: list(v) for k, v in (("tried", a.get("tried")), ("open_questions", a.get("questions")),
+                                      ("risks", a.get("risks"))) if v}
+    return L.update_checkpoint(ctx, task_dir, claim_id, append=append, **fields, **kw)
+
+
+# -- note without waiting (GH-113): one process, no pull, a local commit, never blocked on the lock ----
+
+def note_lock_wait_s() -> float:
+    """How long `note` waits for a busy repo lock before it queues the write."""
+    try:
+        return float(os.environ.get("DAGS_NOTE_LOCK_WAIT", "2"))
+    except ValueError:
+        return 2.0
+
+
+def _note_queue(ctx) -> Path:
+    return ctx.swarm_dir / "note-queue"
+
+
+def _enter_lock(ctx, wait_s: float) -> bool:
+    deadline = time.monotonic() + wait_s
+    while not ctx.coord.lock.try_enter():
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.05)
+    return True
+
+
+def _local_note(ctx, task_dir: Path, claim_id: str, a: dict) -> None:
+    """Commit locally. Caller holds the repo lock; the next pushing command carries the commit."""
+    _write_note(ctx, task_dir, claim_id, a, pull=False, push=False)
+
+
+def flush_note_queue(ctx) -> int:
+    """Replay notes that were queued while the lock was busy. Notes of a claim that is no longer
+    ours are dropped. Returns how many were written."""
+    qdir = _note_queue(ctx)
+    files = sorted(qdir.glob("*.json")) if qdir.is_dir() else []
+    if not files:
+        return 0
+    if not _enter_lock(ctx, note_lock_wait_s()):
+        return 0
+    n = 0
+    try:
+        for f in files:
+            try:
+                item = json.loads(f.read_text(encoding="utf-8"))
+                task_dir = Path(item["task_dir"])
+                claim_id = my_claim(ctx, task_dir)
+                _local_note(ctx, task_dir, claim_id, item["args"])
+                n += 1
+            except (L.LostClaim, OSError, ValueError, KeyError) as e:
+                log.warning("dropped queued note %s: %s", f.name, e)
+            f.unlink(missing_ok=True)
+    finally:
+        ctx.coord.lock.__exit__(None, None, None)
+    return n
+
+
+def note_with_events(ctx, task_dir: Path, claim_id: str, *, summary=None, tried=(), remaining=None,
+                     questions=(), risks=()) -> dict:
+    """What `swarm-task note` runs (GH-113): the news and the write in one process. Reads the
+    ledger as last synced (the daemon pulls), commits locally without a push, and queues the
+    note when the repo lock stays busy. A lost claim writes nothing."""
+    steps = _Steps()
+    with steps.step("events"):
+        info = worker_events(ctx, task_dir, claim_id, pull=False)
+    out = {"events": info["events"], "written": False, "queued": False}
+    if any(e["kind"] == "claim-lost" for e in info["events"]):
+        return out
+    a = _note_args(summary, tried, remaining, questions, risks)
+    with steps.step("lock"):
+        got = _enter_lock(ctx, note_lock_wait_s())
+    if got:
+        try:
+            with steps.step("commit"):
+                flush_note_queue(ctx)  # older notes first
+                _local_note(ctx, task_dir, claim_id, a)
+        finally:
+            ctx.coord.lock.__exit__(None, None, None)
+        out["written"] = True
+    else:
+        qdir = _note_queue(ctx)
+        qdir.mkdir(parents=True, exist_ok=True)
+        name = f"{time.time_ns()}-{os.getpid()}.json"
+        tmp = qdir / (name + ".tmp")
+        tmp.write_text(json.dumps({"task_dir": str(task_dir), "args": a}), encoding="utf-8")
+        tmp.rename(qdir / name)
+        out["queued"] = True
+    if os.environ.get("DAGS_TRACE"):
+        print("note timings: " + ", ".join(f"{k}={v:.3f}s" for k, v in steps.spans.items())
+              + f", total={steps.elapsed():.3f}s", file=sys.stderr)
+    return out
 
 
 def _post(ctx, task_dir: Path, text: str) -> str | None:
@@ -401,6 +502,7 @@ def implement_gate(ctx, task_dir: Path) -> dict:
 
 
 def block(ctx, task_dir: Path, question: str) -> None:
+    flush_note_queue(ctx)
     claim_id = my_claim(ctx, task_dir)
     meta = resolve.read_meta(task_dir)
     if meta.get("autonomy") == "auto-pr":
@@ -430,10 +532,12 @@ def answer_question(ctx, task_dir: Path, answer: str) -> None:
     _try_backend(ctx, ctx.backend.post_comment, _ref(task_dir), f"DAGS: {human} answered: {answer.strip()}")
 
 
-def worker_events(ctx, task_dir: Path, claim_id: str) -> dict:
+def worker_events(ctx, task_dir: Path, claim_id: str, pull: bool = True) -> dict:
     """What `swarm-task` prints first, and what `swarm-task wait` blocks on (GH-2). Reads the
-    ledger after a pull; never raises on a lost claim, that is one of the events."""
-    ctx.coord.pull()
+    ledger after a pull (``pull=False``: as last synced, for `note`, GH-113); never raises on a
+    lost claim, that is one of the events."""
+    if pull:
+        ctx.coord.pull()
     events = resolve.worker_events(
         task_dir, claim_id, ctx.identity, timeutil.now(), ctx.settings.lease_s, ctx.human_names,
         control=L.machine_control(ctx.root, ctx.identity), idle_limit_s=ctx.settings.human_idle_s)
@@ -677,6 +781,7 @@ def finish(ctx, task_dir: Path, wt: Path, *, skip_tests: bool = False, test_runn
            say=lambda text: None, wait_sleep=None, wait_clock=None) -> str:
     from dags.gitsync import git
     wt = Path(wt)
+    flush_note_queue(ctx)
     ctx.coord.pull()
     claim_id = my_claim(ctx, task_dir)
     meta = resolve.read_meta(task_dir)

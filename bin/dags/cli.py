@@ -788,14 +788,16 @@ def task_events(key: str, claim: str = typer.Option(..., "--claim")):
 @task_app.command("note")
 @guarded
 def task_note(key: str,
+              claim: str = typer.Option(..., "--claim"),
               summary: Optional[str] = typer.Option(None, "--summary"),
               tried: List[str] = typer.Option([], "--tried"),
               remaining: Optional[List[str]] = typer.Option(None, "--remaining"),
               question: List[str] = typer.Option([], "--question"),
               risk: List[str] = typer.Option([], "--risk")):
-    """Record progress in checkpoint.yaml (Ch.8)."""
-    work.note(ctx(), task_dir(key), summary=summary, tried=tried, remaining=remaining or None,
-              questions=question, risks=risk)
+    """Record progress in checkpoint.yaml (Ch.8) and report the task's news, as JSON, in one process (GH-113)."""
+    out = work.note_with_events(ctx(), task_dir(key), claim, summary=summary, tried=tried,
+                                remaining=remaining or None, questions=question, risks=risk)
+    typer.echo(json.dumps(out, default=str))
 
 
 @task_app.command("submit-plan")

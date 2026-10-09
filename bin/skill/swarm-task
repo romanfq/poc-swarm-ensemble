@@ -273,7 +273,6 @@ def cmd_wait(args):
 
 
 def cmd_note(args):
-    pending(needs_claim=True)
     extra = []
     if args.summary is not None:
         extra += ["--summary", args.summary]
@@ -287,8 +286,14 @@ def cmd_note(args):
         extra += ["--risk", r]
     if not extra:
         sys.exit("swarm-task note: nothing to record")
-    swarm("note", CTX["short"], *extra)
-    print("checkpoint updated")
+    # One process (GH-113): the news and the write, no pull; the commit is pushed by the next command that pushes.
+    r = swarm("note", CTX["short"], "--claim", CTX.get("claim_id") or "", *extra, capture=True)
+    info = json.loads(r.stdout)
+    fresh = news(info)
+    show(fresh)
+    if any(e["kind"] == "claim-lost" for e in fresh) or not (info.get("written") or info.get("queued")):
+        sys.exit("swarm-task: stopping, this task is no longer yours")
+    print("checkpoint updated" if info.get("written") else "checkpoint queued (the repo is busy; it is written by your next command)")
 
 
 def cmd_block(args):
