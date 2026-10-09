@@ -43,6 +43,7 @@ from pathlib import Path
 from backends.base import (AUTONOMY_PREFIX, AUTONOMY_TIERS, DEFAULT_AUTONOMY, DEFAULT_PLAN_SCOPE, REPO_PREFIX,
                            STATUS_PREFIX, SWARM_PREFIX, SWARM_STATUSES, Comment, PlanScoped, Task, TaskRef,
                            parse_labels, plan_scope_of)
+import autonomy
 from dags import adf
 from dags.jira_client import JiraClient, JiraError, build_client
 
@@ -351,9 +352,9 @@ class JiraBackend(PlanScoped):
             self._move_to(ref, self.transitions[status])
 
     def set_autonomy(self, ref: TaskRef, tier: str) -> None:
-        if tier not in AUTONOMY_TIERS:
-            raise ValueError(f"unknown autonomy tier {tier!r}")
-        self._swap_family(ref, AUTONOMY_PREFIX, AUTONOMY_TIERS, tier)
+        tier = autonomy.canonical(tier)
+        # the retired name may still be on the issue (D35); remove it with the others
+        self._swap_family(ref, AUTONOMY_PREFIX, (*AUTONOMY_TIERS, *autonomy.LEGACY), tier)
 
     # -- workflow ----------------------------------------------------------------------------------------------
     def _transition(self, key: str, chosen: dict) -> None:

@@ -92,7 +92,7 @@ def test_status_swap_removes_every_other_status_even_if_the_snapshot_is_stale():
 
 def test_autonomy_swap_removes_the_other_tiers():
     fake, b = make()
-    k = fake.add("T", "t", labels=["swarm:autonomy:auto-pr", "swarm:autonomy:human-must-scope"])
+    k = fake.add("T", "t", labels=["swarm:autonomy:auto-pr", "swarm:autonomy:self-approve", "swarm:autonomy:human-must-scope"])
     b.set_autonomy(TaskRef(k), "human-must-review")
     assert [lb for lb in fake.issues[k]["fields"]["labels"] if lb.startswith("swarm:autonomy:")] == \
         ["swarm:autonomy:human-must-review"]
@@ -302,7 +302,7 @@ def test_existing_labels_lists_jira_plus_everything_the_swarm_would_create():
     fake, b = make(code_repos=["org/app"])
     k = fake.add("T", "t", labels=["bug"])
     have = b.existing_labels()
-    assert "bug" in have and "swarm:status:ready" in have and "swarm:autonomy:auto-pr" in have
+    assert "bug" in have and "swarm:status:ready" in have and "swarm:autonomy:self-approve" in have
     assert "repo:org/app" in have
     b.create_label("anything", "ffffff")                                # no-op, no call
     assert not [c for c in fake.calls if c[0] not in ("search", "get_issue")]
@@ -310,8 +310,8 @@ def test_existing_labels_lists_jira_plus_everything_the_swarm_would_create():
 
 def test_seed_labels_have_no_type_label():
     _, b = make()
-    assert b.seed_labels(epic=True, status="ready", autonomy="auto-pr", repo="org/app") == \
-        ["swarm:status:ready", "swarm:autonomy:auto-pr", "repo:org/app"]
+    assert b.seed_labels(epic=True, status="ready", autonomy="self-approve", repo="org/app") == \
+        ["swarm:status:ready", "swarm:autonomy:self-approve", "repo:org/app"]
 
 
 def test_label_codec_is_one_place():
