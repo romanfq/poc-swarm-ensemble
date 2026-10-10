@@ -25,7 +25,7 @@ except ImportError:  # pragma: no cover - typer < 0.17
 import autonomy as autonomy_names
 import resolve
 from backends.base import AUTONOMY_TIERS, SWARM_STATUSES, BackendError, TaskRef
-from dags import actions, boardview, daemon, feed, gh, panel, plan, prereqs, repos, snapshot, timeutil, work
+from dags import actions, boardview, daemon, feed, gh, panel, plan, prereqs, repos, snapshot, timeutil, upgrade, work
 from dags import ledger as L
 from dags.config import ConfigError, Context
 from dags.gitsync import GitError
@@ -332,6 +332,64 @@ def protect(repo: str, branch: str = typer.Option("main"), approvals: int = type
         raise typer.Exit(1)
     gh.gh(cmd, input=body)
     console.print("[green]branch protection set[/]")
+
+
+@app.command("update-from-source")
+@guarded
+def update_from_source(
+        source: Path = typer.Argument(..., help="A poc-swarm-ensemble checkout."),
+        apply: bool = typer.Option(False, "--apply", help="Replace bin/ and templates/ (default: dry run)."),
+        commit: bool = typer.Option(False, "--commit", help="With --apply: commit the upgrade locally (never pushes)."),
+        allow_branch: bool = typer.Option(False, "--allow-branch",
+                                          help="Accept SOURCE off main or behind its origin/main."),
+        allow_dirty: bool = typer.Option(False, "--allow-dirty", help="Accept SOURCE with uncommitted changes.")):
+    """Upgrade this coordination repo's pinned bin/ and templates/ from SOURCE (D33)."""
+    from datetime import datetime, timezone
+    c = ctx()
+    info = upgrade.read_source(source)
+    same = info.path == c.root
+    p = upgrade.plan_upgrade(
+        upgrade.snapshot_tree(info.path) if info.ok else {}, upgrade.snapshot_tree(c.root),
+        upgrade.read_record(c.root), info=info, daemon_pid=daemon.running_pid(c), same_repo=same,
+        allow_branch=allow_branch, allow_dirty=allow_dirty, commit=apply and commit,
+        staged=upgrade.staged_files(c.root) if commit else [])
+
+    def say(text: str = "", **kw):
+        console.print(text, markup=False, highlight=False, **kw)
+
+    say(f"source:  {info.path}")
+    if info.ok:
+        say(f"         {info.branch or '(detached)'} {info.sha[:7]} {info.subject}"
+            + ("  [dirty]" if info.dirty else ""))
+    say(f"pinned:  {p.pinned_sha[:7] if p.pinned_sha else 'unknown'}")
+    if p.already_current:
+        say(f"already at {info.sha[:7]}")
+    for label, files in (("added", p.added), ("changed", p.changed), ("removed", p.removed)):
+        say(f"{label}: {len(files)}")
+        for f in files:
+            say(f"  {f}")
+    if p.local_edits:
+        say("warning: bin/ or templates/ here differ from the last upgrade; --apply overwrites those edits")
+    for reason in p.refusals:
+        say(("refusing: " if apply else "--apply would refuse: ") + reason)
+    if not apply:
+        say("dry run: nothing changed. Re-run with --apply to upgrade.")
+        raise typer.Exit(1 if p.refusals else 0)
+    if p.refusals:
+        raise typer.Exit(1)
+    if p.already_current:
+        return
+    upgrade.apply(info.path, c.root, info, datetime.now(timezone.utc))
+    say(f"upgraded bin/ and templates/ to {info.sha[:7]}; wrote {upgrade.RECORD}")
+    if commit:
+        left = upgrade.commit(c.root, info)
+        say(f"committed locally: {upgrade.commit_message(info)} (not pushed)")
+        if left:
+            say("left alone: " + ", ".join(left))
+    else:
+        say(f"next: commit with message \"{upgrade.commit_message(info)}\" "
+            f"(git add bin templates {upgrade.RECORD}), or re-run with --commit")
+    say("then stop and start every machine again; nothing upgrades itself (D33)")
 
 
 # ---------------------------------------------------------------------------
