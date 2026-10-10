@@ -106,11 +106,15 @@ def test_closed_pr_is_a_rejected_approach(pr_open):
     assert rv.ledger_ready(a.root, d, timeutil.now(), 900)
 
 
+def _reopened(d):
+    return [x for _, x in R.read_dir(d / "completions") if x["kind"] == "reopened"]
+
+
 def test_changes_requested_reopens_once(pr_open):
     world, a, d, wt, url, poller = pr_open
     poller.cycle()
     pr = world.prs.get(url)
-    pr["reviews"].append({"id": "R1", "author": {"login": "jane"}, "state": "CHANGES_REQUESTED",
+    pr["reviews"].append({"id": "R1", "author": {"login": "jane-gh"}, "state": "CHANGES_REQUESTED",
                           "body": "fix: nulls", "submittedAt": "t"})
     rep = poller.cycle()
     assert texts(rep, "changes-requested")
@@ -120,8 +124,53 @@ def test_changes_requested_reopens_once(pr_open):
     b = world.machine("mac-b")
     rep_b = Poller(b, notify=world.notify).cycle()
     assert "changes-requested" not in kinds(rep_b)
-    reopened = [x for _, x in R.read_dir(d / "completions") if x["kind"] == "reopened"]
-    assert len(reopened) == 1
+    assert len(_reopened(d)) == 1
+
+
+def test_a_plain_review_comment_reopens_with_no_tags(pr_open):
+    world, a, d, wt, url, poller = pr_open
+    poller.cycle()
+    world.prs.get(url)["reviews"].append({"id": "R7", "author": {"login": "jane-gh"}, "state": "COMMENTED",
+                                          "body": "Why a new cache?", "submittedAt": "t"})
+    rep = poller.cycle()
+    assert "New comments from a reviewer on T1 by jane-gh" in texts(rep, "changes-requested")[0]
+    assert _reopened(d)[0]["item_ids"] == ["R7"] and _reopened(d)[0]["review_id"] == "R7"
+    assert rv.reopened_items(d) == ["R7"]
+
+
+def test_a_pr_comment_reopens_and_is_handled_once(pr_open):
+    world, a, d, wt, url, poller = pr_open
+    poller.cycle()
+    world.prs.get(url)["comments"].append({"id": "IC1", "author": {"login": "jane-gh"},
+                                           "body": "can you also handle nulls?", "createdAt": "t"})
+    assert texts(poller.cycle(), "changes-requested")
+    assert _reopened(d)[0]["item_ids"] == ["C-IC1"]
+    assert not texts(poller.cycle(), "changes-requested")
+    assert len(_reopened(d)) == 1
+
+
+def test_nothing_else_reopens_the_task(pr_open):
+    world, a, d, wt, url, poller = pr_open
+    poller.cycle()
+    pr = world.prs.get(url)
+    pr["reviews"] += [
+        {"id": "R1", "author": {"login": "jane-gh"}, "state": "COMMENTED", "body": "", "submittedAt": "t"},     # inline only
+        {"id": "R2", "author": {"login": "jane-gh"}, "state": "APPROVED", "body": "LGTM, rename x", "submittedAt": "t"},
+        {"id": "R3", "author": {"login": "stranger"}, "state": "CHANGES_REQUESTED", "body": "no", "submittedAt": "t"}]
+    pr["comments"] += [{"id": "c1", "author": {"login": "stranger"}, "body": "hi", "createdAt": "t"},
+                       {"id": "c2", "author": {"login": "bot"}, "body": "Renamed it", "createdAt": "t"}]
+    world.prs.add_thread(pr, "T1", "a.py", 3, [("jane-gh", "nit")])
+    rep = poller.cycle()
+    assert "changes-requested" not in kinds(rep) and _reopened(d) == []
+    assert rep.pr_status["T1"]["comments"] == 3 and rep.pr_status["T1"]["threads"] == 1
+
+
+def test_feedback_from_before_the_last_push_is_not_a_new_round(pr_open):
+    world, a, d, wt, url, poller = pr_open
+    poller.cycle()
+    world.prs.get(url)["comments"].append({"id": "old", "author": {"login": "jane-gh"}, "body": "earlier",
+                                           "createdAt": "2000-01-01T00:00:00Z"})
+    assert "changes-requested" not in kinds(poller.cycle())
 
 
 def test_overlapping_prs_need_a_merge_order(world):

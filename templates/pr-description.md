@@ -9,4 +9,3 @@
 
 ## Task
 Issue: {issue_ref}
-Coordination ref: {coordination_ref}

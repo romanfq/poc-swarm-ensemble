@@ -192,11 +192,12 @@ def read_outcome(task_dir) -> Outcome:
     for _, d in _sorted_records(Path(task_dir) / "completions"):
         kind = d.get("kind")
         if kind == "reopened":
-            rid = str(d.get("review_id") or "")
-            if rid and rid in seen_reviews:
-                continue  # duplicate reopen for a review already acted on
-            if rid:
-                seen_reviews.add(rid)
+            ids = {str(i) for i in d.get("item_ids") or []}
+            if d.get("review_id"):
+                ids.add(str(d["review_id"]))
+            if ids and ids <= seen_reviews:
+                continue  # duplicate reopen for reviews and comments already acted on
+            seen_reviews |= ids
             if out.kind != "pr-opened":
                 continue  # reopen only makes sense after a PR was opened
         elif kind == "rejected" and out.kind not in ("pr-opened", "reopened"):
@@ -224,6 +225,26 @@ def last_submitted_commit(task_dir) -> str | None:
         if d.get("kind") == "pr-opened" and d.get("commit"):
             commit = str(d["commit"])
     return commit
+
+
+def last_push_time(task_dir) -> str | None:
+    """Feedback up to this time has been dealt with: the newest `pr-opened` record's `reviewed_through_utc`."""
+    when = None
+    for _, d in _sorted_records(Path(task_dir) / "completions"):
+        if d.get("kind") == "pr-opened":
+            when = d.get("reviewed_through_utc") or d.get("wall_utc") or when
+    return when
+
+
+def reopened_items(task_dir) -> list[str]:
+    """Ids of the reviews and comments behind the current reopen (empty when not reopened)."""
+    out = read_outcome(task_dir)
+    if out.kind != "reopened" or not out.record:
+        return []
+    ids = [str(i) for i in out.record.get("item_ids") or []]
+    if not ids and out.record.get("review_id"):
+        ids = [str(out.record["review_id"])]
+    return ids
 
 
 def is_done(task_dir) -> bool:

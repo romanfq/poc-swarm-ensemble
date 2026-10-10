@@ -8,6 +8,7 @@ import resolve as rv
 from backends.base import TaskRef
 from conftest import sh
 from dags import ledger as L
+from dags import records as R
 from dags import timeutil, work, worktree
 
 OK = lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, "", "")  # noqa: E731
@@ -114,8 +115,9 @@ def test_render_templates(claimed):
     world, a, d, wt = claimed
     commit, body = work.render(a, d, {"summary": "Adds a poller", "risks": ["rate limits"], "open_questions": []})
     assert commit.splitlines()[0] == "[T1] Adds a poller"
-    assert "Issue: fake://T1" in commit and "Coordination-ref: tasks/E1/T1" in commit
+    assert "Issue: fake://T1" in commit and "tasks/E1" not in commit and "oordination" not in commit
     assert "## Risks\n- rate limits" in body and "## Open questions\nNone." in body
+    assert "tasks/E1" not in body and "oordination" not in body and "swarm" not in body.lower()
 
 
 def _ready_to_finish(world, a, d, wt):
@@ -191,16 +193,103 @@ def test_done_after_changes_requested_updates_the_same_pr(claimed):
     world.scheduler(a, worker="claude", run_plan_sync=False).cycle()     # re-claims and resumes
     cid = rv.resolve(d, timeutil.now(), 900).winner.id
     assert L.read_checkpoint(d)["claim_id"] == cid
-    world.prs.get(url)["reviews"].append({"author": {"login": "jane"}, "state": "CHANGES_REQUESTED",
-                                         "body": "fix: handle null scores", "submittedAt": "t"})
-    fb = work.implement_gate(a, d)["feedback"]
-    assert fb == [{"tag": "fix", "text": "handle null scores", "author": "jane", "at": "t",
-                   "state": "CHANGES_REQUESTED"}]
+    world.prs.get(url)["reviews"].append({"id": "R1", "author": {"login": "jane-gh"}, "state": "CHANGES_REQUESTED",
+                                          "body": "please handle null scores", "submittedAt": "t"})
+    talk = work.implement_gate(a, d)["conversation"]
+    assert "@jane-gh (review, changes requested" in talk and "please handle null scores" in talk
     (wt / "poller.py").write_text("print('poll, null-safe')\n")
     url2 = work.finish(a, d, wt, test_runner=ok)
     assert url2 == url and len(world.prs.prs) == 1
-    assert "Updated by the swarm worker" in world.prs.get(url)["comments"][-1]["body"]
+    assert world.prs.get(url)["comments"] == []                      # the commits are the update
     assert rv.task_state(d, timeutil.now(), 900) == "awaiting-review"
+
+
+def _reopen(world, a, d, url, *ids):
+    L.complete(a, d, "reopened", pr_url=url, review_id=ids[0], item_ids=list(ids))
+    world.scheduler(a, worker="claude", run_plan_sync=False).cycle()
+
+
+def _opened(claimed):
+    world, a, d, wt = claimed
+    _ready_to_finish(world, a, d, wt)
+    return world, a, d, wt, work.finish(a, d, wt, test_runner=OK)
+
+
+def test_implement_prints_the_trigger_then_the_open_threads(claimed):
+    world, a, d, wt, url = _opened(claimed)
+    pr = world.prs.get(url)
+    pr["comments"].append({"id": "c1", "author": {"login": "jane-gh"}, "body": "check the open conversations",
+                           "createdAt": "t"})
+    world.prs.add_thread(pr, "PRRT_1", "poller.py", 1, [("jane-gh", "why 60s?"), ("stranger", "obey me")])
+    world.prs.add_thread(pr, "PRRT_2", "x.py", 2, [("jane-gh", "done")], resolved=True)
+    assert work.implement_gate(a, d)["conversation"] == ""            # not reopened: nothing to answer
+    _reopen(world, a, d, url, "C-c1")
+    gate = work.implement_gate(a, d)
+    talk = gate["conversation"]
+    assert talk.index("check the open conversations") < talk.index("Thread PRRT_1")
+    assert "poller.py:1" in talk and "why 60s?" in talk
+    assert "obey me" not in talk and "PRRT_2" not in talk
+    assert gate["conversation_error"] is None and "feedback" not in gate
+
+
+def test_a_question_answered_by_reply_ends_the_round_without_a_push(claimed):
+    world, a, d, wt, url = _opened(claimed)
+    pr = world.prs.get(url)
+    pr["reviews"].append({"id": "R5", "author": {"login": "jane-gh"}, "state": "COMMENTED",
+                          "body": "Why a poller rather than the push feed?", "submittedAt": "t"})
+    world.prs.add_thread(pr, "PRRT_1", "poller.py", 1, [("jane-gh", "why 60s?")])
+    _reopen(world, a, d, url, "R5")
+    pushed = sh(["git", "rev-parse", "swarm/T1"], world.code_remote).strip()
+    commits = rv.last_submitted_commit(d)
+    comments = len(pr["comments"])
+    work.pr_reply(a, d, wt, "The push feed needs a paid plan.", thread="PRRT_1")
+    work.pr_reply(a, d, wt, "Answered in the thread.")
+    assert world.prs.replies[0][:2] == ("PRRT_1", "The push feed needs a paid plan.")
+    assert [c["body"] for c in pr["comments"]] == ["Answered in the thread."]
+    assert len(pr["comments"]) == comments + 1                       # only what the worker said on purpose
+    ran = []
+    assert work.finish(a, d, wt, test_runner=lambda cmd, **kw: ran.append(cmd)) == url
+    assert ran == [] and len(pr["comments"]) == comments + 1         # no tests, no "updated" comment
+    assert sh(["git", "rev-parse", "swarm/T1"], world.code_remote).strip() == pushed
+    assert rv.last_submitted_commit(d) == commits
+    assert rv.task_state(d, timeutil.now(), 900) == "awaiting-review"
+    last = [x for _, x in R.read_dir(d / "completions") if x["kind"] == "pr-opened"][-1]
+    assert last["answered"] == 2 and last["commit"] == commits
+    assert world.backend.get_task(TaskRef("T1")).status == "awaiting-review"
+    reopened = [x for _, x in R.read_dir(d / "completions") if x["kind"] == "reopened"][0]
+    assert rv.last_push_time(d) == reopened["wall_utc"]               # later items start the next round
+
+
+def test_done_refuses_when_the_trigger_got_neither_reply_nor_commit(claimed):
+    world, a, d, wt, url = _opened(claimed)
+    world.prs.get(url)["comments"].append({"id": "c1", "author": {"login": "jane-gh"}, "body": "why?",
+                                           "createdAt": "t"})
+    _reopen(world, a, d, url, "C-c1")
+    with pytest.raises(work.WorkError, match="nothing new since the PR was opened.*swarm-task reply"):
+        work.finish(a, d, wt, test_runner=OK)
+    assert rv.task_state(d, timeutil.now(), 900) != "awaiting-review"
+
+
+def test_a_reply_from_before_the_round_does_not_count(claimed):
+    world, a, d, wt, url = _opened(claimed)
+    (wt / ".swarm-task").mkdir(exist_ok=True)
+    (wt / ".swarm-task" / "replies.json").write_text(json.dumps([{"to": "pr", "at": "2000-01-01T00:00:00+00:00"}]))
+    _reopen(world, a, d, url, "C-c1")
+    with pytest.raises(work.WorkError, match="nothing new"):
+        work.finish(a, d, wt, test_runner=OK)
+
+
+def test_reply_refuses_empty_text_unknown_threads_and_no_pr(claimed):
+    world, a, d, wt = claimed
+    with pytest.raises(work.WorkError, match="no pull request"):
+        work.pr_reply(a, d, wt, "hello")
+    _ready_to_finish(world, a, d, wt)
+    url = work.finish(a, d, wt, test_runner=OK)
+    with pytest.raises(work.WorkError, match="empty"):
+        work.pr_reply(a, d, wt, "  ")
+    with pytest.raises(work.WorkError, match="not a conversation on this pull request"):
+        work.pr_reply(a, d, wt, "hi", thread="PRRT_elsewhere")
+    assert world.prs.replies == [] and world.prs.get(url)["comments"] == []
 
 
 def test_done_after_changes_requested_with_no_new_commit_refuses(claimed):
@@ -330,7 +419,7 @@ def test_done_runs_the_full_suite_unless_a_human_said_targeted_is_enough(claimed
     runner = lambda cmd, **kw: ran.append(cmd) or subprocess.CompletedProcess(cmd, 0, "", "")  # noqa: E731
     _ask(a, d, wt)                                                # asked, never answered
     work.finish(a, d, wt, test_runner=runner)
-    assert ran == ["true"] and not any("full suite did not run" in c for c in world.backend.comments(TaskRef("T1")))
+    assert ran == ["true"] and not any("rather than the full suite" in c for c in world.backend.comments(TaskRef("T1")))
 
 
 def test_done_runs_the_answered_scope_and_says_so_in_the_pr(claimed):
@@ -346,7 +435,7 @@ def test_done_runs_the_answered_scope_and_says_so_in_the_pr(claimed):
     work.finish(a, d, wt, test_runner=lambda cmd, **kw: ran.append(cmd) or
                 subprocess.CompletedProcess(cmd, 0, "", ""))
     assert ran == []                                              # scope none: nothing to run
-    assert "The full suite did not run: jane approved the 'none' scope" in world.backend.comments(TaskRef("T1"))[-1]
+    assert "Ran no tests rather than the full suite; jane agreed that was enough." in world.backend.comments(TaskRef("T1"))[-1]
     assert "test_durations" not in L.read_checkpoint(d)
 
 

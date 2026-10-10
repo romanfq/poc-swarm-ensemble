@@ -23,7 +23,7 @@ import autonomy
 import resolve
 import workers
 from backends.base import TaskRef
-from dags import gh, repos, worktree
+from dags import gh, repos, review, worktree
 from dags import ledger as L
 from dags import testscope, timeutil
 
@@ -478,11 +478,19 @@ def pr_for(ctx, task_dir: Path) -> tuple[str, str] | None:
     return (repo, str(pr["number"])) if pr else None
 
 
-def feedback(ctx, task_dir: Path) -> list[dict]:
-    found = pr_for(ctx, task_dir)
+def _bot_login(ctx) -> str | None:
+    return (ctx.bot_identity() or (None, None))[0]
+
+
+def conversation(ctx, task_dir: Path) -> str:
+    """What the PR said that reopened the task, then the open inline threads (GH-6). Plain text,
+    nothing parsed; empty when the task was not reopened by a review or comment."""
+    ids = resolve.reopened_items(task_dir)
+    found = pr_for(ctx, task_dir) if ids else None
     if not found:
-        return []
-    return gh.parse_feedback(gh.pr_view(*found))
+        return ""
+    items = review.items_by_id(gh.pr_view(*found), ids)
+    return review.conversation(items, gh.review_threads(*found), ctx.human_by_github, _bot_login(ctx))
 
 
 def implement_gate(ctx, task_dir: Path) -> dict:
@@ -491,15 +499,57 @@ def implement_gate(ctx, task_dir: Path) -> dict:
     status = resolve.plan_status(task_dir, ctx.human_names)
     cp = L.read_checkpoint(task_dir)
     try:
-        fb = feedback(ctx, task_dir)
-    except (gh.GhError, FileNotFoundError) as e:
-        fb = [{"tag": "error", "text": f"could not read PR feedback: {e}"}]
+        talk, talk_error = conversation(ctx, task_dir), None
+    except (gh.GhError, FileNotFoundError, ValueError) as e:
+        talk, talk_error = "", f"could not read the PR conversation: {e}"
     try:
         said, said_error = replies(ctx, task_dir), None
     except Exception as e:  # noqa: BLE001 - one API read; the worker can still go on without it
         said, said_error = [], f"could not read the issue's comments: {e}"
-    return {"allowed": status == "approved", "plan_status": status, "checkpoint": cp, "feedback": fb,
-            "replies": said, "replies_error": said_error}
+    return {"allowed": status == "approved", "plan_status": status, "checkpoint": cp, "conversation": talk,
+            "conversation_error": talk_error, "replies": said, "replies_error": said_error}
+
+
+REPLIES_FILE = "replies.json"
+
+
+def _replies_path(wt: Path) -> Path:
+    return Path(wt) / ".swarm-task" / REPLIES_FILE
+
+
+def _replies_made(wt: Path, since=None) -> list[dict]:
+    try:
+        made = json.loads(_replies_path(wt).read_text())
+    except (OSError, ValueError):
+        return []
+    floor = timeutil.parse(since)
+    return [r for r in made if floor is None or (timeutil.parse(r.get("at")) or floor) >= floor]
+
+
+def pr_reply(ctx, task_dir: Path, wt: Path, text: str, thread: str | None = None) -> str:
+    """Answer on the PR as the worker's bot account: in an inline thread, or as a PR comment (GH-6)."""
+    my_claim(ctx, task_dir)
+    text = (text or "").strip()
+    if not text:
+        raise WorkError("nothing to say: the reply is empty")
+    found = pr_for(ctx, task_dir)
+    if not found:
+        raise WorkError(f"{resolve.label(task_dir)}: there is no pull request to reply on yet")
+    repo, number = found
+    token = ctx.worker_token()
+    if thread:
+        if thread not in {t["id"] for t in gh.review_threads(repo, number, token=token)}:
+            raise WorkError(f"{thread} is not a conversation on this pull request "
+                            "(use the thread ids `swarm-task implement` printed)")
+        gh.reply_thread(thread, text, token=token)
+    else:
+        gh.comment_on_pr(repo, number, text, token=token)
+    made = _replies_made(wt)
+    made.append({"to": thread or "pr", "at": timeutil.iso()})
+    path = _replies_path(wt)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(made))
+    return f"replied on {'the thread' if thread else 'the PR'}"
 
 
 def block(ctx, task_dir: Path, question: str) -> None:
@@ -671,7 +721,6 @@ def render(ctx, task_dir: Path, cp: dict) -> tuple[str, str]:
         "risks": _bullets(cp.get("risks")),
         "open_questions": _bullets(cp.get("open_questions")),
         "issue_ref": meta.get("issue_url") or meta.get("key"),
-        "coordination_ref": task_dir.relative_to(ctx.root).as_posix(),
     }
     commit = (ctx.templates_dir / "commit-message.txt").read_text(encoding="utf-8").format(**values)
     body = (ctx.templates_dir / "pr-description.md").read_text(encoding="utf-8").format(**values)
@@ -826,6 +875,33 @@ def _bring_up_to_date(ctx, task_dir: Path, wt: Path, repo: str, base: str, branc
                         f'then: swarm.py task answer {label} "resolved" (or y on the Board)')
 
 
+def _reviewed_through(task_dir: Path) -> str:
+    """Feedback up to this moment is what the worker is answering now: the poller's reopen when this
+    round was triggered by a review or comment, otherwise now. Later items start the next round."""
+    out = resolve.read_outcome(task_dir)
+    return str((out.record or {}).get("wall_utc") if out.kind == "reopened" and out.record else "") or timeutil.iso()
+
+
+def _answered_round(ctx, task_dir: Path, wt: Path, claim_id: str, cp: dict, label: str) -> str | None:
+    """A round that needed no code change (a question, a disagreement): every item was answered with
+    `swarm-task reply`, so record it as handled. No commit, no push, no PR comment, no CI wait."""
+    out = resolve.read_outcome(task_dir)
+    submitted = resolve.last_submitted_commit(task_dir)
+    if out.kind != "reopened" or not submitted or worktree.head(wt) != submitted or not out.pr_url:
+        return None
+    made = _replies_made(wt, (out.record or {}).get("wall_utc"))
+    if not made:
+        return None
+    L.require_mine(ctx, task_dir, claim_id)
+    worker_label = cp.get("worker_label") or cp.get("worker") or "worker"
+    L.update_checkpoint(ctx, task_dir, claim_id, pr_url=out.pr_url, ci_failure=None,
+                        finished_utc=timeutil.iso(), needs_human=None)
+    L.complete(ctx, task_dir, "pr-opened", claim_id=claim_id, pr_url=out.pr_url, worker=worker_label,
+               commit=submitted, reviewed_through_utc=_reviewed_through(task_dir), answered=len(made))
+    _try_backend(ctx, ctx.backend.set_status, _ref(task_dir), "awaiting-review")
+    return out.pr_url
+
+
 def finish(ctx, task_dir: Path, wt: Path, *, skip_tests: bool = False, test_runner=subprocess.run,
            say=lambda text: None, wait_sleep=None, wait_clock=None) -> str:
     from dags.gitsync import git
@@ -859,6 +935,9 @@ def finish(ctx, task_dir: Path, wt: Path, *, skip_tests: bool = False, test_runn
         if bot:
             cmd.insert(1, f"--author={bot[0]} <{bot[1]}>")
         git(cmd, wt, input=commit_msg)
+    answered = _answered_round(ctx, task_dir, wt, claim_id, cp, label)
+    if answered:
+        return answered
     _bring_up_to_date(ctx, task_dir, wt, repo, base, branch, label)
     if worktree.commits_ahead(wt, base) == 0:
         raise WorkError(f"{label}: no changes to submit on {branch}")
@@ -870,24 +949,23 @@ def finish(ctx, task_dir: Path, wt: Path, *, skip_tests: bool = False, test_runn
             if command:
                 run_tests(command, wt, test_runner)             # partial run: no durations to record
             ran = f"{len(files)} test file(s)" if files else "no tests"
-            scoped_note = (f"\n## Tests\nThe full suite did not run: {answer.get('human')} approved the "
-                           f"'{scope}' scope ({ran}) as enough.\n")
+            scoped_note = (f"\n## Tests\nRan {ran} rather than the full suite; "
+                           f"{answer.get('human') or 'the reviewer'} agreed that was enough.\n")
         else:
             durations = parse_durations(run_tests(rcfg.get("test_command"), wt, test_runner))
     body += scoped_note
     submitted = resolve.last_submitted_commit(task_dir)
     if submitted and worktree.head(wt) == submitted:
-        raise WorkError(f"{label}: nothing new since the PR was opened ({submitted[:7]}); "
-                        "address the feedback first")
+        raise WorkError(f"{label}: nothing new since the PR was opened ({submitted[:7]}); address the "
+                        "feedback first: change the code, or answer it with `swarm-task reply`")
 
     L.require_mine(ctx, task_dir, claim_id)              # last check before the irreversible steps
+    seen_through = _reviewed_through(task_dir)
     git(["push", "-q", "-u", "origin", f"HEAD:refs/heads/{branch}"], wt)
     token = ctx.worker_token()
     existing = gh.pr_for_branch(repo, branch)
     if existing and existing.get("state") == "OPEN":
-        url = existing["url"]
-        gh.gh(["pr", "comment", str(existing["number"]), "--repo", repo, "--body-file", "-"],
-              token=token, input="Updated by the swarm worker.\n\n" + body)
+        url = existing["url"]                            # the new commits and the thread replies are the update
     else:
         with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as f:
             f.write(body)
@@ -905,7 +983,7 @@ def finish(ctx, task_dir: Path, wt: Path, *, skip_tests: bool = False, test_runn
     L.update_checkpoint(ctx, task_dir, claim_id, pr_url=url, ci_failure=None, finished_utc=timeutil.iso(), needs_human=None,
                        **({"test_durations": durations} if durations else {}))
     L.complete(ctx, task_dir, "pr-opened", claim_id=claim_id, pr_url=url, worker=worker_label,
-               commit=worktree.head(wt))
+               commit=worktree.head(wt), reviewed_through_utc=seen_through)
     _try_backend(ctx, ctx.backend.set_status, _ref(task_dir), "awaiting-review")
     _try_backend(ctx, ctx.backend.post_comment, _ref(task_dir), f"{body}\nPR: {url}\n")
     return url

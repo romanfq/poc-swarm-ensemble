@@ -159,10 +159,12 @@ def _describe(root: Path, path: Path, data: dict) -> Event | None:
     if kind == "completions":
         k = data.get("kind")
         url = data.get("pr_url") or ""
+        answered = data.get("answered")
         text = {
-            "pr-opened": f"{data.get('worker') or machine} finished {task}. The PR can be found at {url}",
+            "pr-opened": (f"worker answered {answered} comment{'s' if answered != 1 else ''} on {task}" if answered
+                          else f"{data.get('worker') or machine} finished {task}. The PR can be found at {url}"),
             "done": f"{task} is done" + (" (merged)" if not data.get("imported") else " (closed in the tracker)"),
-            "reopened": f"Changes requested on {task} — back in the queue",
+            "reopened": f"New feedback on the PR for {task} — back in the queue",
             "rejected": f"The approach for {task} was rejected (PR closed) — needs re-planning",
             "replanned": f"{task} was re-planned and is ready again",
         }.get(k)

@@ -70,9 +70,26 @@ def test_review_rows_use_live_pr_status(world):
     L.complete(a, d, "pr-opened", claim_id=cid, pr_url="https://github.com/OWNER/app/pull/9")
     snap = snapshot.take(a)
     assert boardview.review_rows(snap, {}) == [
-        ("T1", ("T1", "pending", "?", "#9", "Poll"))]
+        ("T1", ("T1", "pending", "?", "-", "#9", "Poll"))]
     rows = boardview.review_rows(snap, {"T1": {"review": "CHANGES_REQUESTED", "checks": "passing"}})
     assert rows[0][1][1:3] == ("changes requested", "passing")
+    rows = boardview.review_rows(snap, {"T1": {"review": None, "checks": "passing", "comments": 4, "threads": 2}})
+    assert rows[0][1][3] == "4 (2 open)"
+    rows = boardview.review_rows(snap, {"T1": {"comments": 0, "threads": 0}})
+    assert rows[0][1][3] == "0"
+
+
+def test_review_rows_show_a_task_the_worker_is_answering(world):
+    world.backend.add("T1", title="Poll", labels=["repo:OWNER/app", "type:task"])
+    a = world.machine("mac-a")
+    world.scheduler(a).cycle()
+    d = rv.index(a.root)["T1"]
+    cid = rv.read_claims(d)[0].id
+    url = "https://github.com/OWNER/app/pull/9"
+    L.complete(a, d, "pr-opened", claim_id=cid, pr_url=url)
+    L.complete(a, d, "reopened", pr_url=url, review_id="R1", item_ids=["R1"])
+    rows = boardview.review_rows(snapshot.take(a), {"T1": {"review": "CHANGES_REQUESTED", "comments": 2, "threads": 1}})
+    assert rows == [("T1", ("T1", "responding", "?", "2 (1 open)", "#9", "Poll"))]
 
 
 def test_plan_rows_detect_unsubmitted_and_changed_plans(world):
@@ -261,7 +278,7 @@ def test_feed_line_passes_unquoted_lines_through():
 
 def test_claim_columns_lead_with_task_and_state():
     assert boardview.CLAIM_COLUMNS[:3] == ("task", "state", "title")
-    assert boardview.REVIEW_COLUMNS == ("task", "review", "checks", "PR", "title")
+    assert boardview.REVIEW_COLUMNS == ("task", "review", "checks", "comments", "PR", "title")
 
 
 def test_pr_label():

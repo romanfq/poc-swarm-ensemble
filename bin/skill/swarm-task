@@ -218,14 +218,16 @@ def cmd_implement(args):
     print("Remaining:\n" + bullet(cp.get("remaining")))
     print("Open questions:\n" + bullet(cp.get("open_questions")))
     print_replies(info)
-    fb = info.get("feedback") or []
-    if fb:
-        print("\n# Reviewer feedback (address every item)\n")
-        for item in fb:
-            print(f"- {item['tag']}: {item['text']}" + (f"  (@{item.get('author')})" if item.get("author") else ""))
-        if any(i["tag"] == "reject-approach" for i in fb):
-            print("\nA reviewer rejected the approach: don't patch it — run "
-                  "`swarm-task block \"approach rejected: <summary>\"` and stop.")
+    if info.get("conversation_error"):
+        print(f"\n({info['conversation_error']})")
+    talk = (info.get("conversation") or "").strip()
+    if talk:
+        print("\n# What the pull request says (reply as a colleague would)\n")
+        print(talk)
+        print("\nFor each point: change the code and say what changed, or answer the question, or push back "
+              "with a reason. Reply with `swarm-task reply THREAD_ID \"text\"` (in a thread) or "
+              "`swarm-task reply --pr \"text\"`. If the whole approach is wrong, run "
+              "`swarm-task block \"approach rejected: <summary>\"` and stop.")
     print("\nRecord progress with `swarm-task note ...`; finish with `swarm-task done`.")
 
 
@@ -315,6 +317,20 @@ def cmd_test(args):
     print(r.stdout.rstrip())
 
 
+def cmd_reply(args):
+    pending(needs_claim=True)
+    if args.pr:
+        if len(args.parts) != 1:
+            sys.exit('swarm-task reply: usage: reply --pr "text"')
+        thread, text = [], args.parts[0]
+    else:
+        if len(args.parts) != 2:
+            sys.exit('swarm-task reply: usage: reply THREAD_ID "text"  |  reply --pr "text"')
+        thread, text = ["--thread", args.parts[0]], args.parts[1]
+    r = swarm("reply", CTX["short"], "--worktree", str(WORKTREE), "--text", text, *thread, capture=True)
+    print(r.stdout.strip() or "replied")
+
+
 def cmd_done(args):
     pending(needs_claim=True)
     extra = ["--skip-tests"] if args.skip_tests else []
@@ -332,7 +348,7 @@ def main(argv=None):
     sp.add_argument("--force", action="store_true")
     sp.set_defaults(fn=cmd_plan)
     sub.add_parser("status", help="plan/review status").set_defaults(fn=cmd_status)
-    sub.add_parser("implement", help="print the approved plan, checkpoint and feedback").set_defaults(fn=cmd_implement)
+    sub.add_parser("implement", help="print the approved plan, checkpoint and what the PR says").set_defaults(fn=cmd_implement)
     sw = sub.add_parser("wait", help="block until the plan is approved, a human answers, or the task changes")
     sw.add_argument("--for", dest="wait_for", choices=("approved", "answer", "tests", "any"), default="any")
     sw.add_argument("--timeout", type=float, default=1500, help="seconds; 0 waits forever (default 1500)")
@@ -352,6 +368,10 @@ def main(argv=None):
     st.add_argument("--propose", action="store_true", help="recommend a scope from your diff and ask")
     st.add_argument("--accept", action="store_true", help="self-approve tasks only: take the recommendation")
     st.set_defaults(fn=cmd_test)
+    sr = sub.add_parser("reply", help="answer on the pull request: in a thread, or with --pr as a comment")
+    sr.add_argument("--pr", action="store_true", help="comment on the PR instead of replying in a thread")
+    sr.add_argument("parts", nargs="+", metavar="[THREAD_ID] text")
+    sr.set_defaults(fn=cmd_reply)
     sd = sub.add_parser("done", help="test, commit, push, open the PR")
     sd.add_argument("--skip-tests", action="store_true", help=argparse.SUPPRESS)
     sd.set_defaults(fn=cmd_done)

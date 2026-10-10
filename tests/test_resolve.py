@@ -146,6 +146,29 @@ def test_reopen_after_changes_requested(ledger):
     assert rv.retry_count(t, at(100), LEASE) == 0
 
 
+def test_reopen_dedups_on_item_ids_and_old_records_still_work(ledger):
+    t = ledger.task("T1")
+    ledger.claim(t, "mac-a", 10)
+    ledger.complete(t, "mac-a", "pr-opened", 11, claim="mac-a-10", pr_url="u", reviewed_through_utc="2026-01-01T00:00:00+00:00")
+    ledger.complete(t, "mac-b", "reopened", 12, review_id="R1", item_ids=["R1", "C-c1"])
+    assert rv.reopened_items(t) == ["R1", "C-c1"]
+    ledger.claim(t, "mac-b", 13)
+    ledger.complete(t, "mac-b", "pr-opened", 14, claim="mac-b-13", pr_url="u", answered=2,
+                    reviewed_through_utc="2026-01-02T00:00:00+00:00")
+    assert rv.last_push_time(t) == "2026-01-02T00:00:00+00:00"
+    ledger.complete(t, "mac-c", "reopened", 15, review_id="R1", item_ids=["R1", "C-c1"])     # same items: ignored
+    assert rv.task_state(t, at(1), LEASE) == "awaiting-review" and rv.reopened_items(t) == []
+    ledger.complete(t, "mac-c", "reopened", 16, review_id="C-c2", item_ids=["C-c2"])         # a new comment
+    assert rv.task_state(t, at(1), LEASE) == "open" and rv.reopened_items(t) == ["C-c2"]
+
+
+def test_old_reopen_record_names_one_review(ledger):
+    t = ledger.task("T1")
+    ledger.complete(t, "mac-a", "pr-opened", 11, pr_url="u")
+    ledger.complete(t, "mac-b", "reopened", 12, review_id="R9")
+    assert rv.reopened_items(t) == ["R9"]
+
+
 def test_rejected_holds_until_replanned(ledger):
     t = ledger.task("T1")
     ledger.claim(t, "mac-a", 10)

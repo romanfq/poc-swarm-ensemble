@@ -81,6 +81,15 @@ def test_plan_implement_done_via_the_skill(world, tmp_path, monkeypatch):
     assert rv.task_state(d, timeutil.now(), 900) == "awaiting-review"
     calls = [json.loads(x) for x in log.read_text().splitlines()]
     assert any(c["args"][:2] == ["pr", "create"] for c in calls)
+    # replying: on the PR, or in a thread that exists
+    assert "replied on the PR" in skill("reply", "--pr", "Kept polling: the feed is paid.")
+    assert any(json.loads(x)["args"][:2] == ["pr", "comment"] for x in log.read_text().splitlines())
+    for bad in (["reply", "--pr", "a", "b"], ["reply", "only-text"], ["reply"]):
+        r = subprocess.run([str(wt / ".swarm-task" / "swarm-task"), *bad], cwd=wt, capture_output=True, text=True)
+        assert r.returncode != 0
+    r = subprocess.run([str(wt / ".swarm-task" / "swarm-task"), "reply", "PRRT_none", "hi"], cwd=wt,
+                       capture_output=True, text=True)
+    assert r.returncode != 0 and "not a conversation on this pull request" in r.stderr + r.stdout
 
 
 def test_wait_and_news_via_the_skill(world, monkeypatch):

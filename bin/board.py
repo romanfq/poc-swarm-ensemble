@@ -44,7 +44,7 @@ from textual.widgets.selection_list import Selection  # noqa: E402
 import resolve  # noqa: E402
 import workers  # noqa: E402
 from backends.base import AUTONOMY_TIERS  # noqa: E402
-from dags import actions, boardview, daemon, draft, feed, gh, snapshot, worktree  # noqa: E402
+from dags import actions, boardview, daemon, draft, feed, gh, review, snapshot, worktree  # noqa: E402
 from dags import records as R  # noqa: E402
 from dags import work as worklib  # noqa: E402
 from dags.config import Context  # noqa: E402
@@ -921,14 +921,15 @@ class BoardApp(App):
                 self.call_from_thread(self.notify, escape(f"poller: {e}"), severity="warning")
         snap = snapshot.take(ctx)
         if self.use_gh and not run_poller:
-            for t in snap.awaiting_review:
+            for t in [x for x in snap.work if x.state == "awaiting-review" or x.res.outcome.kind == "reopened"]:
                 found = gh.repo_from_pr_url(t.pr_url or "")
                 if not found:
                     continue
                 try:
                     pr = gh.pr_view(*found)
                     self.pr_status[t.key] = {"state": pr.get("state"), "review": pr.get("reviewDecision"),
-                                             "checks": gh.checks_summary(pr), "url": t.pr_url}
+                                             "checks": gh.checks_summary(pr), "url": t.pr_url,
+                                             **review.live_counts(*found, pr)}
                 except Exception:  # noqa: BLE001
                     pass
         new_feed = [boardview.feed_line(e.text) for e in feed.new_events(ctx.root, self.seen)]
