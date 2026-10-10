@@ -133,3 +133,26 @@ def test_default_runner_timeout_names_the_call(monkeypatch):
         gh.gh(["pr", "view", "55"])
     assert "gh pr view 55" in str(exc.value) and "timed out after 3s" in str(exc.value)
     assert exc.value.returncode == 124
+
+
+def test_wait_for_checks_reports_each_state_change(monkeypatch):
+    q = {"name": "tests", "status": "QUEUED"}
+    run = {"name": "tests", "status": "IN_PROGRESS"}
+    ok = {"name": "tests", "conclusion": "SUCCESS"}
+    seen = []
+    (summary, _), _ = _waiter(monkeypatch, [{"statusCheckRollup": v} for v in ([q], [q], [run], [ok])],
+                              on_change=lambda *a: seen.append(a))
+    assert summary == "passing"
+    assert seen == [("tests", None, "queued", 0), ("tests", "queued", "in progress", 20),
+                    ("tests", "in progress", "passed", 30)]
+
+
+def test_tail_failed_steps_keeps_the_end_and_strips_control_text():
+    body = "\n".join(f"tests\tRun pytest\t2026-01-01T00:00:0{i % 10}.0Z line {i}" for i in range(200))
+    evil = "tests\tRun pytest\t\x1b[31mE   [red]boom[/red]\x07\x00 ok\x1b[0m"
+    out = gh.tail_failed_steps(body + "\n" + evil, lines=5)
+    assert out.startswith("== tests / Run pytest ==")
+    assert "line 195" not in out and "line 199" in out
+    assert "\x1b" not in out and "\x07" not in out and "\x00" not in out
+    assert "E   [red]boom[/red] ok" in out          # markup-like text is kept as plain text
+    assert len(gh.tail_failed_steps("a\tb\t" + "x" * 50000)) <= 6010

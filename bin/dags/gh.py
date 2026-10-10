@@ -170,20 +170,47 @@ def failing_checks(pr: dict) -> list[str]:
             if (c.get("conclusion") or c.get("state") or "").upper() in ("FAILURE", "ERROR", "CANCELLED", "TIMED_OUT")]
 
 
+def check_states(pr: dict) -> dict[str, str]:
+    """Check name -> a readable state: queued | in progress | passed | failed | skipped."""
+    out = {}
+    for c in pr.get("statusCheckRollup") or []:
+        name = c.get("name") or c.get("context") or "?"
+        raw = (c.get("conclusion") or c.get("state") or c.get("status") or "").upper()
+        if raw in ("FAILURE", "ERROR", "CANCELLED", "TIMED_OUT"):
+            out[name] = "failed"
+        elif raw in ("SUCCESS",):
+            out[name] = "passed"
+        elif raw in ("NEUTRAL", "SKIPPED"):
+            out[name] = "skipped"
+        elif raw in ("IN_PROGRESS", "PENDING", "EXPECTED"):
+            out[name] = "in progress"
+        else:
+            out[name] = "queued"
+    return out
+
+
 def wait_for_checks(repo: str, pr: str | int, timeout: float, interval: float = 10, *, grace: float = 30,
-                    token: str | None = None, sleep=None, clock=None) -> tuple[str, dict]:
+                    token: str | None = None, sleep=None, clock=None, on_change=None) -> tuple[str, dict]:
     """Poll a PR's checks until they settle or ``timeout`` seconds pass. Returns
     (``checks_summary`` value, last PR view): passing | failing | pending (timed out) |
     no checks. An empty rollup is only "no checks" after ``grace`` seconds, because
-    GitHub registers checks a moment after the PR opens."""
+    GitHub registers checks a moment after the PR opens. ``on_change(name, old, new,
+    elapsed)`` is called whenever a check appears or changes state (``old`` is None
+    for a new check)."""
     import time
     sleep = sleep or time.sleep
     clock = clock or time.monotonic
     start = clock()
+    seen: dict[str, str] = {}
     while True:
         view = pr_view(repo, pr, "statusCheckRollup", token=token)
         summary = checks_summary(view)
         elapsed = clock() - start
+        if on_change:
+            for name, state in check_states(view).items():
+                if seen.get(name) != state:
+                    on_change(name, seen.get(name), state, elapsed)
+                    seen[name] = state
         if summary in ("passing", "failing"):
             return summary, view
         if summary == "no checks" and elapsed >= min(grace, timeout):
@@ -191,6 +218,50 @@ def wait_for_checks(repo: str, pr: str | int, timeout: float, interval: float = 
         if elapsed >= timeout:
             return summary, view
         sleep(min(interval, max(timeout - elapsed, 0)))
+
+
+# --- CI failure log (GH-101) --------------------------------------------------
+
+_ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-_]")
+_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+_STAMP = re.compile(r"^\ufeff?\d{4}-\d\d-\d\dT[\d:.]+Z ?")
+
+
+def clean_log_text(text: str) -> str:
+    """CI output is untrusted: drop ANSI escapes and control characters (keeps newline and tab)."""
+    return _CONTROL.sub("", _ANSI.sub("", text or "").replace("\r", "\n"))
+
+
+def tail_failed_steps(log: str, lines: int = 80, max_chars: int = 6000) -> str:
+    """The tail of each failed step in ``gh run view --log-failed`` output
+    (``job<TAB>step<TAB>line``), cleaned, with the whole excerpt capped at ``max_chars``
+    (the end is kept: the pytest summary and ``E ...`` lines)."""
+    steps: dict[tuple[str, str], list[str]] = {}
+    for raw in clean_log_text(log).split("\n"):
+        parts = raw.split("\t", 2)
+        key, line = (((parts[0], parts[1]), parts[2]) if len(parts) == 3 else (("", ""), raw))
+        if not line.strip():
+            continue
+        steps.setdefault(key, []).append(_STAMP.sub("", line).rstrip())
+    blocks = []
+    for (job, step), body in steps.items():
+        head = " / ".join(x for x in (job, step) if x)
+        blocks.append((f"== {head} ==\n" if head else "") + "\n".join(body[-lines:]))
+    text = "\n".join(blocks)
+    return text if len(text) <= max_chars else "...\n" + text[-max_chars:]
+
+
+def failed_log(repo: str, sha: str, token: str | None = None) -> tuple[str, str]:
+    """(run URL, raw ``--log-failed`` text) of the last failed workflow run on ``sha``.
+    Raises GhError when it can't be read (no Actions scope, rate limit) and ValueError
+    when there is no failed run."""
+    runs = gh_json(["run", "list", "--repo", repo, "--commit", sha, "--status", "failure",
+                    "--json", "databaseId,url", "--limit", "1"], token=token) or []
+    if not runs:
+        raise ValueError(f"no failed workflow run found for {sha[:7]}")
+    run = runs[0]
+    return run.get("url") or "", gh(["run", "view", str(run["databaseId"]), "--repo", repo, "--log-failed"],
+                                    token=token)
 
 
 def repo_from_pr_url(url: str) -> tuple[str, str] | None:
