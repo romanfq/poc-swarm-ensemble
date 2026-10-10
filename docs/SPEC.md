@@ -1758,6 +1758,21 @@ git diff --stat && git add -A && git commit -m "Upgrade to <sha>"
 The venv rebuild is silent and takes minutes (§5.2), which is why it is worth
 triggering on purpose rather than discovering it inside a test run.
 
+Once a swarm runs a `bin/` that has the command, the same upgrade is native:
+
+```bash
+./bin/swarm.py stop
+./bin/swarm.py update-from-source <code repo>                  # dry run: shas, added/changed/removed, refusals
+./bin/swarm.py update-from-source <code repo> --apply --commit # swaps bin/ and templates/, writes .dags-source, commits locally
+```
+
+It refuses while a daemon runs here, when SOURCE is dirty, off `main` or behind its
+local `origin/main` (`--allow-dirty`, `--allow-branch` override each), and when
+`--commit` would sweep in something already staged. It manages only `bin/` and
+`templates/`, never pushes, and never restarts anything (D33). The first upgrade
+that brings the command in still needs `tools/upgrade-from-source.sh`; keep it until
+every swarm has made that step (dags-meta, dags-matchwire).
+
 ## C.12 Troubleshooting
 
 | Symptom | Likely cause |
