@@ -753,3 +753,50 @@ def test_note_with_events_stops_on_a_lost_claim(claimed):
     assert any(e["kind"] == "claim-lost" for e in out["events"])
     assert not out["written"] and not out["queued"]
     assert L.read_checkpoint(d).get("summary") != "should not land"
+
+
+# -- GH-101: progress and the failure log -------------------------------------------------------
+
+def _fake_run_log(monkeypatch, log=None, error=None):
+    from dags import gh
+
+    def failed_log(repo, sha, token=None):
+        if error:
+            raise error
+        return "https://github.com/o/r/actions/runs/9", log
+    monkeypatch.setattr(gh, "failed_log", failed_log)
+
+
+def test_done_shows_progress_and_hands_over_the_failure_log(claimed, monkeypatch):
+    world, a, d, wt = claimed
+    _ready_to_finish(world, a, d, wt)
+    kw = _wait_with(a, monkeypatch, [{"name": "tests", "conclusion": "FAILURE"}])
+    _fake_run_log(monkeypatch, "tests\tRun pytest\t\x1b[31mE   shutil.Error [bold]x[/bold]\x1b[0m\x07\n")
+    said = []
+    with pytest.raises(work.WorkError, match="Read .swarm-task/ci-failure.log"):
+        work.finish(a, d, wt, test_runner=OK, say=said.append, **kw)
+    out = "\n".join(said)
+    assert "tests: failed (0s)" in out and "shutil.Error [bold]x[/bold]" in out
+    assert "\x1b" not in out and "\x07" not in out
+    assert "shutil.Error" in (wt / ".swarm-task" / "ci-failure.log").read_text()
+    a.coord.pull()
+    cp = L.read_checkpoint(d)
+    assert "shutil.Error" in cp["ci_failure"] and len(cp["ci_failure"]) < 2300
+    assert not cp.get("checks_wait")
+    assert rv.task_state(d, timeutil.now(), 900) == "in-progress"
+
+
+def test_done_says_why_when_the_log_cannot_be_read(claimed, monkeypatch):
+    from dags import gh
+    world, a, d, wt = claimed
+    _ready_to_finish(world, a, d, wt)
+    kw = _wait_with(a, monkeypatch, [{"name": "tests", "conclusion": "FAILURE"}])
+    _fake_run_log(monkeypatch, error=gh.GhError(["run", "view"], 1, "HTTP 403: resource not accessible"))
+    said = []
+    with pytest.raises(work.WorkError, match="checks failed.*tests") as exc:
+        work.finish(a, d, wt, test_runner=OK, say=said.append, **kw)
+    assert "ci-failure.log" not in str(exc.value)
+    assert any("could not read the CI failure log" in s and "403" in s and "/pull/" in s for s in said)
+    assert not (wt / ".swarm-task" / "ci-failure.log").exists()
+    a.coord.pull()
+    assert rv.task_state(d, timeutil.now(), 900) == "in-progress"
