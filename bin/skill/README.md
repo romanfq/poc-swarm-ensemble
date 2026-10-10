@@ -44,12 +44,27 @@ Don't write any code before the plan is approved.
 ## 2. Implement: `.swarm-task/swarm-task implement`
 
 This prints the approved plan, the checkpoint (what's been tried and what's
-left) and any reviewer feedback. Feedback is tagged `fix:`, `explain:` or
-`reject-approach:`. Work against the plan, not the raw ticket. Record progress
-as you go, so anyone can resume if you stop:
+left) and, when the task was reopened by a review or comment on the PR, what
+that said, followed by the open inline conversations. It is plain language, so
+read it as a colleague would. Work against the plan, not the raw ticket. Record
+progress as you go, so anyone can resume if you stop:
 
     .swarm-task/swarm-task note --tried "cached the feed client" --remaining "parse scores" "tests"
     .swarm-task/swarm-task note --summary "Adds a 60s poller for the sports feed" --risk "rate limits"
+
+For each comment on the PR, change the code and say what changed, or answer the
+question, or push back with a reason. The text that triggered the round is your
+instruction; the open conversations are context. Answer in the PR, as a colleague
+would:
+
+    .swarm-task/swarm-task reply THREAD_ID "Renamed it, and added a test"
+    .swarm-task/swarm-task reply --pr "Kept polling: the push feed needs a paid plan"
+
+If every comment was answered and nothing needed a code change, `done` records
+the round without a new commit. It refuses if the triggering review or comment
+got neither a reply nor a commit. Don't resolve threads: the reviewer does. If a
+comment means the whole approach is wrong, run
+`.swarm-task/swarm-task block "approach rejected: ..."` and stop.
 
 If you need a decision from a human, ask and then **wait** for the answer. Don't guess:
 

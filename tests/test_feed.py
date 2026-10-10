@@ -167,3 +167,14 @@ def test_feed_keeps_the_whole_question_for_the_log():
     long = "Why? " * 100
     text = feed._describe_event("T1", "Jane", "mac-a", {"kind": "needs-human", "question": long})
     assert text.endswith(f"'{long}'")
+
+
+def test_feed_says_when_the_worker_answered_a_review(ledger):
+    t = ledger.task("T1")
+    ledger.complete(t, "mac-a", "pr-opened", 11, pr_url="https://github.com/o/r/pull/3", answered=3)
+    ledger.complete(t, "mac-a", "pr-opened", 12, pr_url="https://github.com/o/r/pull/3", answered=1)
+    ledger.complete(t, "mac-a", "reopened", 13, review_id="R1")
+    texts = [e.text for e in feed.all_events(ledger.root)]
+    assert any(x.startswith("worker answered 3 comments on ") for x in texts)
+    assert any(x.startswith("worker answered 1 comment on ") for x in texts)
+    assert any(x.startswith("New feedback on the PR for ") for x in texts)

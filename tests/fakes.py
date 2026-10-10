@@ -190,6 +190,7 @@ class FakePRs:
     def __init__(self):
         self.prs: dict[tuple[str, int], dict] = {}
         self.calls: list[dict] = []
+        self.replies: list[tuple[str, str, str | None]] = []     # (thread id, text, token)
         self.next = 1
 
     def add(self, repo, branch, state="OPEN", files=(), reviews=(), checks=()):
@@ -206,11 +207,36 @@ class FakePRs:
         return self.prs[(repo, int(n))]
 
     @staticmethod
+    def add_thread(pr, thread_id, path, line, comments, resolved=False, outdated=False, hunk="@@ -1 +1 @@\n+x"):
+        """An inline review thread on a PR; comments are (login, body) pairs."""
+        pr.setdefault("threads", []).append({
+            "id": thread_id, "isResolved": resolved, "isOutdated": outdated, "path": path, "line": line,
+            "originalLine": line,
+            "comments": {"nodes": [{"author": {"login": a}, "body": b, "createdAt": "2026-01-01T00:00:00Z",
+                                    "diffHunk": hunk} for a, b in comments]}})
+
+    def _graphql(self, args, env):
+        fields = dict(a.split("=", 1) for a in args if "=" in a and not a.startswith("--"))
+        if "addPullRequestReviewThreadReply" in fields["query"]:
+            for pr in self.prs.values():
+                for t in pr.get("threads", []):
+                    if t["id"] == fields["thread"]:
+                        t["comments"]["nodes"].append({"author": {"login": "bot"}, "body": fields["body"],
+                                                       "createdAt": "t", "diffHunk": ""})
+            self.replies.append((fields["thread"], fields["body"], env.get("GH_TOKEN")))
+            return "{}"
+        pr = self.prs[(f"{fields['owner']}/{fields['name']}", int(fields["number"]))]
+        return json.dumps({"data": {"repository": {"pullRequest": {
+            "reviewThreads": {"nodes": pr.get("threads", [])}}}}})
+
+    @staticmethod
     def _opt(args, name, default=None):
         return args[args.index(name) + 1] if name in args else default
 
     def __call__(self, args, env, input):
         self.calls.append({"args": args, "token": env.get("GH_TOKEN"), "input": input})
+        if args[:2] == ["api", "graphql"]:
+            return self._graphql(args, env)
         if args[0] != "pr":
             raise AssertionError(f"unexpected gh call {args}")
         repo = self._opt(args, "--repo")

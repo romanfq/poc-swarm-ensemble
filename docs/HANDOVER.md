@@ -133,7 +133,8 @@ frontend `~/Documents/DAGS/matchwire/fe/matchwire-frontend`.
 - **D21: the skill stays stdlib-only.** `.swarm-task/swarm-task` delegates to
   `swarm.py task …` via the venv Python in `.swarm-task/context.json`.
 - **D22: outcome records** in `completions/`: `pr-opened`, `done`, `reopened`,
-  `rejected`, `replanned`. New `CHANGES_REQUESTED` → `reopened`, task resumes
+  `rejected`, `replanned`. A recognised human's request for changes, review comment or
+  PR comment (GH-6; `item_ids` on the record) → `reopened`, task resumes
   from checkpoint on any machine. PR closed unmerged → `rejected`, cleared by
   a human setting `swarm:status:ready` (records `replanned`).
 - **D23: venv.** `.swarm/venv` created and re-exec'd into on first run,

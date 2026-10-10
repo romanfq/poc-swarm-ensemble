@@ -49,18 +49,6 @@ def test_repo_from_pr_url():
     assert gh.repo_from_pr_url("nope") is None
 
 
-def test_parse_feedback_tags():
-    pr = {"reviews": [{"author": {"login": "jane"}, "state": "CHANGES_REQUESTED", "submittedAt": "t1",
-                       "body": "Looks close.\nfix: handle null scores\nexplain: why a new cache?"}],
-          "comments": [{"author": {"login": "roman"}, "createdAt": "t2",
-                        "body": "Reject-Approach: polling is wrong, use the push feed"}]}
-    items = gh.parse_feedback(pr)
-    assert [(i["tag"], i["text"]) for i in items] == [
-        ("fix", "handle null scores"), ("explain", "why a new cache?"),
-        ("reject-approach", "polling is wrong, use the push feed")]
-    assert items[0]["author"] == "jane" and items[2]["state"] == "COMMENT"
-
-
 def test_approve_and_merge_runs_both_commands_in_order(fake_gh, monkeypatch):
     monkeypatch.delenv("GH_TOKEN", raising=False)
     gh.approve_and_merge("org/app", 42)

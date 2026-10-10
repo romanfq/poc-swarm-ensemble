@@ -6,7 +6,7 @@ Each cycle:
   2. diff against the last-seen state (.swarm/poller-state.json): newly
      awaiting review, stale heartbeats, more than one live claim;
   3. for tasks with an open PR, read live review/CI state with gh; merged ->
-     done, closed -> rejected, new changes-requested review -> reopened;
+     done, closed -> rejected, a recognised human's request for changes, review comment or PR comment -> reopened;
      overlapping files between open swarm PRs -> merge-order decision;
   4. notify (log file, desktop, webhook);
   5. escalate a repeatedly racing task as "needs arbitration".
@@ -27,7 +27,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import resolve  # noqa: E402
-from dags import actions, boardview, feed, gh, snapshot, worktree  # noqa: E402
+from dags import actions, boardview, feed, gh, review, snapshot, worktree  # noqa: E402
 from dags import ledger as L  # noqa: E402
 from dags import records as R  # noqa: E402
 from dags import timeutil  # noqa: E402
@@ -203,7 +203,8 @@ class Poller:
                 continue
             unconfirmed.pop(t.key, None)
             rep.pr_status[t.key] = {"state": pr.get("state"), "review": pr.get("reviewDecision"),
-                                    "checks": gh.checks_summary(pr), "url": t.pr_url}
+                                    "checks": gh.checks_summary(pr), "url": t.pr_url,
+                                    **review.live_counts(repo, number, pr)}
             state = pr.get("state")
             red = self.state["checks_red"]
             if t.state != "awaiting-review":
@@ -232,20 +233,24 @@ class Poller:
                 continue
             open_prs.append((t, repo, number))
             seen = set(self.state["reviews_seen"].get(t.key, []))
-            seen |= {str(d.get("review_id")) for _, d in R.read_dir(t.dir / "completions")
-                     if d.get("kind") == "reopened" and d.get("review_id")}
-            for review in pr.get("reviews") or []:
-                rid = str(review.get("id") or f"{review.get('submittedAt')}-{(review.get('author') or {}).get('login')}")
-                if review.get("state") != "CHANGES_REQUESTED" or rid in seen:
-                    continue
-                seen.add(rid)
-                L.complete(self.ctx, t.dir, "reopened", pr_url=t.pr_url, review_id=rid,
-                           reviewer=(review.get("author") or {}).get("login"))
+            for _, d in R.read_dir(t.dir / "completions"):
+                if d.get("kind") == "reopened":
+                    seen |= {str(i) for i in d.get("item_ids") or []}
+                    if d.get("review_id"):
+                        seen.add(str(d["review_id"]))
+            bot = (self.ctx.bot_identity() or (None,))[0]
+            items = review.triggers(pr, self.ctx.human_by_github, bot, resolve.last_push_time(t.dir), seen)
+            if items:
+                first = items[0]
+                seen |= {i.id for i in items}
+                L.complete(self.ctx, t.dir, "reopened", pr_url=t.pr_url, review_id=first.id,
+                           item_ids=[i.id for i in items], reviewer=first.author)
                 self._backend(t, "ready", None)
+                what = ("Changes requested on" if first.state == "CHANGES_REQUESTED"
+                        else "New comments from a reviewer on")
                 rep.add("changes-requested",
-                        f"Changes requested on {t.short} by {(review.get('author') or {}).get('login')}; "
+                        f"{what} {t.short} by {first.author}; "
                         f"it goes back to the queue and resumes from its checkpoint")
-                break
             self.state["reviews_seen"][t.key] = sorted(seen)
         self._overlaps(open_prs, rep)
 

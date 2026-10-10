@@ -856,7 +856,7 @@ def task_still_working(key: str):
 @task_app.command("context")
 @guarded
 def task_context(key: str):
-    """Checkpoint, plan status and PR feedback as JSON (swarm-task implement)."""
+    """Checkpoint, plan status and the PR conversation as JSON (swarm-task implement)."""
     typer.echo(json.dumps(work.implement_gate(ctx(), task_dir(key)), default=str, indent=2))
 
 
@@ -887,6 +887,16 @@ def task_note(key: str,
 def task_submit_plan(key: str, file: Path = typer.Option(..., "--file", exists=True, dir_okay=False)):
     status = work.submit_plan(ctx(), task_dir(key), file.read_text(encoding="utf-8"))
     typer.echo(status)
+
+
+@task_app.command("reply")
+@guarded
+def task_reply(key: str,
+               worktree_path: Path = typer.Option(..., "--worktree", exists=True, file_okay=False),
+               text: str = typer.Option(..., "--text"),
+               thread: Optional[str] = typer.Option(None, "--thread")):
+    """Answer on the pull request as the worker: in an inline thread, or as a PR comment (GH-6)."""
+    typer.echo(work.pr_reply(ctx(), task_dir(key), worktree_path, text, thread))
 
 
 @task_app.command("block")

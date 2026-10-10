@@ -1109,24 +1109,37 @@ same idiom covers waiting on an answer, a test-scope decision, and checks after
 Feedback reaches a worker through the poller, which reads each open pull request
 and records what changed.
 
-**A "Request changes" review binds.** It records a `reopened` completion, the
-task returns to the queue, and the next worker is shown the feedback by
-`swarm-task implement`. Lines tagged `fix:`, `explain:` or `reject-approach:` are
-the actionable items; a `reject-approach:` tells the worker to stop and re-plan
-rather than patch.
+**The worker acts like a colleague on a PR (GH-6).** A task awaiting review is
+reopened when a recognised human (`humans.yaml`) has, since the worker's last
+push, either submitted a review that requests changes (whatever its text), or
+written something to the worker: a submitted review in the "Comment" state with
+a body, or a comment in the PR conversation. The reopen records the ids of those
+reviews and comments (`item_ids`) and each is acted on once. Not triggers: an
+approval (with or without text), an inline comment on its own or inside a review
+that has no body, anything from someone not in `humans.yaml`, and anything the
+bot wrote. To ask for changes through inline comments, leave them and submit
+**Request changes** ("check the open conversations").
 
-**A comment from a recognised human surfaces but does not reopen** (D29). It is
-shown on the Board and to the worker, and it does not by itself put the task back
-in the queue. The distinction is deliberate: discussion and instruction are
-different acts, and conflating them turns every passing remark into work. The
-cost is that a comment-only review can be missed, which has happened — so the
-Board shows comment and unresolved-thread counts, and a "new since you looked"
-marker, rather than relying on the reviewer to use the right control.
+**No tags, no keywords.** `swarm-task implement` prints the triggering text
+as written (author, time), then the open inline threads: file, line, the diff
+hunk, every comment from a recognised human, outdated threads marked. The threads
+are context; the instruction is the triggering text. For each comment the worker
+changes the code and says what changed, or answers the question, or pushes back
+with a reason; if the whole approach is wrong it uses
+`swarm-task block "approach rejected: ..."`.
 
-Inline review threads are read through GraphQL `reviewThreads`, with path, line
-and resolution state, and passed to the worker with the file and line. Most of
-§9.4's richer behaviour — the detail screen, sending work back from the Board,
-resolving threads — is specified and not yet built (`#6`).
+**The worker answers on the PR.** `swarm-task reply THREAD_ID "text"` replies in
+a thread; `swarm-task reply --pr "text"` comments on the PR. A round that needed
+no code change ends when `swarm-task done` finds replies and no new work: it
+records the round as handled with no commit, no PR comment and no CI wait.
+`done` refuses if the triggering review or comment got neither a reply nor a new
+commit. Threads are resolved by the reviewer. Nothing swarm-specific is put on
+the PR: no "updated by" comment, no ledger path in the description, no markers.
+
+**The Board is for awareness.** The review table shows the PR's comment count
+and open-thread count, and "responding" while the worker is answering a review;
+the activity feed says `worker answered 3 comments on GH-NN`. Review and merge
+happen on GitHub.
 
 ## 9.5 Arbitration
 
@@ -1535,14 +1548,14 @@ not to build it.
 | D19 | GitHub keys are `OWNER/REPO#N` with short key `GH-N`; ledger paths are `tasks/<EPIC>/<TASK>`, epics at `_epic`, loose tasks at `_no-epic`. | Human-friendly names on the Board and in branch names, with permanent keys underneath. | 4.1 | Done |
 | D20 | **Plan gate records:** the plan and its hash live in the checkpoint; approvals are append-only `plan-reviews/`; a changed plan needs a new approval. | The checkpoint is single-writer, but the approving human may be on another machine. | 9.1, 10.2 | Done |
 | D21 | The **injected skill is stdlib-only** and delegates to `swarm.py task …`, configured by `.swarm-task/context.json`. | It must run in any worktree without a venv on its path. | 7.3, 9.3 | Done |
-| D22 | **Outcome records:** `pr-opened`, `done`, `reopened`, `rejected`, `replanned`. | Makes the request-changes and reject-approach paths computable from the ledger. | 9.4 | Done |
+| D22 | **Outcome records:** `pr-opened`, `done`, `reopened`, `rejected`, `replanned`. A `reopened` record carries the ids of the reviews and comments behind it (`item_ids`); a `pr-opened` record may say the round was answered without a push. | Makes the feedback and reject-approach paths computable from the ledger. | 9.4 | Done |
 | D23 | **The venv is self-installing and stamped** by platform, architecture, Python version and a requirements hash, and rebuilt when the stamp does not match. | A folder shared with a virtual machine can hold a venv built for the wrong system. | 5.2 | Done |
 | D24 | **Notifications** always append to `.swarm/notifications.log`; desktop and webhook are opt-in. | The log is the one channel that always works, with no service. | 9.6 | Done |
 | D25 | **Plan seeding** from a YAML file, idempotent through a hidden `dags-seed` marker, dry run by default. | A twenty-one issue plan with forty-seven links is not worth typing, and a failed run must be safe to repeat. | 3.6 | Done |
 | D26 | **The plan is opt-in:** `plan_scope: labelled` by default. Membership is any `swarm:` or `type:` label, or being the ancestor of something that has one. | A plan repository that people also use turned every stray issue into claimable work. | 3.4 | Done |
 | D27 | **One coordination repository per swarm, holding no product code.** | Ledger commits swamped a code history, branch protection blocked the daemon's pushes outright, and a worker's worktree sat inside the live ledger. | 4.6 | Done |
 | D28 | **The tracker is a human input surface.** `swarm:status:ready` means "a human says this may be worked"; computed readiness is never written back; labels that have stopped applying are retired on completion. | The alternative makes the tracker self-describing at the cost of a write loop that drifts when sync fails. The tracker stays the place humans state intent. | 3.2 | Specified |
-| D29 | **A "Request changes" review binds; a comment from a recognised human surfaces without reopening.** | Discussion and instruction are different acts. Conflating them makes every passing remark into work; ignoring comments entirely loses real feedback, so they are shown instead. | 9.4 | Partly done |
+| D29 | **A "Request changes" review binds; a comment from a recognised human surfaces without reopening.** *Superseded by GH-6: a submitted review with a body, or a PR comment, from a recognised human now reopens too (§9.4).* | Discussion and instruction are different acts. Conflating them makes every passing remark into work; ignoring comments entirely loses real feedback, so they are shown instead. | 9.4 | Partly done |
 | D30 | **The ledger is the source of truth for autonomy**, and the tracker label mirrors it. A plan-level question drops a task out of `self-approve` **for that run only**; a downgrade can be undone. | A downgrade recorded in the ledger already beat the label, with no way to reverse it — so a single question could permanently change a task's tier. | 8.3 | Specified |
 | D31 | **Liveness lives outside the branch**, in `refs/dags/live/<machine>`, migrated by dual-read. | Heartbeats were half of all ledger commits and have no historical value. Moving them makes commit volume a function of work rather than time, and lets beats get *more* frequent with a shorter lease. | 4.5 | Specified |
 | D32 | **Worktrees live in the code repository's checkout**, kept out of git by `info/exclude`, with a per-repo override. | Inside the coordination repository, an agent walked up the tree into the swarm's own rules. Outside both repositories, project ancestry resolves to nothing and then to `$HOME`. | 7.3 | Specified |
@@ -1708,8 +1721,7 @@ worker (§9.3). A plan edited after approval needs approving again (D20).
 ## C.7 Review a pull request
 
 `O` opens it. Request changes to send it back to the queue with the feedback
-attached; `fix:`, `explain:` and `reject-approach:` lines are the actionable
-items (§9.4). `m` approves and merges, warning first if the checks are red or
+attached; any plain-language comment is read by the worker (§9.4). `m` approves and merges, warning first if the checks are red or
 pending. With several pull requests open, merge one at a time and let the default
 branch's workflow go green between merges (§11.4).
 

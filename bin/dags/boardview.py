@@ -18,7 +18,7 @@ from dags import daemon, feed, snapshot
 UNCONFIRMED_AFTER = 3
 
 CLAIM_COLUMNS = ("task", "state", "title", "worker", "lease", "machine", "human", "clock")
-REVIEW_COLUMNS = ("task", "review", "checks", "PR", "title")
+REVIEW_COLUMNS = ("task", "review", "checks", "comments", "PR", "title")
 ARBITRATION_COLUMNS = ("task", "claimants", "why")
 PLAN_COLUMNS = ("task", "title", "machine", "plan")
 TEST_COLUMNS = ("task", "machine", "recommended", "reason", "time")
@@ -209,15 +209,27 @@ def pr_label(url: str | None) -> str:
     return f"#{m.group(1)}" if m else (url or "")
 
 
+def comments_cell(st: dict) -> str:
+    """`3 (1 open)`: comments on the PR and the inline threads still unresolved; `-` before it is read."""
+    if st.get("comments") is None:
+        return "-"
+    open_threads = st.get("threads")
+    return f"{st['comments']}" + (f" ({open_threads} open)" if open_threads else "")
+
+
 def review_rows(snap: snapshot.Snapshot, pr_status: dict[str, dict]) -> list[tuple[str, tuple]]:
+    """The review table: PRs awaiting a human, then PRs the worker is answering (reopened by a review)."""
     rows = []
-    for t in snap.awaiting_review:
+    for t in snap.work:
+        responding = t.res.outcome.kind == "reopened" and t.state != "done"
+        if t.state != "awaiting-review" and not responding:
+            continue
         st = pr_status.get(t.key) or {}
-        review = (st.get("review") or "pending").replace("_", " ").lower()
+        review = "responding" if responding else (st.get("review") or "pending").replace("_", " ").lower()
         checks = st.get("checks") or "?"
         if st.get("unconfirmed"):
             checks = f"unconfirmed ({st['unconfirmed']})"
-        rows.append((t.key, (t.short, review, checks, pr_label(t.pr_url), t.title)))
+        rows.append((t.key, (t.short, review, checks, comments_cell(st), pr_label(t.pr_url), t.title)))
     return rows
 
 

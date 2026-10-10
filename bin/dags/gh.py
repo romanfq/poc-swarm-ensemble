@@ -275,21 +275,40 @@ def approve_and_merge(repo: str, pr: str | int, body: str = "Approved via Swarm 
     gh(["pr", "merge", str(pr), "--repo", repo, "--squash"])
 
 
-REVIEW_TAGS = ("fix", "explain", "reject-approach")
+_THREADS_QUERY = """query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){
+pullRequest(number:$number){reviewThreads(first:100){nodes{id isResolved isOutdated path line originalLine
+comments(first:50){nodes{author{login} body createdAt diffHunk}}}}}}}"""
+
+_REPLY_MUTATION = """mutation($thread:ID!,$body:String!){addPullRequestReviewThreadReply(
+input:{pullRequestReviewThreadId:$thread,body:$body}){comment{id}}}"""
 
 
-def parse_feedback(pr: dict) -> list[dict]:
-    """Tagged human feedback (Ch.9.3): lines starting with fix:/explain:/reject-approach:."""
-    items = []
-    sources = []
-    for r in pr.get("reviews") or []:
-        sources.append((r.get("author", {}).get("login"), r.get("body") or "", r.get("submittedAt"), r.get("state")))
-    for c in pr.get("comments") or []:
-        sources.append((c.get("author", {}).get("login"), c.get("body") or "", c.get("createdAt"), "COMMENT"))
-    for author, body, when, state in sources:
-        for line in body.splitlines():
-            m = re.match(r"\s*(fix|explain|reject-approach)\s*:\s*(.+)", line, re.I)
-            if m:
-                items.append({"tag": m.group(1).lower(), "text": m.group(2).strip(),
-                              "author": author, "at": when, "state": state})
-    return items
+def parse_threads(data: dict) -> list[dict]:
+    """The inline review threads of a PR from the GraphQL answer, in a plain shape."""
+    pr = ((data.get("data") or {}).get("repository") or {}).get("pullRequest") or {}
+    out = []
+    for node in ((pr.get("reviewThreads") or {}).get("nodes")) or []:
+        comments = [{"author": (c.get("author") or {}).get("login"), "body": c.get("body") or "",
+                     "at": c.get("createdAt")} for c in ((node.get("comments") or {}).get("nodes")) or []]
+        first = (((node.get("comments") or {}).get("nodes")) or [{}])[0]
+        out.append({"id": node.get("id"), "resolved": bool(node.get("isResolved")),
+                    "outdated": bool(node.get("isOutdated")), "path": node.get("path"),
+                    "line": node.get("line") or node.get("originalLine"),
+                    "hunk": first.get("diffHunk") or "", "comments": comments})
+    return out
+
+
+def review_threads(repo: str, pr: str | int, token: str | None = None) -> list[dict]:
+    owner, _, name = repo.partition("/")
+    data = gh_json(["api", "graphql", "-f", f"query={_THREADS_QUERY}", "-f", f"owner={owner}",
+                    "-f", f"name={name}", "-F", f"number={int(pr)}"], token=token) or {}
+    return parse_threads(data)
+
+
+def reply_thread(thread_id: str, text: str, token: str | None = None) -> None:
+    gh(["api", "graphql", "-f", f"query={_REPLY_MUTATION}", "-f", f"thread={thread_id}", "-f", f"body={text}"],
+       token=token)
+
+
+def comment_on_pr(repo: str, pr: str | int, text: str, token: str | None = None) -> None:
+    gh(["pr", "comment", str(pr), "--repo", repo, "--body-file", "-"], token=token, input=text)
