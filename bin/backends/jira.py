@@ -502,15 +502,16 @@ class JiraBackend(PlanScoped):
         self._note_written(self._id_of(ref.key))
 
     def add_dependency(self, ref: TaskRef, blocker: TaskRef) -> None:
-        """``ref`` is blocked by ``blocker``. In the create payload ``inwardIssue`` is the issue that IS
-        blocked ('is blocked by') and ``outwardIssue`` the blocker ('blocks'); on a READ the entry on the
-        blocked issue carries ``inwardIssue`` = the blocker. Easy to get backwards: both ends are tested."""
+        """``ref`` is blocked by ``blocker``. Jira stores one link per pair and shows it as "inward blocks
+        outward", so the create payload has ``inwardIssue`` = the blocker and ``outwardIssue`` = ``ref``;
+        on a READ the entry on the blocked issue carries ``inwardIssue`` = the blocker. Easy to get
+        backwards: both ends are tested."""
         have = self.client.get_issue(ref.key, ["issuelinks"])
         for link in (have.get("fields") or {}).get("issuelinks") or []:
             if ((link.get("type") or {}).get("name") == self.blocks_link_type
                     and (link.get("inwardIssue") or {}).get("key") == blocker.key):
                 return                                         # already linked: re-posting could duplicate it
-        self.client.create_issue_link(self.blocks_link_type, ref.key, blocker.key)
+        self.client.create_issue_link(self.blocks_link_type, blocker.key, ref.key)
         entry = {"type": {"name": self.blocks_link_type}, "inwardIssue": {"key": blocker.key}}
         self._overlay(ref.key, lambda f: f.setdefault("issuelinks", []).append(entry))
         self._note_written(self._id_of(ref.key))

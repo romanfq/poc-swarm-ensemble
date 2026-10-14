@@ -1,0 +1,5 @@
+{
+  "_note": "Real Jira Cloud shape (GH-135): a link created as inwardIssue={INWARD}, outwardIssue={OUTWARD} means '{INWARD} blocks {OUTWARD}'.",
+  "inward_holder": [{"type": {"name": "Blocks"}, "outwardIssue": {"key": "{OUTWARD}"}}],
+  "outward_holder": [{"type": {"name": "Blocks"}, "inwardIssue": {"key": "{INWARD}"}}]
+}

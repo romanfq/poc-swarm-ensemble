@@ -212,12 +212,12 @@ def test_search_sends_token_and_at_most_50_reconcile_ids():
     assert body["nextPageToken"] == "tk" and len(body["reconcileIssues"]) == 50
 
 
-def test_issue_link_direction_is_blocked_inward_blocker_outward():
+def test_issue_link_direction_is_blocker_inward_blocked_outward():
     w = Wire(ME, (201, {}, {}))
     c, _ = make(w)
-    c.create_issue_link("Blocks", "KAN-2", "KAN-1")      # KAN-2 is blocked by KAN-1
+    c.create_issue_link("Blocks", "KAN-1", "KAN-2")      # KAN-2 is blocked by KAN-1
     body = json.loads(w.calls[1][3])
-    assert body["inwardIssue"]["key"] == "KAN-2" and body["outwardIssue"]["key"] == "KAN-1"
+    assert body["inwardIssue"]["key"] == "KAN-1" and body["outwardIssue"]["key"] == "KAN-2"
 
 
 def test_comments_and_labels_paginate():
