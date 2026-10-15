@@ -921,7 +921,7 @@ class BoardApp(App):
                 self.call_from_thread(self.notify, escape(f"poller: {e}"), severity="warning")
         snap = snapshot.take(ctx)
         if self.use_gh and not run_poller:
-            for t in [x for x in snap.work if x.state == "awaiting-review" or x.res.outcome.kind == "reopened"]:
+            for t in snap.in_review:
                 found = gh.repo_from_pr_url(t.pr_url or "")
                 if not found:
                     continue
@@ -1289,7 +1289,7 @@ class BoardApp(App):
             self.notify(f"{key} is gone — refreshing", severity="warning")
             self.refresh_data()
             return
-        if view.state != "awaiting-review":
+        if view.state != "awaiting-review" and not view.part:
             self.notify(f"{view.short} has no PR awaiting review", severity="warning")
             return
 

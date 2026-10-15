@@ -163,6 +163,10 @@ def _describe(root: Path, path: Path, data: dict) -> Event | None:
         text = {
             "pr-opened": (f"worker answered {answered} comment{'s' if answered != 1 else ''} on {task}" if answered
                           else f"{data.get('worker') or machine} finished {task}. The PR can be found at {url}"),
+            "pr-part-opened": f"{data.get('worker') or machine} opened PR {data.get('part')} of {data.get('parts')} "
+                              f"for {task}: {url}",
+            "part-merged": f"PR {data.get('part')} of {task} was merged; the worker carries on",
+            "part-changes-requested": f"Changes requested on a part PR of {task}: {url}",
             "done": f"{task} is done" + (" (merged)" if not data.get("imported") else " (closed in the tracker)"),
             "reopened": f"New feedback on the PR for {task} — back in the queue",
             "rejected": f"The approach for {task} was rejected (PR closed) — needs re-planning",

@@ -8,6 +8,7 @@ the issue backend or GitHub is delegated to the coordination repo's
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -253,6 +254,18 @@ def cmd_wait(args):
                 if not any(e["kind"] == "plan-approved" for e in fresh):
                     print("[swarm] The plan is approved. Next: `swarm-task implement`.")
                 return 0
+            if want == "merged":
+                part = info.get("part_pr")
+                if not part:
+                    show(fresh)
+                    print("[swarm] No part PR is waiting for a merge.")
+                    return 0
+                if part.get("merged") or [e for e in fresh if e["kind"] == "part-feedback"]:
+                    show(fresh)
+                    if part.get("merged"):
+                        print(f"[swarm] {part.get('url')} was merged. Pull main "
+                              "(`git pull origin main`), then carry on with the next part.")
+                    return 0
             if want in ("answer", "tests"):
                 kinds = {"answer": {"answered", "tests-answered"}, "tests": {"tests-answered"}}[want]
                 if any(e["kind"] in kinds for e in fresh):
@@ -335,7 +348,12 @@ def cmd_done(args):
     pending(needs_claim=True)
     extra = ["--skip-tests"] if args.skip_tests else []
     r = swarm("done", CTX["short"], "--worktree", str(WORKTREE), *extra, capture=True)
-    url = r.stdout.strip().splitlines()[-1] if r.stdout.strip() else ""
+    lines = r.stdout.strip().splitlines()
+    url = lines[-1] if lines else ""
+    part = next((ln for ln in lines if re.match(r"PR \d+ of \d+ opened", ln)), None)
+    if part:                                  # one PR of several (GH-81): the task is not finished
+        print(f"{part}\nPull request: {url}")
+        return
     print(f"Done. Pull request: {url}")
     print("The swarm takes it from here; a human reviews and merges.")
 
@@ -350,7 +368,7 @@ def main(argv=None):
     sub.add_parser("status", help="plan/review status").set_defaults(fn=cmd_status)
     sub.add_parser("implement", help="print the approved plan, checkpoint and what the PR says").set_defaults(fn=cmd_implement)
     sw = sub.add_parser("wait", help="block until the plan is approved, a human answers, or the task changes")
-    sw.add_argument("--for", dest="wait_for", choices=("approved", "answer", "tests", "any"), default="any")
+    sw.add_argument("--for", dest="wait_for", choices=("approved", "answer", "tests", "merged", "any"), default="any")
     sw.add_argument("--timeout", type=float, default=1500, help="seconds; 0 waits forever (default 1500)")
     sw.add_argument("--interval", type=float, default=30, help="seconds between checks (default 30)")
     sw.set_defaults(fn=cmd_wait)

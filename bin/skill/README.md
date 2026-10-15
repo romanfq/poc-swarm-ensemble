@@ -97,3 +97,19 @@ If updating the branch conflicts, `done` leaves the merge in progress and blocks
 the files and the steps. Don't edit the tree: `.swarm-task/swarm-task wait --for answer`,
 then run `done` again. It accepts the human's resolution only if the merge is committed,
 no paths are unmerged and no conflict markers remain.
+
+### More than one PR
+
+A big task can land as several reviewable PRs. Say how many in the plan, on a line of its
+own: `parts: 3` (the default is 1). `done` then opens a PR each time you run it, and the
+last one, the 3rd here, is the one that ends the task. For the others:
+
+    .swarm-task/swarm-task done                  # "PR 1 of 3 opened ..."
+    .swarm-task/swarm-task wait --for merged     # blocks until that PR is merged or reviewed
+    git pull origin main                         # same worktree, same branch
+    ... keep working, then `done` again ...
+
+You keep the task and its slot between PRs. `done` refuses to open the next PR until the
+previous one is merged. If a part PR is closed unmerged, `wait` stops and tells you to
+re-plan. You can't change `parts` yourself: edit `plan.md` and submit it again, and a human
+reviews the change.

@@ -431,6 +431,23 @@ def replies(ctx, task_dir: Path) -> list[dict]:
     return out
 
 
+_PARTS_LINE = re.compile(r"^\s*parts:\s*(\S+)\s*$", re.IGNORECASE | re.MULTILINE)
+
+
+def parse_parts(plan_md: str) -> int:
+    """`parts: N` in plan.md: how many PRs the task will open (GH-81). 1 when absent."""
+    m = _PARTS_LINE.search(plan_md)
+    if not m:
+        return 1
+    try:
+        n = int(m.group(1))
+    except ValueError:
+        n = 0
+    if n < 1:
+        raise WorkError(f"`parts: {m.group(1)}` must be a positive whole number")
+    return n
+
+
 def plan_sha(text: str) -> str:
     return hashlib.sha256(text.strip().encode()).hexdigest()[:12]
 
@@ -441,7 +458,7 @@ def submit_plan(ctx, task_dir: Path, plan_md: str) -> str:
     claim_id = my_claim(ctx, task_dir)
     meta = resolve.read_meta(task_dir)
     sha = plan_sha(plan_md)
-    fields = {"plan_md": plan_md, "plan_sha": sha, "needs_human": None}
+    fields = {"plan_md": plan_md, "plan_sha": sha, "needs_human": None, "parts": parse_parts(plan_md)}
     self_approved = autonomy.is_self_approve(meta.get("autonomy"))
     if self_approved:
         fields["plan_self_approved"] = sha            # self-review allowed (plan §2.8)
@@ -594,7 +611,19 @@ def worker_events(ctx, task_dir: Path, claim_id: str, pull: bool = True) -> dict
         control=L.machine_control(ctx.root, ctx.identity), idle_limit_s=ctx.settings.human_idle_s)
     return {"events": events, "plan_status": resolve.plan_status(task_dir, ctx.human_names),
             "open_question": resolve.open_question(task_dir),
-            "open_tests": (resolve.test_scope_status(task_dir, ctx.human_names) or {}).get("status") == "pending"}
+            "open_tests": (resolve.test_scope_status(task_dir, ctx.human_names) or {}).get("status") == "pending",
+            "part_pr": part_pr_state(task_dir)}
+
+
+def part_pr_state(task_dir: Path) -> dict | None:
+    """The newest part PR and whether it has merged, for `swarm-task wait --for merged` (GH-81).
+    None when the newest PR is not a part."""
+    if resolve.read_outcome(task_dir).kind != "pr-part-opened":
+        return None
+    newest = [d for d in resolve.pr_records(task_dir) if d.get("kind") == "pr-part-opened"][-1]
+    merged = any(d.get("kind") == "part-merged" and d.get("pr_url") == newest["pr_url"]
+                 for _, d in resolve._sorted_records(task_dir / "completions"))
+    return {"url": newest["pr_url"], "merged": merged, "part": resolve.part_label(task_dir)}
 
 
 def still_working(ctx, task_dir: Path) -> None:
@@ -902,6 +931,18 @@ def _answered_round(ctx, task_dir: Path, wt: Path, claim_id: str, cp: dict, labe
     return out.pr_url
 
 
+def _require_parts_merged(task_dir: Path, label: str) -> None:
+    """A new PR needs the previous part merged first, or its diff would repeat that part (GH-81)."""
+    parts = [d for d in resolve.pr_records(task_dir) if d.get("kind") == "pr-part-opened"]
+    if not parts:
+        return
+    merged = {d.get("pr_url") for _, d in resolve._sorted_records(task_dir / "completions")
+              if d.get("kind") == "part-merged"}
+    if parts[-1]["pr_url"] not in merged:
+        raise WorkError(f"{label}: {parts[-1]['pr_url']} has not been merged yet. "
+                        "Run `swarm-task wait --for merged`, pull main, then `done` again.")
+
+
 def finish(ctx, task_dir: Path, wt: Path, *, skip_tests: bool = False, test_runner=subprocess.run,
            say=lambda text: None, wait_sleep=None, wait_clock=None) -> str:
     from dags.gitsync import git
@@ -959,12 +1000,15 @@ def finish(ctx, task_dir: Path, wt: Path, *, skip_tests: bool = False, test_runn
         raise WorkError(f"{label}: nothing new since the PR was opened ({submitted[:7]}); address the "
                         "feedback first: change the code, or answer it with `swarm-task reply`")
 
+    token = ctx.worker_token()
+    existing = gh.pr_for_branch(repo, branch)
+    reuse = bool(existing and existing.get("state") == "OPEN")
+    if not reuse:
+        _require_parts_merged(task_dir, label)
     L.require_mine(ctx, task_dir, claim_id)              # last check before the irreversible steps
     seen_through = _reviewed_through(task_dir)
     git(["push", "-q", "-u", "origin", f"HEAD:refs/heads/{branch}"], wt)
-    token = ctx.worker_token()
-    existing = gh.pr_for_branch(repo, branch)
-    if existing and existing.get("state") == "OPEN":
+    if reuse:
         url = existing["url"]                            # the new commits and the thread replies are the update
     else:
         with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as f:
@@ -978,10 +1022,26 @@ def finish(ctx, task_dir: Path, wt: Path, *, skip_tests: bool = False, test_runn
             Path(body_file).unlink(missing_ok=True)
         url = next((ln.strip() for ln in out.splitlines() if "/pull/" in ln), out.strip())
 
+    # the Nth PR is the last one (GH-81); an update to a part that is still open stays that part
+    total = resolve.parts_declared(task_dir)
+    prior = [d["pr_url"] for d in resolve.pr_records(task_dir) if d.get("kind") == "pr-part-opened"]
+    ordinal = prior.index(url) + 1 if url in prior else len(prior) + 1
+    part = ordinal < total or url in prior
     _await_checks(ctx, task_dir, claim_id, rcfg, url, token, say, wait_sleep, wait_clock, wt)
     worker_label = cp.get("worker_label") or cp.get("worker") or "worker"
     L.update_checkpoint(ctx, task_dir, claim_id, pr_url=url, ci_failure=None, finished_utc=timeutil.iso(), needs_human=None,
-                       **({"test_durations": durations} if durations else {}))
+                        append={"pr_urls": [url]},
+                        **({"test_durations": durations} if durations else {}))
+    if part:
+        L.complete(ctx, task_dir, "pr-part-opened", claim_id=claim_id, pr_url=url, worker=worker_label,
+                   commit=worktree.head(wt), part=ordinal, parts=total,
+                   reviewed_through_utc=seen_through)
+        # the backend stays `in-progress`: the claim and the quota slot are kept (GH-81)
+        _try_backend(ctx, ctx.backend.post_comment, _ref(task_dir),
+                     f"{body}\nPR {ordinal} of {total}: {url}\n")
+        say(f"PR {ordinal} of {total} opened. Wait for it to merge (`swarm-task wait --for merged`), "
+            "pull main, then run `swarm-task done` again.")
+        return url
     L.complete(ctx, task_dir, "pr-opened", claim_id=claim_id, pr_url=url, worker=worker_label,
                commit=worktree.head(wt), reviewed_through_utc=seen_through)
     _try_backend(ctx, ctx.backend.set_status, _ref(task_dir), "awaiting-review")

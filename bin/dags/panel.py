@@ -56,8 +56,9 @@ def status_rows(ctx, identity_new: bool = False, synced: bool = True, sync_note:
     asking = snap.tests_pending()
     if asking:
         rows.append(("tests", "which tests may run: " + ", ".join(t.short for t in asking), "warn"))
-    if snap.awaiting_review:
-        rows.append(("review", ", ".join(f"{t.short} {t.pr_url}" for t in snap.awaiting_review), "warn"))
+    if snap.in_review:
+        rows.append(("review", ", ".join(f"{t.short} {t.pr_url}" + (f" ({t.part})" if t.part else "")
+                                         for t in snap.in_review), "warn"))
     for key, miss in boardview.unconfirmed_prs(ctx.swarm_dir):
         rows.append(("unconfirmed", f"{key} {miss.get('url', '')}: state not read for {miss['polls']} polls "
                                     f"since {miss.get('since', '?')}", "warn"))

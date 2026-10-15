@@ -220,16 +220,15 @@ def comments_cell(st: dict) -> str:
 def review_rows(snap: snapshot.Snapshot, pr_status: dict[str, dict]) -> list[tuple[str, tuple]]:
     """The review table: PRs awaiting a human, then PRs the worker is answering (reopened by a review)."""
     rows = []
-    for t in snap.work:
+    for t in snap.in_review:
         responding = t.res.outcome.kind == "reopened" and t.state != "done"
-        if t.state != "awaiting-review" and not responding:
-            continue
         st = pr_status.get(t.key) or {}
         review = "responding" if responding else (st.get("review") or "pending").replace("_", " ").lower()
         checks = st.get("checks") or "?"
         if st.get("unconfirmed"):
             checks = f"unconfirmed ({st['unconfirmed']})"
-        rows.append((t.key, (t.short, review, checks, comments_cell(st), pr_label(t.pr_url), t.title)))
+        pr = pr_label(t.pr_url) + (f" ({t.part})" if t.part else "")
+        rows.append((t.key, (t.short, review, checks, comments_cell(st), pr, t.title)))
     return rows
 
 
