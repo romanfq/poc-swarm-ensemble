@@ -318,7 +318,7 @@ class FakeJira:
             "parent": {"key": self.names[parent]} if parent else None,
             "issuelinks": []}}
         for d in deps:
-            self._link("Blocks", key, self.names[d])
+            self._link("Blocks", self.names[d], key)
         self.comments[key] = []
         if index:
             self.settle()
@@ -327,11 +327,13 @@ class FakeJira:
     def settle(self):
         self.index = self._copy.deepcopy(self.issues)
 
-    def _link(self, type_name, blocked, blocker):
-        self.issues[blocked]["fields"]["issuelinks"].append(
-            {"type": {"name": type_name}, "inwardIssue": {"key": blocker}})
-        self.issues[blocker]["fields"]["issuelinks"].append(
-            {"type": {"name": type_name}, "outwardIssue": {"key": blocked}})
+    def _link(self, type_name, inward, outward):
+        """Jira's model: a link created as (inward=X, outward=Y) reads "X blocks Y"; X holds it as
+        ``outwardIssue: Y`` and Y holds it as ``inwardIssue: X``."""
+        self.issues[inward]["fields"]["issuelinks"].append(
+            {"type": {"name": type_name}, "outwardIssue": {"key": outward}})
+        self.issues[outward]["fields"]["issuelinks"].append(
+            {"type": {"name": type_name}, "inwardIssue": {"key": inward}})
 
     def human_comment(self, key, author, adf_body):
         self.tick += 1
@@ -414,7 +416,7 @@ class FakeJira:
     def create_issue_link(self, type_name, inward_key, outward_key):
         self.calls.append(("link", type_name, inward_key, outward_key))
         self._get(inward_key), self._get(outward_key)
-        self._link(type_name, inward_key, outward_key)       # inward is the blocked issue
+        self._link(type_name, inward_key, outward_key)
 
     def add_comment(self, key, adf_body, properties=None):
         self.calls.append(("add_comment", key))

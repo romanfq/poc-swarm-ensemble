@@ -1,5 +1,6 @@
 """Jira adapter specifics beyond the shared contract (GH-123): lag, labels, links, workflow, comments."""
 import json
+from pathlib import Path
 
 import pytest
 
@@ -161,9 +162,27 @@ def test_dependency_direction_round_trips_and_is_not_duplicated():
     c = fake.add("B", "blocked")
     b.add_dependency(TaskRef(c), TaskRef(a))
     b.add_dependency(TaskRef(c), TaskRef(a))                          # second call: already linked
-    assert [x for x in fake.calls if x[0] == "link"] == [("link", "Blocks", c, a)]   # inward = the blocked one
+    assert [x for x in fake.calls if x[0] == "link"] == [("link", "Blocks", a, c)]   # inward = the blocker
     assert b.dependencies(TaskRef(c)) == [TaskRef(a)]
     assert b.dependencies(TaskRef(a)) == []
+    assert b.get_task(TaskRef(c)).dependencies == [TaskRef(a)]
+    assert b.get_task(TaskRef(a)).dependencies == []
+
+
+def test_fake_links_match_the_real_jira_shape():
+    """Golden: the shape a real Jira Cloud site returned (GH-135). A link created as inward X, outward Y
+    reads back as X holding ``outwardIssue`` Y and Y holding ``inwardIssue`` X."""
+    golden = json.loads((Path(__file__).parent / "fixtures" / "jira_blocks_link.json").read_text())
+    fake, _ = make()
+    x, y = fake.add("X", "blocker"), fake.add("Y", "blocked")
+    fake.create_issue_link("Blocks", x, y)
+    got = {k: fake.issues[k]["fields"]["issuelinks"] for k in (x, y)}
+    assert got[x] == [{"type": {"name": "Blocks"}, "outwardIssue": {"key": y}}] == _fill(golden["inward_holder"], x, y)
+    assert got[y] == [{"type": {"name": "Blocks"}, "inwardIssue": {"key": x}}] == _fill(golden["outward_holder"], x, y)
+
+
+def _fill(links, x, y):
+    return json.loads(json.dumps(links).replace("{INWARD}", x).replace("{OUTWARD}", y))
 
 
 def test_set_parent():
