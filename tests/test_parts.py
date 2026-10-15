@@ -42,6 +42,8 @@ def _merge(world, a, d, url):
 def test_parse_parts():
     assert work.parse_parts("no declaration") == 1
     assert work.parse_parts("# Plan\nparts: 3\n") == 3
+    assert work.parse_parts("parts: 3 # three PRs") == 3          # a trailing comment is ignored
+    assert work.parse_parts("parts: 03") == 3
     for bad in ("parts: 0", "parts: many", "parts: -2"):
         with pytest.raises(work.WorkError, match="positive"):
             work.parse_parts(bad)
@@ -193,3 +195,40 @@ def test_the_feed_describes_a_part_pr(claimed):
     from dags import feed
     texts = [e.text for e in feed.all_events(a.root)]
     assert any("opened PR 1 of 2" in t for t in texts)
+
+
+def test_pr_records_has_one_dict_per_url_in_the_order_opened(claimed):
+    world, a, d, wt = claimed
+    A, B = "https://github.com/OWNER/app/pull/1", "https://github.com/OWNER/app/pull/2"
+    L.complete(a, d, "pr-part-opened", pr_url=A, commit="c1")
+    L.complete(a, d, "pr-part-opened", pr_url=B, commit="c2")
+    L.complete(a, d, "pr-part-opened", pr_url=A, commit="c3")      # an update to the first part
+    records = rv.pr_records(d)
+    assert [r["pr_url"] for r in records] == [A, B]
+    assert records[0]["commit"] == "c3"                             # the newest record of that PR
+    assert rv.parts_opened(d) == 2
+
+
+def test_only_a_plan_submission_changes_parts(claimed):
+    world, a, d, wt = claimed
+    work.submit_plan(a, d, "plan\nparts: 3\n")
+    work.note(a, d, summary="progress")
+    assert rv.parts_declared(d) == 3
+    work.submit_plan(a, d, "plan\nparts: 2\n")                   # a re-plan
+    assert rv.parts_declared(d) == 2 and L.read_checkpoint(d)["parts"] == 2
+    work.note(a, d, summary="more progress", tried=["x"])
+    assert rv.parts_declared(d) == 2
+
+
+def test_ledger_readers_tolerate_an_unknown_completion_kind(claimed):
+    world, a, d, wt = claimed
+    _start(world, a, d, wt, 2)
+    _change(wt, "one\n")
+    url = work.finish(a, d, wt, test_runner=OK)
+    L.complete(a, d, "a-kind-from-the-future", pr_url=url)
+    a.coord.pull()
+    assert rv.read_outcome(d).kind == "pr-part-opened"
+    assert rv.task_state(d, timeutil.now(), 900) == "in-progress"
+    assert [r["pr_url"] for r in rv.pr_records(d)] == [url]
+    assert rv.last_submitted_commit(d) == worktree.head(wt)
+    snapshot.take(a)                                               # the Board's reader copes too

@@ -431,7 +431,7 @@ def replies(ctx, task_dir: Path) -> list[dict]:
     return out
 
 
-_PARTS_LINE = re.compile(r"^\s*parts:\s*(\S+)\s*$", re.IGNORECASE | re.MULTILINE)
+_PARTS_LINE = re.compile(r"^\s*parts:\s*(\S+)", re.IGNORECASE | re.MULTILINE)   # first token: `parts: 3 # note` is 3
 
 
 def parse_parts(plan_md: str) -> int:
@@ -1003,6 +1003,8 @@ def finish(ctx, task_dir: Path, wt: Path, *, skip_tests: bool = False, test_runn
     token = ctx.worker_token()
     existing = gh.pr_for_branch(repo, branch)
     reuse = bool(existing and existing.get("state") == "OPEN")
+    # Reusing the open PR needs no merged-parts check: it is already the newest PR, and its part
+    # number comes from the recorded part PRs below (GH-81). Only a new PR must wait for the last part.
     if not reuse:
         _require_parts_merged(task_dir, label)
     L.require_mine(ctx, task_dir, claim_id)              # last check before the irreversible steps

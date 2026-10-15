@@ -138,7 +138,7 @@ class Poller:
             expired = [c for c in t.res.claims
                        if c not in t.res.valid and c.id not in resolve.read_withdrawals(t.dir)
                        and c.id not in t.res.outcome.completed_claims]
-            if expired and t.state in ("open",) and not t.res.outcome.kind:
+            if expired and t.state in ("open",) and t.res.outcome.kind in (None, "pr-part-opened"):
                 latest = max(expired, key=lambda c: c.sort_key)
                 stale_now.append(latest.id)
                 if latest.id not in self.state["stale"] and not quiet:
