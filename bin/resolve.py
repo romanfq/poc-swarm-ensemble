@@ -175,7 +175,7 @@ def is_expired(claim: Claim, heartbeats: dict[str, dict], now: datetime, lease_s
 
 @dataclass
 class Outcome:
-    kind: str | None = None          # pr-opened | done | reopened | rejected | replanned | None
+    kind: str | None = None          # pr-part-opened | pr-opened | done | reopened | rejected | replanned | None
     pr_url: str | None = None
     claim_id: str | None = None
     record: dict | None = None
@@ -183,6 +183,10 @@ class Outcome:
 
 
 TERMINAL_HOLD = {"pr-opened", "done", "rejected"}
+
+# GH-81: a task may open several PRs. All but the last are `pr-part-opened`: not terminal and not
+# in TERMINAL_HOLD, so the claim stays live and the task reads `in-progress` (the slot stays held).
+PART_KINDS = ("pr-part-opened",)
 
 
 def read_outcome(task_dir) -> Outcome:
@@ -200,12 +204,14 @@ def read_outcome(task_dir) -> Outcome:
             seen_reviews |= ids
             if out.kind != "pr-opened":
                 continue  # reopen only makes sense after a PR was opened
-        elif kind == "rejected" and out.kind not in ("pr-opened", "reopened"):
+        elif kind == "rejected" and out.kind not in ("pr-opened", "reopened", "pr-part-opened"):
             continue
         elif kind == "replanned" and out.kind != "rejected":
             continue
-        elif kind not in ("pr-opened", "done", "reopened", "rejected", "replanned"):
+        elif kind not in ("pr-part-opened", "pr-opened", "done", "reopened", "rejected", "replanned"):
             continue
+        if kind == "rejected" and out.kind == "pr-part-opened":
+            kind = "replanned"      # a rejected part sends the worker back to planning, it does not end the task
         if kind == "pr-opened" and d.get("claim_id"):
             completed.add(str(d["claim_id"]))
         if out.kind == "done":
@@ -219,19 +225,20 @@ def read_outcome(task_dir) -> Outcome:
 
 
 def last_submitted_commit(task_dir) -> str | None:
-    """The commit named by the newest `pr-opened` record, i.e. what the PR already holds."""
+    """The commit named by the newest `pr-opened` or `pr-part-opened` record, i.e. what the
+    newest PR already holds."""
     commit = None
     for _, d in _sorted_records(Path(task_dir) / "completions"):
-        if d.get("kind") == "pr-opened" and d.get("commit"):
+        if d.get("kind") in ("pr-opened", "pr-part-opened") and d.get("commit"):
             commit = str(d["commit"])
     return commit
 
 
 def last_push_time(task_dir) -> str | None:
-    """Feedback up to this time has been dealt with: the newest `pr-opened` record's `reviewed_through_utc`."""
+    """Feedback up to this time has been dealt with: the newest `pr-opened` (or part) record's `reviewed_through_utc`."""
     when = None
     for _, d in _sorted_records(Path(task_dir) / "completions"):
-        if d.get("kind") == "pr-opened":
+        if d.get("kind") in ("pr-opened", "pr-part-opened"):
             when = d.get("reviewed_through_utc") or d.get("wall_utc") or when
     return when
 
@@ -245,6 +252,39 @@ def reopened_items(task_dir) -> list[str]:
     if not ids and out.record.get("review_id"):
         ids = [str(out.record["review_id"])]
     return ids
+
+
+def pr_records(task_dir) -> list[dict]:
+    """Every PR the task opened (parts and the final one), oldest first, one per URL."""
+    seen: dict[str, dict] = {}
+    for _, d in _sorted_records(Path(task_dir) / "completions"):
+        if d.get("kind") in ("pr-opened", "pr-part-opened") and d.get("pr_url"):
+            seen[str(d["pr_url"])] = d
+    return list(seen.values())
+
+
+def parts_declared(task_dir) -> int:
+    """How many PRs the plan declared (`parts: N`, GH-81); recorded in checkpoint.yaml at plan
+    submission. 1 when nothing was declared."""
+    try:
+        n = int(R.load_yaml(Path(task_dir) / "checkpoint.yaml").get("parts") or 1)
+    except (TypeError, ValueError):
+        return 1
+    return n if n >= 1 else 1
+
+
+def parts_opened(task_dir) -> int:
+    """How many part (non-final) PRs the task has opened."""
+    return len({d.get("pr_url") for _, d in _sorted_records(Path(task_dir) / "completions")
+                if d.get("kind") == "pr-part-opened"})
+
+
+def part_label(task_dir) -> str | None:
+    """`part 2 of 3` for a task whose newest PR is a part, else None."""
+    out = read_outcome(task_dir)
+    if out.kind != "pr-part-opened":
+        return None
+    return f"part {parts_opened(task_dir)} of {parts_declared(task_dir)}"
 
 
 def is_done(task_dir) -> bool:
@@ -637,7 +677,7 @@ def test_scope_status(task_dir, humans: set[str] | None = None) -> dict | None:
 # Events that describe a state the worker must act on while it lasts: always shown.
 STICKY_EVENTS = {"claim-lost", "pause-requested", "machine-paused", "machine-stopped"}
 # Events that make `swarm-task wait` stop and hand control back to the worker.
-STOP_EVENTS = STICKY_EVENTS | {"plan-changes-requested"}
+STOP_EVENTS = STICKY_EVENTS | {"plan-changes-requested", "part-rejected"}
 # News that never ends `swarm-task wait --for any`: the worker's own doing, or idle nagging.
 QUIET_EVENTS = {"idle", "tests-asked"}
 
@@ -742,6 +782,17 @@ def worker_events(task_dir, claim_id: str, machine: str, now: datetime, lease_s:
             enough = "; targeted is enough" if a.get("targeted_enough") else ""
             note = f" Note: {a['note']}" if a.get("note") else ""
             add("tests-answered", ts["answer_name"], f"{who}: scope {a.get('scope')}{enough}.{note}")
+    for path, d in _sorted_records(task_dir / "completions"):
+        k = d.get("kind")
+        if k == "part-merged":
+            add("part-merged", path.name, f"Part {d.get('part') or ''} ({d.get('pr_url')}) was merged. Pull `main` "
+                "into this worktree (`git pull origin main`), then carry on with the next part.")
+        elif k == "part-changes-requested":
+            add("part-feedback", path.name, f"Changes were requested on {d.get('pr_url')}. "
+                "Run `swarm-task implement` for the feedback, fix it, and run `swarm-task done` again.")
+        elif k == "rejected" and d.get("part"):
+            add("part-rejected", path.name, f"The approach of {d.get('pr_url')} was rejected (PR closed). "
+                "Re-plan: edit .swarm-task/plan.md and run `swarm-task plan --submit`.")
     outcome = res.outcome
     if outcome.kind == "reopened" and outcome.record:
         add("pr-feedback", str(R.clock_of(outcome.record)),

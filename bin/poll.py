@@ -36,7 +36,7 @@ log = logging.getLogger("dags.poll")
 
 STATE_FILE = "poller-state.json"
 # outcomes that still have a live PR to watch; done (merged), rejected and replanned do not
-WATCHED_OUTCOMES = ("pr-opened", "reopened")
+WATCHED_OUTCOMES = ("pr-opened", "pr-part-opened", "reopened")
 # feed events this machine's scheduler already sends to notify when it writes them
 SCHEDULER_ANNOUNCES = {"event:worker-dispatched", "event:awaiting-worker",
                        "event:pause-requested", "event:pause-lifted"}
@@ -138,7 +138,7 @@ class Poller:
             expired = [c for c in t.res.claims
                        if c not in t.res.valid and c.id not in resolve.read_withdrawals(t.dir)
                        and c.id not in t.res.outcome.completed_claims]
-            if expired and t.state in ("open",) and not t.res.outcome.kind:
+            if expired and t.state in ("open",) and t.res.outcome.kind in (None, "pr-part-opened"):
                 latest = max(expired, key=lambda c: c.sort_key)
                 stale_now.append(latest.id)
                 if latest.id not in self.state["stale"] and not quiet:
@@ -215,32 +215,47 @@ class Poller:
                     rep.add("checks-failing", f"Checks are failing on {t.short}: {t.pr_url}")
             elif t.key in red:
                 red.remove(t.key)
+            is_part = actions.is_part_pr(t.dir, t.pr_url)
             if state == "MERGED":
                 actions.record_merged(self.ctx, t.dir, t.pr_url, merged_by=None)
+                if is_part:
+                    rep.add("merged", f"{t.short} {t.part} was merged; the worker carries on with the next part")
+                    continue
                 rep.add("merged", f"{t.short} was merged — done; dependants can start")
                 self._cleanup_worktree(t)
                 continue
             if state == "CLOSED":
                 L.complete(self.ctx, t.dir, "rejected", pr_url=t.pr_url,
-                           reason="PR closed without merge (reject-approach, Ch.9.2)")
+                           reason="PR closed without merge (reject-approach, Ch.9.2)",
+                           **({"part": t.part} if is_part else {}))
+                if is_part:
+                    rep.add("rejected", f"{t.short}: {t.part} was closed; the worker has to re-plan")
+                    continue
                 self._backend(t, "blocked",
                               f"DAGS: PR {t.pr_url} was closed — approach rejected. Re-plan this task, "
                               f"add the lesson to CONVENTIONS.md, then set swarm:status:ready.")
                 rep.add("rejected", f"{t.short}: approach rejected (PR closed); waiting for re-planning")
                 self._cleanup_worktree(t)
                 continue
-            if t.state != "awaiting-review":
+            if t.state != "awaiting-review" and not is_part:
                 continue
             open_prs.append((t, repo, number))
             seen = set(self.state["reviews_seen"].get(t.key, []))
             for _, d in R.read_dir(t.dir / "completions"):
-                if d.get("kind") == "reopened":
+                if d.get("kind") in ("reopened", "part-changes-requested"):
                     seen |= {str(i) for i in d.get("item_ids") or []}
                     if d.get("review_id"):
                         seen.add(str(d["review_id"]))
             bot = (self.ctx.bot_identity() or (None,))[0]
             items = review.triggers(pr, self.ctx.human_by_github, bot, resolve.last_push_time(t.dir), seen)
-            if items:
+            if items and is_part:
+                # the worker is alive and holds the claim: tell it, don't re-queue the task (GH-81)
+                first = items[0]
+                seen |= {i.id for i in items}
+                L.complete(self.ctx, t.dir, "part-changes-requested", pr_url=t.pr_url, review_id=first.id,
+                           item_ids=[i.id for i in items], reviewer=first.author)
+                rep.add("changes-requested", f"Changes requested on {t.short} {t.part} by {first.author}")
+            elif items:
                 first = items[0]
                 seen |= {i.id for i in items}
                 L.complete(self.ctx, t.dir, "reopened", pr_url=t.pr_url, review_id=first.id,

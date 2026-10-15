@@ -57,6 +57,19 @@ class TaskView:
         return self.res.outcome.pr_url
 
     @property
+    def part(self) -> str | None:
+        """`part 2 of 3` while the newest PR is a part of a multi-PR task (GH-81)."""
+        return resolve.part_label(self.dir)
+
+    @property
+    def in_review(self) -> bool:
+        """A PR is waiting for review or being answered: the final one (awaiting-review), one the
+        worker is responding to (reopened), or a part (in-progress)."""
+        responding = self.res.outcome.kind == "reopened" and self.state != "done"
+        return (self.state == "awaiting-review" or responding
+                or (self.state == "in-progress" and self.part is not None))
+
+    @property
     def pausing(self) -> bool:
         """The swarm asked this task's worker to stop because the quota was lowered."""
         req = self.checkpoint.get("pause_requested")
@@ -142,6 +155,10 @@ class Snapshot:
     @property
     def awaiting_review(self) -> list[TaskView]:
         return [t for t in self.work if t.state == "awaiting-review"]
+
+    @property
+    def in_review(self) -> list[TaskView]:
+        return [t for t in self.work if t.in_review]
 
     @property
     def conflicts(self) -> list[TaskView]:

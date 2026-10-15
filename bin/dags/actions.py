@@ -129,7 +129,7 @@ def release_epic(ctx, epic: str) -> None:
 def merge(ctx, task_dir: Path, allow_failing_checks: bool = False) -> str:
     human = ctx.require_human()
     outcome = resolve.read_outcome(task_dir)
-    if outcome.kind != "pr-opened" or not outcome.pr_url:
+    if outcome.kind not in ("pr-opened", "pr-part-opened") or not outcome.pr_url:
         raise ActionError(f"{resolve.label(task_dir)} has no PR awaiting review")
     found = gh.repo_from_pr_url(outcome.pr_url)
     if not found:
@@ -152,8 +152,15 @@ def merge(ctx, task_dir: Path, allow_failing_checks: bool = False) -> str:
 
 
 def record_merged(ctx, task_dir: Path, pr_url: str, merged_by: str | None = None) -> None:
-    """Done = PR merged (plan §2.7). Idempotent."""
+    """Done = PR merged (plan §2.7). Idempotent. Merging a part PR (GH-81) only records the
+    merge, which wakes the worker; the task ends with the final PR."""
     if resolve.is_done(task_dir):
+        return
+    if is_part_pr(task_dir, pr_url):
+        if not any(d.get("kind") == "part-merged" and d.get("pr_url") == pr_url
+                   for _, d in resolve._sorted_records(task_dir / "completions")):
+            L.complete(ctx, task_dir, "part-merged", pr_url=pr_url, merged_by=merged_by,
+                       merged_utc=timeutil.iso(), part=resolve.parts_opened(task_dir))
         return
     L.complete(ctx, task_dir, "done", pr_url=pr_url, merged_by=merged_by, merged_utc=timeutil.iso())
     ref = TaskRef(str(resolve.read_meta(task_dir)["key"]))
@@ -161,6 +168,12 @@ def record_merged(ctx, task_dir: Path, pr_url: str, merged_by: str | None = None
         ctx.backend.set_status(ref, "done")
     except Exception as e:  # noqa: BLE001
         log.warning("backend set_status(done) failed for %s: %s", ref.key, e)
+
+
+def is_part_pr(task_dir: Path, pr_url: str | None) -> bool:
+    """Is this one of the task's non-final PRs (GH-81)?"""
+    return bool(pr_url) and any(d.get("kind") == "pr-part-opened" and d.get("pr_url") == pr_url
+                                for d in resolve.pr_records(task_dir))
 
 
 # -- links (Ch.10.2 "Open ticket / PR") --------------------------------------------------------

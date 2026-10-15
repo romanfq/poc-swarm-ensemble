@@ -690,7 +690,7 @@ def _task_summary(v, now) -> dict:
         "key": v.key, "short": v.short, "title": v.title, "epic": v.epic, "repo": v.repo,
         "autonomy": v.autonomy, "state": v.state, "ready": v.ready, "owner": v.owner_machine,
         "worker": v.worker, "claim_age_s": None if age is None else int(age), "pr": v.pr_url,
-        "plan_status": v.plan_status,
+        "part": v.part, "plan_status": v.plan_status,
     }
 
 
@@ -708,7 +708,7 @@ def task_list(all_states: bool = typer.Option(False, "--all", help="Include done
         return
     t = Table("task", "title", "state", "owner", "worker", "repo", "PR")
     for v in rows:
-        state = v.state + (" (ready)" if v.ready else "")
+        state = v.state + (" (ready)" if v.ready else "") + (f" · {v.part} in review" if v.part else "")
         t.add_row(*(Text(x) for x in (v.short, v.title, state, v.owner_machine or "", v.worker or "",
                                      v.repo or "", v.pr_url or "")))
     console.print(t)

@@ -25,7 +25,7 @@ So v2.0 is a rewrite. Three things follow from that:
   aspirational by accident: if the text does not mark a behaviour as outstanding,
   it is in `main` and has a test.
 - **The decisions survive as rationale, not as a diff.** Appendix A is the
-  decisions log, D1–D35, each with the reason it was taken and the chapter it
+  decisions log, D1–D36, each with the reason it was taken and the chapter it
   governs. It no longer pretends to be a changelog against v1.0.
 - **Every factual claim was checked against the code**, not inherited from the
   previous draft. File and line references are to `main` at the time of writing.
@@ -68,7 +68,7 @@ project. v1.1 is superseded.
 
 **Appendices**
 
-- A. Decisions log (D1–D35)
+- A. Decisions log (D1–D36)
 - B. Primer — DAGS in ten minutes
 - C. How-to guides
 - D. Reference
@@ -1412,6 +1412,11 @@ each step.
     branch is actually ahead, tests pass, commit with the house template as the
     bot, push, open the pull request, wait for the checks (§11.3).
 11. **The poller notices** and tells a human the task is awaiting review (§9.6).
+    A task may declare `parts: N` in its plan and open several pull requests on
+    one branch (D36): `done` records `pr-part-opened` for the first N−1, the worker
+    `wait`s for each to merge, pulls `main` and goes round again from step 8; the
+    Nth `done` records `pr-opened`, and the flow continues here. Between parts the
+    task stays `in-progress` and keeps its slot.
 12. **A human reviews the pull request.** Request changes sends it back to the
     queue with the feedback attached (§9.4); approve and merge finishes it (§9.1).
 13. **The poller records the merge**, the task becomes done, its worktree is
@@ -1562,6 +1567,7 @@ not to build it.
 | D33 | **Nothing upgrades itself.** `bin/` in a coordination repository is a pinned copy; a merged change takes effect only when a human copies it in and restarts each machine. | A swarm that edits the protocol it is running would otherwise rewrite itself mid-flight, and a bad merge would break every machine at once. | 5.6 | Done |
 | D34 | **Filing an issue is a form, not a prompt.** A draft file (frontmatter, H1 title, body) is the whole input; `backend file` and the Board composer are two front ends onto one validate, diff, confirm, file, `plan sync` path. It makes the Board a tracker-*writing* tool, which is consistent with D28 (a human pressing a key is still the human), and it files with the operator's own `gh` login, not the worker bot's. It never sets an issue ready. | The same prompt was pasted into a terminal session each time, putting a language model in front of an irreversible external write. Authorship of an issue carries no approval constraint (D2b), so it should read as the person who filed it. | 10.3 | Done |
 | D35 | **`auto-pr` is renamed `self-approve`.** The tier means the worker approves its own plan and test scope; the PR is opened and reviewed by a human in every tier. Readers accept both names (`autonomy.canonical`), writers use only the new one, and the append-only ledger and existing `swarm:autonomy:auto-pr` labels are not rewritten. `backend init` creates the new label and leaves the old one. Renaming the other two tiers is #115. | The old name read as "the PR is automatic", the opposite of the protocol's guarantee. | 7.3, 8.3, 9.1 | Done |
+| D36 | **One task may open several pull requests; the Nth ends it.** The plan declares `parts: N`, recorded in the checkpoint at submission and changeable only by a re-plan. `done` writes the non-terminal `pr-part-opened` for PRs 1 to N−1 and the terminal `pr-opened` for the Nth. The claim and the quota slot are held throughout, and `TERMINAL_HOLD` and the active states are unchanged. | One PR per task lost the claim and the worker when a large task wanted to land in reviewable pieces. A distinct record kind keeps every existing reader safe, because anything that does not know it falls through to `in-progress`. | 9.1, 12 | Done |
 
 \newpage
 
@@ -1960,7 +1966,9 @@ Default autonomy is `human-must-review`. `ready` is permission, not availability
 Withdrawal reasons written by the scheduler: `lost-race`, `no-worker-chosen`,
 `quota`, `dispatch-failed`. A worker-side release passes its own reason
 (`work.py:211`). Expiry writes no record at all — it is computed (§6.5). Completion kinds: `pr-opened`, `done`,
-`reopened`, `rejected`, `replanned`.
+`reopened`, `rejected`, `replanned`, and for multi-PR tasks (D36) `pr-part-opened`, `part-merged`
+and `part-changes-requested`. A part PR closed unmerged is recorded as `rejected`, which
+`read_outcome` turns into `replanned`: the worker re-plans, the task does not end.
 
 ## D.7 Task states — derived, never stored
 
