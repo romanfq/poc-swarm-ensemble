@@ -21,7 +21,7 @@ from pathlib import Path
 
 import autonomy
 from backends.base import (AUTONOMY_PREFIX, DEFAULT_AUTONOMY, DEFAULT_PLAN_SCOPE, STATUS_PREFIX,
-                           Comment, PlanScoped, Task, TaskRef, parse_labels, plan_scope_of)
+                           Comment, ExportItem, PlanScoped, Task, TaskRef, parse_labels, plan_scope_of)
 from dags import records as R
 
 _lock = threading.Lock()
@@ -80,6 +80,20 @@ class FakeBackend(PlanScoped):
 
     def all_issues(self) -> list[Task]:
         return [self.get_task(TaskRef(k)) for k in self._load()]
+
+    def export_records(self, refs: list[TaskRef] | None = None) -> list[ExportItem]:
+        issues = self._load()
+        keys = [r.key for r in refs] if refs is not None else list(issues)
+        out = []
+        for key in keys:
+            i = issues[key]
+            task = self.get_task(TaskRef(key))
+            out.append(ExportItem(task, i.get("created_utc") or "", i.get("closed_utc") if task.closed else None,
+                                  i.get("author"),
+                                  tuple(Comment(c.get("author"), c.get("body", ""), c.get("created_at", ""),
+                                                c.get("url")) for c in map(_as_record, i.get("comments") or [])),
+                                  tuple(i.get("lossy") or ())))
+        return out
 
     def set_status(self, ref: TaskRef, status: str) -> None:
         with _lock:

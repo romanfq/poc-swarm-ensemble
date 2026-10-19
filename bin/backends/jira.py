@@ -41,7 +41,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from backends.base import (AUTONOMY_PREFIX, AUTONOMY_TIERS, DEFAULT_AUTONOMY, DEFAULT_PLAN_SCOPE, REPO_PREFIX,
-                           STATUS_PREFIX, SWARM_PREFIX, SWARM_STATUSES, Comment, PlanScoped, Task, TaskRef,
+                           STATUS_PREFIX, SWARM_PREFIX, SWARM_STATUSES, Comment, ExportItem, PlanScoped, Task, TaskRef,
                            parse_labels, plan_scope_of)
 import autonomy
 from dags import adf
@@ -49,6 +49,7 @@ from dags.jira_client import JiraClient, JiraError, build_client
 
 log = logging.getLogger("dags.jira")
 
+EXPORT_FIELDS = ["created", "resolutiondate", "creator", "assignee", "attachment"]
 SEARCH_FIELDS = ["summary", "description", "status", "labels", "issuetype", "parent", "issuelinks"]
 KEY_RE = re.compile(r"^(?P<project>[A-Za-z][A-Za-z0-9_]*)-(?P<num>\d+)$")
 COMMENT_PROPERTY = "dags.markdown"      # the markdown we posted, kept beside the ADF for an exact round trip
@@ -217,7 +218,7 @@ class JiraBackend(PlanScoped):
             return None
 
     # -- reading -------------------------------------------------------------------------------------------
-    def _search_all(self) -> dict[str, dict]:
+    def _search_all(self, fields: list[str] = SEARCH_FIELDS) -> dict[str, dict]:
         jql = f'project = "{self.project_key}" ORDER BY created ASC'
         recent = self._recent_ids()
         batches = [recent[i:i + RECONCILE_BATCH] for i in range(0, len(recent), RECONCILE_BATCH)] or [None]
@@ -225,7 +226,7 @@ class JiraBackend(PlanScoped):
         for batch in batches:
             token = None
             while True:
-                page = self.client.search(jql, SEARCH_FIELDS, next_page_token=token, max_results=100,
+                page = self.client.search(jql, fields, next_page_token=token, max_results=100,
                                           reconcile_issues=[int(i) for i in batch] if batch else None)
                 for issue in page.get("issues") or []:
                     out[issue["key"]] = issue
@@ -314,6 +315,32 @@ class JiraBackend(PlanScoped):
                 self._raw[ref.key] = raw
                 self._tasks_cache = None
         return self._to_task(raw, {k for k, t in (self._tasks_cache or {}).items() if t.is_epic})
+
+    def export_records(self, refs: list[TaskRef] | None = None) -> list[ExportItem]:
+        fields = [*SEARCH_FIELDS, *EXPORT_FIELDS]
+        if refs is None:
+            raw = self._search_all(fields)                      # straight from search, not the cache
+        else:
+            raw = {}
+            for ref in refs:
+                try:
+                    raw[ref.key] = self.client.get_issue(ref.key, fields)
+                except JiraError as e:
+                    if e.status == 404:
+                        raise KeyError(f"no such issue {ref.key}") from e
+                    raise
+        containers = {((r.get("fields") or {}).get("parent") or {}).get("key") for r in raw.values()
+                      if any(lb.startswith(SWARM_PREFIX) for lb in self._labels(r))}
+        out = []
+        for key, r in sorted(raw.items(), key=lambda kv: int(kv[1].get("id") or 0)):
+            f = r.get("fields") or {}
+            lossy = [name for name, v in (("assignees", f.get("assignee")), ("attachments", f.get("attachment")))
+                     if v]
+            out.append(ExportItem(self._to_task(r, containers), utc_iso(f.get("created")),
+                                  utc_iso(f.get("resolutiondate")) or None,
+                                  (f.get("creator") or {}).get("accountId"), tuple(self.list_comments(TaskRef(key))),
+                                  tuple(lossy)))
+        return out
 
     def dependencies(self, ref: TaskRef) -> list[TaskRef]:
         return self.get_task(ref).dependencies

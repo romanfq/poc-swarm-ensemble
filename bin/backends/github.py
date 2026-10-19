@@ -23,7 +23,7 @@ import time
 
 import autonomy
 from backends.base import (AUTONOMY_PREFIX, AUTONOMY_TIERS, DEFAULT_AUTONOMY, DEFAULT_PLAN_SCOPE,
-                           REPO_PREFIX, STATUS_PREFIX, SWARM_STATUSES, Comment, PlanScoped, Task, TaskRef,
+                           REPO_PREFIX, STATUS_PREFIX, SWARM_STATUSES, Comment, ExportItem, PlanScoped, Task, TaskRef,
                            parse_labels, plan_scope_of)
 from dags import gh
 
@@ -35,6 +35,35 @@ _ISSUE_FIELDS = """
   subIssues(first: 100) { nodes { number repository { nameWithOwner } } }
   blockedBy(first: 50) { nodes { number state repository { nameWithOwner } } }
 """
+
+# Query limits of _ISSUE_FIELDS; an export refuses an issue that fills one (part of it would be missing).
+_LIMITS = {"labels": 50, "subIssues": 100, "blockedBy": 50}
+
+_EXPORT_EXTRA = """
+  createdAt closedAt author { login }
+  assignees(first: 1) { totalCount }
+  reactions { totalCount }
+"""
+
+EXPORT_QUERY = """
+query($owner: String!, $name: String!, $cursor: String) {
+  repository(owner: $owner, name: $name) {
+    issues(first: 100, after: $cursor, states: [OPEN, CLOSED],
+           orderBy: {field: CREATED_AT, direction: ASC}) {
+      pageInfo { hasNextPage endCursor }
+      nodes { %s %s }
+    }
+  }
+}
+""" % (_ISSUE_FIELDS, _EXPORT_EXTRA)
+
+EXPORT_ONE_QUERY = """
+query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    issue(number: $number) { %s %s }
+  }
+}
+""" % (_ISSUE_FIELDS, _EXPORT_EXTRA)
 
 LIST_QUERY = """
 query($owner: String!, $name: String!, $cursor: String) {
@@ -206,6 +235,42 @@ class GitHubBackend(PlanScoped):
         if not node:
             raise KeyError(f"no such issue {ref.key}")
         return self._to_task(node, repo)
+
+    def _export_item(self, node: dict, repo: str) -> ExportItem:
+        task = self._to_task(node, repo)
+        for field_, limit in _LIMITS.items():
+            if len((node.get(field_) or {}).get("nodes") or []) >= limit:
+                raise gh.GhError(["api", "graphql"], 1,
+                                 f"{task.ref.key} has {limit} or more {field_}, which is the most one query "
+                                 f"reads; exporting it would drop some. Nothing was written.")
+        lossy = [name for name, n in (("assignees", (node.get("assignees") or {}).get("totalCount")),
+                                      ("reactions", (node.get("reactions") or {}).get("totalCount"))) if n]
+        return ExportItem(task, node.get("createdAt") or "", node.get("closedAt") or None,
+                          (node.get("author") or {}).get("login"), tuple(self.list_comments(task.ref)),
+                          tuple(lossy))
+
+    def export_records(self, refs: list[TaskRef] | None = None) -> list[ExportItem]:
+        if refs is not None:
+            out = []
+            for ref in refs:
+                repo, num = self._split(ref)
+                owner, name = repo.split("/", 1)
+                node = ((self._graphql(EXPORT_ONE_QUERY, owner=owner, name=name, number=num)
+                         .get("repository") or {}).get("issue"))
+                if not node:
+                    raise KeyError(f"no such issue {ref.key}")
+                out.append(self._export_item(node, repo))
+            return out
+        owner, name = self.repo.split("/", 1)
+        out, cursor = [], None
+        while True:
+            data = self._graphql(EXPORT_QUERY, owner=owner, name=name, cursor=cursor)
+            issues = ((data.get("repository") or {}).get("issues")) or {}
+            out += [self._export_item(n, self.repo) for n in issues.get("nodes") or [] if n]
+            page = issues.get("pageInfo") or {}
+            if not page.get("hasNextPage"):
+                return out
+            cursor = page.get("endCursor")
 
     def dependencies(self, ref: TaskRef) -> list[TaskRef]:
         return self.get_task(ref).dependencies
