@@ -5,7 +5,6 @@ from datetime import timedelta
 
 import pytest
 
-from backends.base import TaskRef
 from backends.fake import FakeBackend
 from backends.github import GitHubBackend
 from conftest import at
