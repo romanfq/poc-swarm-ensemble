@@ -352,3 +352,67 @@ def test_status_ledger_skips_sync_and_failed_sync_is_marked(swarm, monkeypatch):
     assert "NOT synced (local ledger only; showing the local ledger)" in rows["coordination"]
     rows = {k: v for k, v, _ in panel.status_rows(a)}
     assert rows["coordination"].startswith("synced")
+
+
+# -- moving issues between backends (GH-124) ------------------------------------------------------------------------
+
+def test_backend_export_writes_a_bundle_outside_the_repo(machine, tmp_path):
+    out = tmp_path / "out" / "gh.zip"
+    out.parent.mkdir()
+    r = invoke("backend", "export", str(out))
+    assert r.exit_code == 0, r.output
+    assert "private issue text" in r.output and "2 issues" in r.output
+    first = out.read_bytes()
+    assert invoke("backend", "export", str(out)).exit_code == 0 and out.read_bytes() == first
+
+
+def test_backend_export_refuses_a_path_inside_the_coordination_repo(machine):
+    r = runner.invoke(cli.app, ["backend", "export", str(machine.root / "gh.zip")])
+    assert r.exit_code == 1 and "inside the coordination repo" in " ".join(r.output.split())
+    assert not (machine.root / "gh.zip").exists()
+
+
+def test_backend_export_refuses_while_a_machine_runs_unless_live(machine, tmp_path):
+    from dags import ledger as L
+    L.control(machine, "start", quota_share=1)
+    r = runner.invoke(cli.app, ["backend", "export", str(tmp_path / "a.zip")])
+    assert r.exit_code == 1 and "mac-a: running" in r.output and "--live" in r.output
+    r = invoke("backend", "export", str(tmp_path / "a.zip"), "--live")
+    assert r.exit_code == 0 and "may be inconsistent" in r.output
+
+
+def test_backend_import_is_a_dry_run_then_applies_then_does_nothing(machine, tmp_path):
+    bundle_path = tmp_path / "gh.zip"
+    invoke("backend", "export", str(bundle_path))
+    target = FakeBackend(tmp_path / "target.yaml")
+    machine.set_backend(target)
+    r = invoke("backend", "import", str(bundle_path))
+    assert "dry run" in r.output and "Poll" in r.output and target.all_issues() == []
+    r = invoke("backend", "import", str(bundle_path), "--apply", "--yes")
+    assert r.exit_code == 0 and "2 created" in r.output, r.output
+    assert [t.title for t in target.all_issues()] == ["Epic", "Poll"]
+    r = invoke("backend", "import", str(bundle_path), "--apply", "--yes")
+    assert r.exit_code == 0 and "0 writes" in r.output and "2 already there" in r.output
+
+
+def test_backend_import_refuses_while_a_machine_runs(machine, tmp_path):
+    from dags import ledger as L
+    bundle_path = tmp_path / "gh.zip"
+    invoke("backend", "export", str(bundle_path))
+    L.control(machine, "start", quota_share=1)
+    L.control(machine, "pause")
+    r = runner.invoke(cli.app, ["backend", "import", str(bundle_path), "--apply", "--yes"])
+    assert r.exit_code == 1 and "paused" in r.output and "cannot import while the swarm is running" in r.output
+
+
+def test_backend_import_refuses_a_lost_map(machine, tmp_path):
+    bundle_path = tmp_path / "gh.zip"
+    invoke("backend", "export", str(bundle_path))
+    machine.set_backend(FakeBackend(tmp_path / "target.yaml"))
+    invoke("backend", "import", str(bundle_path), "--apply", "--yes")
+    (tmp_path / "import-map.json").unlink()
+    r = runner.invoke(cli.app, ["backend", "import", str(bundle_path), "--apply", "--yes"])
+    assert r.exit_code == 1 and "no map" in " ".join(r.output.split())
+    assert len(machine.backend.all_issues()) == 2
+    r = invoke("backend", "import", str(bundle_path), "--apply", "--yes", "--rebuild-map")
+    assert r.exit_code == 0 and "rebuilt 2 map entries" in r.output and "0 writes" in r.output

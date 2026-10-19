@@ -25,7 +25,7 @@ except ImportError:  # pragma: no cover - typer < 0.17
 import autonomy as autonomy_names
 import resolve
 from backends.base import AUTONOMY_TIERS, SWARM_STATUSES, BackendError, TaskRef
-from dags import (actions, boardview, bundle, daemon, feed, gh, machines, panel, plan, prereqs, repos, snapshot,
+from dags import (actions, boardview, bundle, daemon, feed, gh, importer, machines, panel, plan, prereqs, repos, snapshot,
                   timeutil, upgrade, work)
 from dags import ledger as L
 from dags.config import ConfigError, Context
@@ -652,6 +652,73 @@ def _tool_commit(c) -> str | None:
     except (OSError, subprocess.SubprocessError):
         return None
     return out.stdout.strip() or None if out.returncode == 0 else None
+
+
+@backend_app.command("import")
+@guarded
+def backend_import(bundle_file: Path = typer.Argument(..., help="A bundle written by `backend export`."),
+                   hold: bool = typer.Option(False, "--hold", help="Import every open task as blocked."),
+                   flatten: bool = typer.Option(False, "--flatten", help="Drop container levels the target cannot hold."),
+                   map_file: Optional[Path] = typer.Option(None, "--map", help="Where import-map.json lives (default: beside the bundle)."),
+                   rebuild_map: bool = typer.Option(False, "--rebuild-map", help="Rebuild a lost map from the target."),
+                   force_new: bool = typer.Option(False, "--force-new", help="Import the bundle again on purpose."),
+                   apply: bool = typer.Option(False, "--apply", help="Write to the tracker (humans only)."),
+                   yes: bool = typer.Option(False, "--yes", "-y", help="Don't ask for confirmation.")):
+    """Create a bundle's issues in the bound backend (dry run unless --apply). Stop every machine first."""
+    import time
+    c = ctx()
+    b = c.backend
+
+    def refuse_if_running():
+        try:
+            c.coord.pull()
+        except GitError:
+            pass
+        found = machines.blockers(c.root, timeutil.now(), c.settings.lease_s)
+        if found:
+            raise importer.ImportStop(machines.refusal(found, "import"))
+
+    try:
+        refuse_if_running()
+        bun = bundle.read_bundle(bundle_file)
+    except (bundle.BundleError, importer.ImportStop) as e:
+        fail(str(e))
+    path = map_file or bundle_file.resolve().parent / "import-map.json"
+    opts = importer.Options(hold, flatten, force_new, rebuild_map, path)
+    anchored = importer.anchored_issues(b)
+    plan_ = importer.plan_import(bun, b, opts, is_human=lambda a: bool(c.human_by_tracker(a)), anchored=len(anchored))
+    if anchored and not path.exists() and not (rebuild_map or force_new):
+        plan_.problems.append(f"{len(anchored)} issue(s) on {b.name} already carry a dags-import label, but there is "
+                              f"no map at {path}. Nothing will be created. --rebuild-map rebuilds it from the "
+                              f"tracker; --force-new imports the bundle again on purpose")
+    for line in importer.render(plan_, opts):
+        console.print(escape(line), markup=True, highlight=False)
+    if not plan_.ok:
+        fail("the import cannot go ahead (see the problems above)")
+    if not apply:
+        console.print("[dim]dry run — re-run with --apply to write to the tracker[/]")
+        return
+    c.require_human()
+    if not yes and not typer.confirm(f"Create {len(plan_.creates)} issues on {b.name}?"):
+        raise typer.Exit(1)
+    try:
+        with importer.Lock(path):
+            if force_new and path.exists():
+                path.rename(path.with_name(f"{path.name}.before-{plan_.run_id}"))
+            mapfile = importer.MapFile(path, importer.target_identity(b))
+            if rebuild_map:
+                console.print(f"rebuilt {importer.rebuild_map(plan_, b, mapfile, echo=console.print)} map entries")
+            stats = importer.Importer(plan_, b, mapfile, opts, echo=lambda t: console.print(escape(t)),
+                                      sleep=time.sleep, guard=refuse_if_running).run()
+    except importer.ImportRefused as e:
+        fail(str(e))
+    except importer.ImportStop as e:
+        err.print("[bold red]stopped:[/]", escape(str(e)))
+        raise typer.Exit(e.code) from None
+    console.print(f"[green]done[/]: {stats['created']} created, {stats['skipped']} already there, "
+                  f"{stats['edited']} bodies edited, {stats['writes']} writes; "
+                  f"{stats['changed']} differ from the source; map: {escape(str(path))}")
+    console.print("next: `swarm.py ledger rekey` with that map, then `swarm.py plan sync`")
 
 
 @backend_app.command("file")

@@ -889,3 +889,14 @@ def test_done_says_why_when_the_log_cannot_be_read(claimed, monkeypatch):
     assert not (wt / ".swarm-task" / "ci-failure.log").exists()
     a.coord.pull()
     assert rv.task_state(d, timeutil.now(), 900) == "in-progress"
+
+
+def test_a_replayed_reply_is_skipped_but_still_marks_the_window(claimed):
+    world, a, d, wt = claimed
+    t1 = TaskRef("T1")
+    world.backend.post_comment(t1, "<!-- dags-imported -->\nOriginally by @x on 2026-01-01 (u)\n\n"
+                                   "<!-- dags-plan: abc -->\nthe plan")
+    world.backend.reply(t1, "jane-gh", "<!-- dags-imported -->\nOriginally by @jane-gh on 2026-01-02 (v)\n\nyes")
+    assert work.replies(a, d) == []                                      # replayed: not a fresh reply
+    world.backend.reply(t1, "jane-gh", "now a real one")
+    assert [r["body"] for r in work.replies(a, d)] == ["now a real one"]

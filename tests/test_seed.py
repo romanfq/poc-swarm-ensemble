@@ -219,10 +219,15 @@ def test_duplicate_markers_are_refused(world):
 
 
 def test_backend_without_seeding_is_refused(tmp_path, world):
-    from backends.fake import FakeBackend
+    class ReadOnly:                       # an adapter that can read but not create
+        name = "readonly"
+        plan_scope = "labelled"
+
+        def all_issues(self):
+            return []
     fake, runner, b, path = world
     with pytest.raises(seed.SeedError, match="can't seed"):
-        seed.diff(seed.load(path), FakeBackend(tmp_path / "b.yaml"), REPOS)
+        seed.diff(seed.load(path), ReadOnly(), REPOS)
 
 
 def test_matchwire_plan_is_valid():

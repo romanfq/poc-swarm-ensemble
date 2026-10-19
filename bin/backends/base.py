@@ -156,12 +156,26 @@ class TrackerHelpers(Protocol):
     def create_issue(self, title: str, body: str, labels: list[str], *, epic: bool = False) -> TaskRef: ...
     def set_parent(self, ref: TaskRef, parent: TaskRef) -> None: ...
     def add_dependency(self, ref: TaskRef, blocker: TaskRef) -> None: ...
+    def update_body(self, ref: TaskRef, text: str) -> None:
+        """Replace the issue's description with ``text`` (Markdown)."""
+        ...
+
+    def add_labels(self, ref: TaskRef, labels: list[str]) -> None:
+        """Add the labels that are missing; the ones already there are left alone. Idempotent."""
+        ...
+
+    def close_issue(self, ref: TaskRef) -> None:
+        """Close the issue without touching its swarm labels. Idempotent."""
+        ...
     def export_records(self, refs: list[TaskRef] | None = None) -> list[ExportItem]:
         """Every issue of the plan repository (or project), open and closed, in or out of the plan, with its
         comments. ``refs`` limits it to those issues (they may live elsewhere). Raises ``BackendError`` rather
         than return an issue whose labels, sub-issues or blockers were cut short by a query limit."""
         ...
 
+    # Read with getattr by `backend import`: `hierarchy_levels()` (how many parent/child levels the tracker
+    # offers; default unlimited), `import_limits` ({"body": chars, "children": sub-issues per parent}),
+    # `adapt_label(name)` (the name the tracker can hold) and `lag_window_s` (seconds search may trail a write).
     # `get_task_fresh(ref)` is optional (work.py falls back to get_task); `uses_type_labels` / `set_kind`
     # are read with getattr. `epics_carry_status` (default True) is False where containers get no
     # swarm status (Jira), so adoption leaves them unlabelled.
