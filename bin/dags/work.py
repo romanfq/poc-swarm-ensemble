@@ -24,6 +24,7 @@ import resolve
 import workers
 from backends.base import TaskRef
 from dags import gh, repos, review, worktree
+from dags.bundle import IMPORTED_TAG
 from dags import ledger as L
 from dags import testscope, timeutil
 
@@ -424,6 +425,8 @@ def replies(ctx, task_dir: Path) -> list[dict]:
     last = max((i for i, c in enumerate(comments) if _MARKER_RE.search(c.body or "")), default=-1)
     out = []
     for c in comments[last + 1:]:
+        if (c.body or "").startswith(IMPORTED_TAG):      # replayed by `backend import`: not a fresh reply
+            continue
         human = ctx.human_by_tracker(c.author)
         if human:
             out.append({"human": human, "author": c.author, "body": c.body, "created_at": c.created_at,

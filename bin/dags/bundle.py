@@ -355,3 +355,73 @@ def check_graph(bundle: Bundle) -> None:
         raise BundleError("the manifest's issue count does not match the issue files")
     _ordered({r["id"]: r for r in bundle.records})                      # raises on a cycle
 
+
+
+# -- what import adds to the text, and how it finds it again -------------------------------------------------
+
+IMPORTED_TAG = "<!-- dags-imported -->"
+ANCHOR_PREFIX = "dags-import-"
+FOOTER_RE = re.compile(r"^Imported from (\S+) \((\S*)\)[ \t]*$", re.M)
+ORIGINALLY_RE = re.compile(r"^Originally by [^\n]*$", re.M)
+
+# Never rewritten: code, HTML comments (the swarm's markers), the footer and the "Originally by" line.
+_PROTECTED = re.compile(r"(?s:```.*?```)|(?s:~~~.*?~~~)|`[^`\n]*`|(?s:<!--.*?-->)"
+                        r"|(?m:^Imported from [^\n]*$)|(?m:^Originally by [^\n]*$)")
+
+
+def footer(source_id: str, source_url: str | None) -> str:
+    return f"Imported from {source_id} ({source_url or ''})"
+
+
+def source_of(body: str) -> str | None:
+    """The source id in the LAST footer: a bundle that was itself imported carries two, and the last one is ours."""
+    found = FOOTER_RE.findall(body or "")
+    return found[-1][0] if found else None
+
+
+def strip_footer(body: str) -> str:
+    """Undo ``footer``: drop the last footer line (what a round-trip comparison needs)."""
+    found = list(FOOTER_RE.finditer(body or ""))
+    if not found:
+        return body
+    last = found[-1]
+    return (body[:last.start()] + body[last.end():]).rstrip()
+
+
+def content_hash(record: dict) -> str:
+    return hashlib.sha256(_dump(record)).hexdigest()[:16]
+
+
+def reference_forms(records: list[dict], targets: dict[str, tuple[str, str | None]],
+                    source_project: str | None) -> dict[str, str]:
+    """Every way the bodies may name a mapped issue -> what to write instead. ``targets`` is source id ->
+    (target key, target url). Only issues in ``targets`` appear, so a pull request number is never touched."""
+    forms: dict[str, str] = {}
+    for r in records:
+        hit = targets.get(r["id"])
+        if not hit:
+            continue
+        key, url = hit
+        forms[r["id"]] = key
+        if r.get("url") and url:
+            forms[r["url"]] = url
+        if r.get("short") and r["short"] != r["id"]:
+            forms[r["short"]] = key
+        m = re.match(r"^(.+)#(\d+)$", r["id"])
+        if m and m.group(1) == source_project:
+            forms[f"#{m.group(2)}"] = key
+    return forms
+
+
+def rewrite_refs(text: str, forms: dict[str, str]) -> str:
+    if not text or not forms:
+        return text
+    rx = re.compile(r"(?<![\w/#.-])(?:" + "|".join(re.escape(f) for f in sorted(forms, key=len, reverse=True))
+                    + r")(?!\w)")
+    out, pos = [], 0
+    for m in _PROTECTED.finditer(text):
+        out.append(rx.sub(lambda x: forms[x.group(0)], text[pos:m.start()]))
+        out.append(m.group(0))
+        pos = m.end()
+    out.append(rx.sub(lambda x: forms[x.group(0)], text[pos:]))
+    return "".join(out)

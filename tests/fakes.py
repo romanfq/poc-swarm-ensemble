@@ -81,6 +81,9 @@ class FakeGitHub:
             "parent": self._mini(i["parent"]) if i["parent"] else None,
             "subIssues": {"nodes": [self._mini(k) for k, v in self.issues.items() if v["parent"] == n]},
             "blockedBy": {"nodes": [self._mini(k) for k in i["blockedBy"]]},
+            "createdAt": i.get("createdAt") or f"2026-01-01T00:00:{n % 60:02d}Z",
+            "closedAt": i.get("closedAt") or ("2026-02-01T00:00:00Z" if i["state"] == "CLOSED" else None),
+            "author": {"login": i.get("author") or "alice"},
         }
 
     # -- runner --------------------------------------------------------------------
@@ -116,6 +119,8 @@ class FakeGitHub:
             return self.issues[n]["url"] + "\n"
         if args[:2] == ["issue", "edit"]:
             i = self.issues[int(args[2])]
+            if "--body-file" in args:
+                i["body"] = input or ""
             for p in opts["--parent"]:
                 if int(p) not in self.issues or int(p) == int(args[2]):
                     return ("", 1, f"invalid parent {p}")
@@ -399,6 +404,8 @@ class FakeJira:
                 f["labels"].remove(op["remove"])          # removing a label that is not there is a no-op
         if "parent" in (body.get("fields") or {}):
             f["parent"] = {"key": body["fields"]["parent"]["key"]}
+        if "description" in (body.get("fields") or {}):
+            f["description"] = body["fields"]["description"]
 
     def get_transitions(self, key):
         self._get(key)

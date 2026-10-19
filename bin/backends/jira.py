@@ -110,6 +110,8 @@ def chunk_markdown(text: str, limit: int = COMMENT_LIMIT) -> list[str]:
 
 class JiraBackend(PlanScoped):
     name = "jira"
+    import_limits = {"body": 32000}                 # characters; recalled, not confirmed (comments are chunked)
+    lag_window_s = 30.0
     uses_type_labels = False
     epics_carry_status = False          # containers get no swarm status on adoption
     lagging_search = True               # the scheduler re-reads a candidate before it claims
@@ -522,6 +524,36 @@ class JiraBackend(PlanScoped):
                 except JiraError as e:
                     log.warning("could not read back %s: %s", key, e)
         return TaskRef(key)
+
+    def hierarchy_levels(self) -> int:
+        """Levels this project offers to the swarm: how many of the epic and task types it has, by level."""
+        types = self.client.list_issue_types(self.project_key)
+        wanted = {self.epic_type, self.task_type}
+        levels = {int(t.get("hierarchyLevel") or 0) for t in types if t.get("name") in wanted}
+        return max(1, len(levels))
+
+    def adapt_label(self, name: str) -> str:
+        return re.sub(r"\s+", "_", name.strip())          # Jira labels cannot contain spaces
+
+    def update_body(self, ref: TaskRef, text: str) -> None:
+        self.client.update_issue(ref.key, {"fields": {"description": adf.to_adf(text)}})
+        self._overlay(ref.key, lambda f: f.update(description=adf.to_adf(text)))
+        self._note_written(self._id_of(ref.key))
+
+    def add_labels(self, ref: TaskRef, labels: list[str]) -> None:
+        have = set(self.client.get_issue(ref.key, ["labels"]).get("fields", {}).get("labels") or [])
+        new = [self.codec.encode(x) for x in labels if self.codec.encode(x) not in have]
+        if not new:
+            return
+        self.client.update_issue(ref.key, {"update": {"labels": [{"add": x} for x in new]}})
+
+        def apply(fields):
+            fields["labels"] = [*(fields.get("labels") or []), *new]
+        self._overlay(ref.key, apply)
+        self._note_written(self._id_of(ref.key))
+
+    def close_issue(self, ref: TaskRef) -> None:
+        self._close(ref)
 
     def set_parent(self, ref: TaskRef, parent: TaskRef) -> None:
         self.client.update_issue(ref.key, {"fields": {"parent": {"key": parent.key}}})

@@ -320,3 +320,35 @@ def test_export_records_of_chosen_refs(adapter):
     items = adapter.b.export_records([adapter.refs["T2"]])
     assert [i.task.ref for i in items] == [adapter.refs["T2"]]
     assert items[0].task.dependencies == [adapter.refs["T1"]]
+
+
+def test_update_body_replaces_the_description(adapter):
+    ref = adapter.refs["T1"]
+    adapter.b.update_body(ref, "new text\n\nsee T0 <!-- dags-seed: P-1 -->")
+    adapter.b.invalidate()
+    body = adapter.b.get_task_fresh(ref).body if hasattr(adapter.b, "get_task_fresh") else adapter.b.get_task(ref).body
+    assert body.startswith("new text") and "Poll the feed" not in body
+    from dags import seed
+    assert seed.MARKER_RE.search(body).group(1) == "P-1"                  # the marker stays findable (Jira: in code)
+
+
+def test_add_labels_adds_only_what_is_missing(adapter):
+    ref = adapter.refs["T1"]
+    if hasattr(adapter, "fake") and hasattr(adapter.fake, "labels") and isinstance(adapter.fake.labels, set):
+        adapter.fake.labels.update({"extra-one", "extra-two"})            # GitHub only takes labels that exist
+    adapter.b.add_labels(ref, ["extra-one"])
+    adapter.b.add_labels(ref, ["extra-one", "extra-two"])
+    adapter.b.invalidate()
+    labels = adapter.b.get_task_fresh(ref).labels
+    assert labels.count("extra-one") == 1 and "extra-two" in labels
+    assert "swarm:autonomy:self-approve" in labels                        # what was there stays
+
+
+def test_close_issue_closes_without_touching_the_labels(adapter):
+    ref = adapter.refs["T1"]
+    before = sorted(adapter.b.get_task_fresh(ref).labels)
+    adapter.b.close_issue(ref)
+    adapter.b.close_issue(ref)                                            # idempotent
+    adapter.b.invalidate()
+    task = adapter.b.get_task_fresh(ref)
+    assert task.closed and sorted(task.labels) == before

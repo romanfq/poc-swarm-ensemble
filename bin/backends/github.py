@@ -97,6 +97,11 @@ LABEL_COLORS = {
 
 class GitHubBackend(PlanScoped):
     name = "github"
+    import_limits = {"body": 65536, "children": 100}      # characters in an issue body; sub-issues per parent
+    lag_window_s = 5.0
+
+    def hierarchy_levels(self) -> int:
+        return 8                                           # GitHub nests sub-issues up to eight levels deep
 
     def __init__(self, repo: str, use_issue_types: bool = False, cache_seconds: float = 20,
                  extra_repos: list[str] | None = None, plan_scope: str = DEFAULT_PLAN_SCOPE):
@@ -415,6 +420,33 @@ class GitHubBackend(PlanScoped):
         repo, num = self._split(ref)
         _, pnum = self._split(parent)
         gh.gh(["issue", "edit", str(num), "--repo", repo, "--parent", str(pnum)])
+        self.invalidate()
+
+    def update_body(self, ref: TaskRef, text: str) -> None:
+        repo, num = self._split(ref)
+        gh.gh(["issue", "edit", str(num), "--repo", repo, "--body-file", "-"], input=text)
+        self.invalidate()
+
+    def add_labels(self, ref: TaskRef, labels: list[str]) -> None:
+        try:
+            have = set(self.get_task_fresh(ref).labels)
+        except KeyError:
+            have = set()
+        missing = [lb for lb in labels if lb not in have]
+        if not missing:
+            return
+        repo, num = self._split(ref)
+        args = ["issue", "edit", str(num), "--repo", repo]
+        for lb in missing:
+            args += ["--add-label", lb]
+        gh.gh(args)
+        self.invalidate()
+
+    def close_issue(self, ref: TaskRef) -> None:
+        if self.get_task_fresh(ref).closed:
+            return
+        repo, num = self._split(ref)
+        gh.gh(["issue", "close", str(num), "--repo", repo, "--reason", "completed"])
         self.invalidate()
 
     def add_dependency(self, ref: TaskRef, blocker: TaskRef) -> None:

@@ -112,6 +112,9 @@ class FakeBackend(PlanScoped):
             self._save(issues)
 
     uses_type_labels = True
+    max_levels = 8                      # parent/child levels offered; tests lower it to model a shallow tracker
+    import_limits: dict = {}
+    lag_window_s = 0.0
 
     def set_kind(self, ref: TaskRef, epic: bool) -> None:
         label = "type:epic" if epic else "type:task"
@@ -124,6 +127,103 @@ class FakeBackend(PlanScoped):
 
     def dependencies(self, ref: TaskRef) -> list[TaskRef]:
         return self.get_task(ref).dependencies
+
+    # -- what plan seeding and `backend import` need -----------------------------------------------------------
+    def get_task_fresh(self, ref: TaskRef) -> Task:
+        return self.get_task(ref)
+
+    def parse_ref(self, text: str) -> TaskRef:
+        return TaskRef(str(text).strip())
+
+    def invalidate(self) -> None:
+        pass
+
+    def hierarchy_levels(self) -> int:
+        return self.max_levels
+
+    def existing_labels(self) -> set[str]:
+        from backends.base import AUTONOMY_TIERS, SWARM_STATUSES
+        known = {STATUS_PREFIX + s for s in SWARM_STATUSES} | {AUTONOMY_PREFIX + t for t in AUTONOMY_TIERS}
+        return known | {"type:epic", "type:task"} | {lb for i in self._load().values() for lb in i.get("labels") or []}
+
+    def required_labels(self, code_repos: list[str]) -> list[tuple[str, str]]:
+        return []
+
+    def init_commands(self, code_repos: list[str]) -> list[list[str]]:
+        return []
+
+    def create_label(self, name: str, color: str) -> None:
+        pass
+
+    def seed_labels(self, *, epic: bool, status: str | None, autonomy: str | None,
+                    repo: str | None) -> list[str]:
+        labels = []
+        if status:
+            labels.append(STATUS_PREFIX + status)
+        if autonomy:
+            labels.append(AUTONOMY_PREFIX + autonomy)
+        if repo:
+            labels.append("repo:" + repo)
+        labels.append("type:epic" if epic else "type:task")
+        return labels
+
+    @staticmethod
+    def _put_labels(issue: dict, labels: list[str]) -> None:
+        for lb in labels:
+            if lb.startswith(STATUS_PREFIX):
+                issue["status"] = lb[len(STATUS_PREFIX):]
+            elif lb not in (issue.get("labels") or []):
+                issue.setdefault("labels", []).append(lb)
+
+    def create_issue(self, title: str, body: str, labels: list[str], *, epic: bool = False) -> TaskRef:
+        with _lock:
+            issues = self._load()
+            self._seq = max(getattr(self, "_seq", 0), len(issues))
+            while f"FK-{self._seq + 1}" in issues:
+                self._seq += 1
+            self._seq += 1
+            key = f"FK-{self._seq}"
+            issue = {"title": title, "body": body, "epic": epic, "labels": [], "comments": [],
+                     "created_utc": f"2000-01-01T00:{self._seq // 60:02d}:{self._seq % 60:02d}Z",
+                     "author": "dags-bot"}
+            self._put_labels(issue, labels)
+            issues[key] = issue
+            self._save(issues)
+            return TaskRef(key)
+
+    def set_parent(self, ref: TaskRef, parent: TaskRef) -> None:
+        with _lock:
+            issues = self._load()
+            issues[ref.key]["epic_of"] = parent.key
+            self._save(issues)
+
+    def add_dependency(self, ref: TaskRef, blocker: TaskRef) -> None:
+        with _lock:
+            issues = self._load()
+            blocked = issues[ref.key].setdefault("blocked_by", [])
+            if blocker.key not in blocked:
+                blocked.append(blocker.key)
+                self._save(issues)
+
+    def update_body(self, ref: TaskRef, text: str) -> None:
+        with _lock:
+            issues = self._load()
+            issues[ref.key]["body"] = text
+            self._save(issues)
+
+    def add_labels(self, ref: TaskRef, labels: list[str]) -> None:
+        with _lock:
+            issues = self._load()
+            self._put_labels(issues[ref.key], labels)
+            self._save(issues)
+
+    def close_issue(self, ref: TaskRef) -> None:
+        with _lock:
+            issues = self._load()
+            if not issues[ref.key].get("closed"):
+                issues[ref.key]["closed"] = True
+                issues[ref.key]["closed_utc"] = "2000-01-02T00:00:00Z"
+                self._save(issues)
 
     def epic_children(self, ref: TaskRef) -> list[TaskRef]:
         return [TaskRef(k) for k, v in self._load().items() if v.get("epic_of") == ref.key]
