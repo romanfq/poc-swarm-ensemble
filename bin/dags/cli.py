@@ -25,7 +25,8 @@ except ImportError:  # pragma: no cover - typer < 0.17
 import autonomy as autonomy_names
 import resolve
 from backends.base import AUTONOMY_TIERS, SWARM_STATUSES, BackendError, TaskRef
-from dags import actions, boardview, daemon, feed, gh, panel, plan, prereqs, repos, snapshot, timeutil, upgrade, work
+from dags import (actions, boardview, bundle, daemon, feed, gh, machines, panel, plan, prereqs, repos, snapshot,
+                  timeutil, upgrade, work)
 from dags import ledger as L
 from dags.config import ConfigError, Context
 from dags.gitsync import GitError
@@ -573,6 +574,84 @@ def backend_seed(plan_file: Path = typer.Argument(..., help="Plan file, e.g. poc
             console.print(escape(f"still differs: {line}"), style="yellow")
         fail("the tracker doesn't match the plan after seeding (see above)")
     console.print("[green]plan seeded[/] — next: `swarm.py plan sync`")
+
+
+@backend_app.command("export")
+@guarded
+def backend_export(out: Path = typer.Argument(..., help="The zip file to write, outside any coordination repo."),
+                   scope: str = typer.Option("all", help="all: every issue of the tracker; plan: what the swarm sees."),
+                   root_keys: Optional[List[str]] = typer.Option(None, "--root", help="Only this issue and what is under it."),
+                   open_only: bool = typer.Option(False, "--open-only", help="Leave out closed issues."),
+                   include_external: bool = typer.Option(False, "--include-external",
+                                                         help="Also export issues of other repositories that plan issues depend on."),
+                   live: bool = typer.Option(False, "--live", help="Export while machines run (the snapshot may be inconsistent).")):
+    """Write the tracker's issues to a bundle (read-only; moving them is `backend import`)."""
+    c = ctx()
+    b = c.backend
+    path = out if out.is_absolute() else Path.cwd() / out
+    path = path.resolve()
+    if path == c.root or c.root in path.parents:
+        fail(f"{path} is inside the coordination repo; the bundle holds private issue text, write it elsewhere")
+    found = machines.blockers(c.root, timeutil.now(), c.settings.lease_s)
+    if found and not live:
+        fail(machines.refusal(found, "export") + "\nor export anyway with --live")
+    if found:
+        console.print(escape(machines.refusal(found, "export consistently")), style="yellow")
+        console.print("--live: the snapshot may be inconsistent (statuses flip while a swarm runs)", style="yellow")
+    roots = [b.parse_ref(k).key for k in root_keys or []]
+    try:
+        items = b.export_records()
+        have = {it.task.ref.key for it in items}
+        extra = []
+        if include_external:
+            want = sorted({d.key for it in items for d in it.task.dependencies} - have)
+            extra = b.export_records([TaskRef(k) for k in want]) if want else []
+        built = bundle.build(
+            items, plan_scope=b.plan_scope, scope=scope, roots=roots, open_only=open_only,
+            keep=resolve.index(c.root).keys(), source=_bundle_source(c), tool_commit=_tool_commit(c),
+            short_of=lambda k: b.short_key(TaskRef(k)), url_of=lambda k: b.web_url(TaskRef(k)),
+            extra=extra, include_external=include_external)
+    except bundle.BundleError as e:
+        fail(str(e))
+    bundle.write_bundle(built, path)
+    bundle.read_bundle(path)                          # a bundle that fails its own validation is never left behind
+    r = built.report
+    console.print(f"[green]wrote[/] {escape(str(path))}  (bundle {built.bundle_id}, {timeutil.iso()})")
+    console.print("[yellow]it holds private issue text and comments: keep it out of repositories[/]")
+    console.print(f"{r['issues']} issues ({r['open']} open, {r['closed']} closed), {r['comments']} comments, "
+                  f"{r['deepest_level']} hierarchy level(s)")
+    console.print("by kind: " + ", ".join(f"{k} {n}" for k, n in r["by_kind"].items()))
+    console.print("by status: " + (", ".join(f"{k} {n}" for k, n in r["by_status"].items()) or "none"))
+    for w in r["warnings"]:
+        console.print(escape(f"warning: {w}"), style="yellow")
+    for d in r["dropped_dependencies"]:
+        console.print(escape(f"dropped: {b.short_key(TaskRef(d['id']))} no longer depends on closed "
+                             f"{b.short_key(TaskRef(d['depends_on']))}"), style="yellow")
+    for d in r["dropped_parents"]:
+        console.print(escape(f"dropped: {b.short_key(TaskRef(d['id']))} loses its parent "
+                             f"{b.short_key(TaskRef(d['parent']))}, which is not in the bundle"), style="yellow")
+    if r["external"] and not include_external:
+        for d in r["external"]:
+            console.print(escape(f"external: {b.short_key(TaskRef(d['id']))} depends on {d['depends_on']} "
+                                 f"(kept as a link; --include-external adds the issue)"), style="yellow")
+
+
+def _bundle_source(c) -> dict:
+    cfg = c.backend_cfg
+    name = c.backend.name
+    section = cfg.get(name) or {}
+    return {"backend": name, "project": section.get("repo") or section.get("project_key"),
+            "url": section.get("base_url") or (f"https://github.com/{section['repo']}" if section.get("repo") else None)}
+
+
+def _tool_commit(c) -> str | None:
+    import subprocess
+    try:
+        out = subprocess.run(["git", "-C", str(c.bin_dir), "rev-parse", "HEAD"], capture_output=True, text=True,
+                             timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return out.stdout.strip() or None if out.returncode == 0 else None
 
 
 @backend_app.command("file")

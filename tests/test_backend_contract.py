@@ -302,3 +302,21 @@ def test_plan_scope_setting():
     assert plan_scope_of({"plan_scope": "all"}) == "all"
     with pytest.raises(ValueError, match="labelled, all"):
         plan_scope_of({"plan_scope": "everything"})
+
+
+def test_export_records_cover_every_issue_with_comments(adapter):
+    adapter.add_unlabelled("X", "Filed by hand")
+    adapter.b.post_comment(adapter.refs["T1"], "first")
+    adapter.reply(adapter.refs["T1"], "carol", "second")
+    items = adapter.b.export_records()
+    assert keys(i.task.ref for i in items) == keys(t.ref for t in adapter.b.all_issues())
+    by_key = {i.task.ref.key: i for i in items}
+    assert [c.body for c in by_key[adapter.refs["T1"].key].comments] == ["first", "second"]
+    assert by_key[adapter.refs["T0"].key].task.closed and not by_key[adapter.refs["T1"].key].task.closed
+    assert by_key[adapter.refs["X"].key].task.labels == []
+
+
+def test_export_records_of_chosen_refs(adapter):
+    items = adapter.b.export_records([adapter.refs["T2"]])
+    assert [i.task.ref for i in items] == [adapter.refs["T2"]]
+    assert items[0].task.dependencies == [adapter.refs["T1"]]

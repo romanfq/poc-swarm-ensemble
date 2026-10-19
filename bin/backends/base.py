@@ -47,6 +47,17 @@ class Comment(NamedTuple):
     url: str | None = None
 
 
+class ExportItem(NamedTuple):
+    """One issue as ``export_records`` returns it: the task as the adapter reads it, plus what a bundle
+    keeps and ``Task`` does not (provenance, comments, and what the adapter could not carry)."""
+    task: "Task"
+    created_utc: str = ""
+    closed_utc: str | None = None
+    author: str | None = None
+    comments: tuple[Comment, ...] = ()
+    lossy: tuple[str, ...] = ()
+
+
 @dataclass
 class Task:
     ref: TaskRef
@@ -145,6 +156,12 @@ class TrackerHelpers(Protocol):
     def create_issue(self, title: str, body: str, labels: list[str], *, epic: bool = False) -> TaskRef: ...
     def set_parent(self, ref: TaskRef, parent: TaskRef) -> None: ...
     def add_dependency(self, ref: TaskRef, blocker: TaskRef) -> None: ...
+    def export_records(self, refs: list[TaskRef] | None = None) -> list[ExportItem]:
+        """Every issue of the plan repository (or project), open and closed, in or out of the plan, with its
+        comments. ``refs`` limits it to those issues (they may live elsewhere). Raises ``BackendError`` rather
+        than return an issue whose labels, sub-issues or blockers were cut short by a query limit."""
+        ...
+
     # `get_task_fresh(ref)` is optional (work.py falls back to get_task); `uses_type_labels` / `set_kind`
     # are read with getattr. `epics_carry_status` (default True) is False where containers get no
     # swarm status (Jira), so adoption leaves them unlabelled.
